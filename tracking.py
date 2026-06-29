@@ -56,7 +56,7 @@ def resolve_min_area_for_mask(min_area, frame_idx: int, mask_path: Path):
         return 0
     return min_area
 
-
+#sorting the frames by time
 def load_mask_sequence(
     mask_dir: str,
     min_area: int | list[int] | tuple[int, ...] | dict[str, int] | None = 0,
@@ -110,7 +110,7 @@ def extract_detections_from_mask(mask: np.ndarray, frame_idx: int):
     for prop in regionprops(mask):
         min_row, min_col, max_row, max_col = prop.bbox
         cy, cx = prop.centroid
-
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
         detections.append(
             {
                 "frame": frame_idx,
@@ -288,7 +288,7 @@ def compute_gap_close_cost(
     minor_penalty = safe_ratio(end_a["minor_axis_length"], start_b["minor_axis_length"]) - 1.0
     shape_penalty = 0.5 * (major_penalty + minor_penalty)
     angle_penalty = 0.0 if angle_diff is None else angle_diff / max(max_angle_diff_deg, 1e-6)
-    gap_penalty = gap / max(max_gap, 1)
+    gap_penalty = gap / max(max_gap, 1) #frame seperation
 
     return (
         distance_weight * (dist / max(max_dist, 1e-6))
@@ -305,6 +305,10 @@ def _merge_gap_close_links(tracks, links):
     merged_tracks = []
     visited = set()
 
+    # [MITOSIS CHANGE] Record which ORIGINAL track_ids land in each merged track,
+    # so the caller can remap a parent_of lineage dict through the renumbering below.
+    merged_orig_ids = []
+
     for i, trk in enumerate(tracks):
         if i in predecessor:
             continue
@@ -315,6 +319,8 @@ def _merge_gap_close_links(tracks, links):
             "history": [det.copy() for det in trk["history"]],
         }
         visited.add(current_idx)
+        # [MITOSIS CHANGE] start collecting the original ids merged into this chain
+        orig_ids = [tracks[current_idx]["track_id"]]
 
         while current_idx in successor:
             next_idx = successor[current_idx]
@@ -324,8 +330,11 @@ def _merge_gap_close_links(tracks, links):
             merged["history"].extend([det.copy() for det in tracks[next_idx]["history"]])
             visited.add(next_idx)
             current_idx = next_idx
+            # [MITOSIS CHANGE] record each chained-in track's original id
+            orig_ids.append(tracks[current_idx]["track_id"])
 
         merged_tracks.append(merged)
+        merged_orig_ids.append(orig_ids)
 
     for i, trk in enumerate(tracks):
         if i not in visited:
@@ -335,11 +344,18 @@ def _merge_gap_close_links(tracks, links):
                     "history": [det.copy() for det in trk["history"]],
                 }
             )
+            # [MITOSIS CHANGE] a standalone (un-merged) track carries just its own id
+            merged_orig_ids.append([trk["track_id"]])
 
-    for new_id, trk in enumerate(merged_tracks, start=1):
+    # [MITOSIS CHANGE] assign new sequential ids and build the old_id -> new_id remap
+    remap = {}
+    for new_id, (trk, orig_ids) in enumerate(zip(merged_tracks, merged_orig_ids), start=1):
         trk["track_id"] = new_id
+        for old_id in orig_ids:
+            remap[old_id] = new_id
 
-    return merged_tracks
+    # [MITOSIS CHANGE] also return the remap (callers not tracking lineage just ignore it)
+    return merged_tracks, remap
 
 
 def gap_close_tracks(
@@ -355,9 +371,26 @@ def gap_close_tracks(
     shape_weight: float = 2.0,
     angle_weight: float = 2.0,
     gap_weight: float = 1.0,
+    parent_of: dict | None = None,   # [MITOSIS CHANGE] lineage {child_id: parent_id}; None = original behavior
+    protect_divisions: bool = True,  # [MITOSIS CHANGE] ablation: False = naive merging (lineage still remapped, for comparison)
 ):
     """
     Global-cost gap closing on finished tracks using Hungarian matching.
+
+    [MITOSIS CHANGE] When parent_of is provided (mitosis=True), gap closing becomes
+    lineage-aware: it never extends a known division parent past its split, and never
+    absorbs a known daughter's birth as a continuation, then remaps parent_of through
+    the track renumbering each gap level. When parent_of is None, the matching is 
+    identical to the original code.
+
+    [MITOSIS CHANGE] protect_divisions is an ablation switch: set it False to run the
+    naive merging (no protection) while still remapping the lineage, so an experiment
+    can measure how many divisions naive gap closing destroys. Production uses the
+    default True.
+
+    Returns
+    (tracks, parent_of) : the (possibly merged) tracks and the lineage remapped to
+    their new ids (parent_of is None when none is passed in).
     """
     tracks = [
         {
@@ -369,7 +402,7 @@ def gap_close_tracks(
     tracks = sorted(tracks, key=lambda t: t["history"][0]["frame"])
 
     if len(tracks) <= 1:
-        return tracks
+        return tracks, parent_of   # [MITOSIS CHANGE] return lineage alongside tracks
 
     current_tracks = tracks
 
@@ -377,11 +410,26 @@ def gap_close_tracks(
         n_tracks = len(current_tracks)
         cost = np.full((n_tracks, n_tracks), fill_value=1e9, dtype=np.float32)
 
+        # [MITOSIS CHANGE] division edges to protect, in terms of the current track ids.
+        # Empty sets when parent_of is None or protect_divisions is False -> the checks
+        # below never fire (original / ablation path).
+        _do_protect = bool(parent_of) and protect_divisions
+        protected_parents = set(parent_of.values()) if _do_protect else set()
+        protected_children = set(parent_of.keys()) if _do_protect else set()
+
         for i, track_a in enumerate(current_tracks):
             end_frame = track_a["history"][-1]["frame"]
 
+            # [MITOSIS CHANGE] do not let a known division parent be continued onto anything
+            if track_a["track_id"] in protected_parents:
+                continue
+
             for j, track_b in enumerate(current_tracks):
                 if i == j:
+                    continue
+
+                # [MITOSIS CHANGE] do not let a known daughter's birth be absorbed as a continuation
+                if track_b["track_id"] in protected_children:
                     continue
 
                 start_frame = track_b["history"][0]["frame"]
@@ -416,9 +464,19 @@ def gap_close_tracks(
         if len(links) == 0:
             continue
 
-        current_tracks = _merge_gap_close_links(current_tracks, links)
+        # [MITOSIS CHANGE] _merge_gap_close_links now also returns the old->new id remap
+        current_tracks, remap = _merge_gap_close_links(current_tracks, links)
 
-    return current_tracks
+        # [MITOSIS CHANGE] remap lineage to the new ids so protections stay correct on the
+        # next gap level (ids are reassigned every level) and the final output is valid.
+        if parent_of:
+            parent_of = {
+                remap[c]: remap[p]
+                for c, p in parent_of.items()
+                if c in remap and p in remap
+            }
+
+    return current_tracks, parent_of   # [MITOSIS CHANGE] return lineage alongside tracks
 
 def bbox_iou(box1, box2):
     """
@@ -568,7 +626,7 @@ class SimpleCellTrackerV3:
         """
         Allow a slightly larger search radius for larger frame gaps.
         """
-        return self.max_distance * (1.0 + self.gap_growth * max(0, gap - 1))
+        return self.max_distance * (1.0 + self.gap_growth * max(0, gap - 1)) #possibly make it related to speed
 
     def _build_cost_matrix(self, track_ids, detections):
         n_tracks = len(track_ids)
@@ -898,32 +956,51 @@ def run_tracking_pipeline(
     min_track_length: int = 5,
     max_angle_diff_deg: float = 90.0,
     max_close_cost: float = 12.0,
+    mitosis: bool = False,                       
+    mitosis_params: dict | None = None,          
 ):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print("[INFO] Loading masks...")
-    segmentation, mask_files, counts_per_frame = load_mask_sequence(
+    segmentation, mask_files, counts_per_frame = load_mask_sequence(  
         mask_dir=mask_dir,
         min_area=min_area,
         auto_min_area_fraction=auto_min_area_fraction,
     )
 
-    print(f"[INFO] Segmentation shape: {segmentation.shape}")
+    print(f"[INFO] Segmentation shape: {segmentation.shape}") #(T,Y,X)
     print(f"[INFO] Number of mask files: {len(mask_files)}")
     print(f"[INFO] Mean cells/frame: {np.mean(counts_per_frame):.2f}")
 
-    tracker = SimpleCellTrackerV3(
-        max_distance=max_distance,
-        max_area_ratio=max_area_ratio,
-        max_shape_ratio=max_shape_ratio,
-        max_lost=max_lost,
-        area_weight=area_weight,
-        shape_weight=shape_weight,
-        iou_weight=2.0,
-        n_history=3,
-        gap_growth=0.35,
-    )
+    # [MITOSIS CHANGE] choose tracker by flag. Lazy import of MitosisTracker avoids a
+    # circular import (mitosis_tracker.py imports from this module).
+    if mitosis:
+        from mitosis_tracker import MitosisTracker
+        tracker = MitosisTracker(
+            max_distance=max_distance,
+            max_area_ratio=max_area_ratio,
+            max_shape_ratio=max_shape_ratio,
+            max_lost=max_lost,
+            area_weight=area_weight,
+            shape_weight=shape_weight,
+            iou_weight=2.0,
+            n_history=3,
+            gap_growth=0.35,
+            **(mitosis_params or {}),
+        )
+    else:
+        tracker = SimpleCellTrackerV3(
+            max_distance=max_distance,
+            max_area_ratio=max_area_ratio,
+            max_shape_ratio=max_shape_ratio,
+            max_lost=max_lost,
+            area_weight=area_weight,
+            shape_weight=shape_weight,
+            iou_weight=2.0,
+            n_history=3,
+            gap_growth=0.35,
+        )
 
     print("[INFO] Tracking...")
     for t in range(segmentation.shape[0]):
@@ -938,7 +1015,12 @@ def run_tracking_pipeline(
     tracks_all = tracker.get_all_tracks()
     print(f"[INFO] Number of raw tracks: {len(tracks_all)}")
 
-    tracks_closed = gap_close_tracks(
+    # [MITOSIS CHANGE] lineage built by the online tracker (None in baseline mode).
+    parent_of = dict(tracker.parent_of) if mitosis else None
+
+    # [MITOSIS CHANGE] gap_close_tracks now returns (tracks, parent_of). Passing
+    # parent_of=None keeps the original (non-mitosis) behavior byte-for-byte.
+    tracks_closed, parent_of = gap_close_tracks(
         tracks_all,
         max_gap=2,
         max_dist=30.0,
@@ -946,11 +1028,22 @@ def run_tracking_pipeline(
         max_shape_ratio=max_shape_ratio,
         max_angle_diff_deg=min(120.0, max_angle_diff_deg + 30.0),
         max_close_cost=max_close_cost,
+        parent_of=parent_of,
     )
     print(f"[INFO] Number of tracks after gap closing: {len(tracks_closed)}")
 
     tracks = filter_tracks_by_length(tracks_closed, min_length=min_track_length)
     print(f"[INFO] Number of filtered tracks (len >= {min_track_length}): {len(tracks)}")
+
+    # [MITOSIS CHANGE] length filtering drops tracks that appear in the lineage;
+    # keep only lineage links whose parent and child both survived the filter.
+    if parent_of:
+        surviving = {trk["track_id"] for trk in tracks}
+        parent_of = {
+            c: p for c, p in parent_of.items()
+            if c in surviving and p in surviving
+        }
+        print(f"[INFO] Lineage links after filtering: {len(parent_of)}")
 
     tracks_csv = output_dir / "tracks.csv"
     track_hist_png = output_dir / "track_length_histogram.png"
@@ -960,6 +1053,15 @@ def run_tracking_pipeline(
     print("[INFO] Exporting CSV...")
     df_tracks = export_tracks_to_csv(tracks, str(tracks_csv))
     print(df_tracks.head())
+
+    # [MITOSIS CHANGE] export the recovered lineage as a simple child->parent table
+    if mitosis:
+        lineage_csv = output_dir / "lineage.csv"
+        pd.DataFrame(
+            [{"child_track_id": c, "parent_track_id": p}
+             for c, p in sorted((parent_of or {}).items())]
+        ).to_csv(lineage_csv, index=False)
+        print(f"[INFO] Saved lineage ({len(parent_of or {})} parent links) -> {lineage_csv}")
 
     print("[INFO] Saving plots...")
     track_lengths = save_track_length_histogram(tracks, str(track_hist_png))
