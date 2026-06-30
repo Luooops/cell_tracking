@@ -214,9 +214,9 @@ def plot_tracks_on_frames(
 
 
 if __name__ == "__main__":
-    IMAGE_DIR = "/media/NAS_R01_P1S1/RAW_DATA/Scripta/example_images/dcfa8e4f-a731-4dd1-89b7-ac285232aca8/images/r15c12/ch2"
-    CSV_PATH = "/media/NAS_R01_P1S1/RAW_DATA/Scripta/example_images/dcfa8e4f-a731-4dd1-89b7-ac285232aca8/images/r15c12/ch2_results/simple_tracking_results/tracks.csv"
-    OUTPUT_DIR = "/media/NAS_R01_P1S1/RAW_DATA/Scripta/example_images/dcfa8e4f-a731-4dd1-89b7-ac285232aca8/images/r15c12/ch2_results/simple_tracking_results/tracks_overlay"
+    IMAGE_DIR = "/media/NAS_R01_P1S1/RAW_DATA/Scripta/example_images/dcfa8e4f-a731-4dd1-89b7-ac285232aca8/images/r01c12/ch2"
+    CSV_PATH = "/media/NAS_R01_P1S1/RAW_DATA/Scripta/example_images/dcfa8e4f-a731-4dd1-89b7-ac285232aca8/images/r01c12/ch2_results/simple_tracking_results/tracks.csv"
+    OUTPUT_DIR = "/media/NAS_R01_P1S1/RAW_DATA/Scripta/example_images/dcfa8e4f-a731-4dd1-89b7-ac285232aca8/images/r01c12/ch2_results/simple_tracking_results/tracks_overlay"
 
     plot_tracks_on_frames(
         image_dir=IMAGE_DIR,
