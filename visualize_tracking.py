@@ -1,3 +1,4 @@
+import argparse
 import re
 from pathlib import Path
 
@@ -7,6 +8,7 @@ import tifffile
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from matplotlib.patches import Rectangle
+from PIL import Image
 
 
 def sort_key_by_time(path: Path):
@@ -19,13 +21,40 @@ def sort_key_by_time(path: Path):
     return int(m.group(1)) if m else path.stem
 
 
-def load_image_files(image_dir: str):
+def load_image_files(image_dir: str, image_format: str = "tiff", image_pattern: str | None = None):
     image_dir = Path(image_dir)
-    files = list(image_dir.glob("*.tif")) + list(image_dir.glob("*.tiff"))
+    image_format = image_format.lower()
+    if image_pattern is not None:
+        files = list(image_dir.glob(image_pattern))
+    elif image_format == "tif":
+        files = list(image_dir.glob("*.tif"))
+    elif image_format == "tiff":
+        files = list(image_dir.glob("*.tif")) + list(image_dir.glob("*.tiff"))
+    elif image_format == "png":
+        files = list(image_dir.glob("*_mask.png"))
+    else:
+        raise ValueError(f"Unsupported image_format={image_format!r}. Use one of: tif, tiff, png")
+
     files = sorted(files, key=sort_key_by_time)
     if len(files) == 0:
-        raise FileNotFoundError(f"No tif/tiff images found in: {image_dir}")
+        pattern_msg = image_pattern if image_pattern is not None else image_format
+        raise FileNotFoundError(f"No {pattern_msg} images found in: {image_dir}")
     return files
+
+
+def read_image_file(path: Path) -> np.ndarray:
+    if path.suffix.lower() in {".tif", ".tiff"}:
+        img = tifffile.imread(str(path))
+    elif path.suffix.lower() == ".png":
+        img = np.array(Image.open(path))
+    else:
+        raise ValueError(f"Unsupported image file extension: {path.suffix}")
+
+    if img.ndim > 2:
+        img = np.squeeze(img)
+    if img.ndim == 3 and img.shape[-1] in (3, 4):
+        img = img[..., :3]
+    return img
 
 
 def normalize_for_display(img: np.ndarray, p_low: float = 1, p_high: float = 99) -> np.ndarray:
@@ -56,6 +85,8 @@ def plot_tracks_on_frames(
     image_dir: str,
     csv_path: str,
     output_dir: str,
+    image_format: str = "tiff",
+    image_pattern: str | None = None,
     draw_bbox: bool = False,
     draw_id: bool = True,
     draw_trail: bool = True,
@@ -73,11 +104,15 @@ def plot_tracks_on_frames(
     Parameters
     ----------
     image_dir : str
-        Directory containing original tif/tiff images.
+        Directory containing original images.
     csv_path : str
         Path to tracks.csv.
     output_dir : str
         Directory to save visualization frames.
+    image_format : str
+        Image format to load: tif, tiff, or png.
+    image_pattern : str or None
+        Optional glob pattern. If None, png uses *_mask.png and tiff uses tif/tiff files.
     draw_bbox : bool
         Whether to draw bounding boxes.
     draw_id : bool
@@ -101,7 +136,7 @@ def plot_tracks_on_frames(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    image_files = load_image_files(image_dir)
+    image_files = load_image_files(image_dir, image_format=image_format, image_pattern=image_pattern)
     df = pd.read_csv(csv_path)
 
     required_cols = {"track_id", "frame", "x", "y"}
@@ -130,9 +165,7 @@ def plot_tracks_on_frames(
     print(f"[INFO] Saving overlay frames to: {output_dir}")
 
     for frame_idx, img_path in enumerate(image_files):
-        img = tifffile.imread(str(img_path))
-        if img.ndim > 2:
-            img = np.squeeze(img)
+        img = read_image_file(img_path)
         img_vis = normalize_for_display(img, p_low=p_low, p_high=p_high)
 
         fig, ax = plt.subplots(figsize=(8, 8))
@@ -213,23 +246,68 @@ def plot_tracks_on_frames(
     print("[DONE] Visualization finished.")
 
 
-if __name__ == "__main__":
-    IMAGE_DIR = "/media/NAS_R01_P1S1/RAW_DATA/Scripta/example_images/dcfa8e4f-a731-4dd1-89b7-ac285232aca8/images/r01c12/ch2"
-    CSV_PATH = "/media/NAS_R01_P1S1/RAW_DATA/Scripta/example_images/dcfa8e4f-a731-4dd1-89b7-ac285232aca8/images/r01c12/ch2_results/simple_tracking_results/tracks.csv"
-    OUTPUT_DIR = "/media/NAS_R01_P1S1/RAW_DATA/Scripta/example_images/dcfa8e4f-a731-4dd1-89b7-ac285232aca8/images/r01c12/ch2_results/simple_tracking_results/tracks_overlay"
+DEFAULT_IMAGE_DIR = "/media/NAS_R01_P1S1/RAW_DATA/Scripta/example_images/1a40f06e-8691-4124-b410-fb724a5e203b/r01c01"
+DEFAULT_CSV_PATH = str(Path(DEFAULT_IMAGE_DIR) / "tracks.csv")
+DEFAULT_OUTPUT_DIR = str(Path(DEFAULT_IMAGE_DIR) / "tracks_overlay")
 
-    plot_tracks_on_frames(
-        image_dir=IMAGE_DIR,
-        csv_path=CSV_PATH,
-        output_dir=OUTPUT_DIR,
-        draw_bbox=False,
-        draw_id=True,
-        draw_trail=True,
-        trail_length=10,     # None = full history up to current frame
-        linewidth=1.5,
-        marker_size=18,
-        alpha_image=1.0,
-        p_low=1,
-        p_high=99,
-        min_track_length=5,
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Draw tracking overlays on image frames.",
     )
+    parser.add_argument("--image-dir", default=DEFAULT_IMAGE_DIR, help="Directory containing image frames.")
+    parser.add_argument("--csv-path", default=DEFAULT_CSV_PATH, help="Path to tracks.csv.")
+    parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="Directory for overlay PNG files.")
+    parser.add_argument(
+        "--image-format",
+        default="png",
+        choices=("tif", "tiff", "png"),
+        help="Image format to load.",
+    )
+    parser.add_argument(
+        "--image-pattern",
+        default=None,
+        help="Optional glob pattern inside --image-dir, for example '*_mask.png'.",
+    )
+    parser.add_argument("--draw-bbox", action="store_true", help="Draw bounding boxes.")
+    parser.add_argument("--hide-id", action="store_true", help="Do not draw track IDs.")
+    parser.add_argument("--hide-trail", action="store_true", help="Do not draw trajectory trails.")
+    parser.add_argument(
+        "--trail-length",
+        type=int,
+        default=10,
+        help="Number of previous points to show. Use <=0 for full history.",
+    )
+    parser.add_argument("--linewidth", type=float, default=1.5, help="Line width for trails and bounding boxes.")
+    parser.add_argument("--marker-size", type=float, default=18, help="Centroid marker size.")
+    parser.add_argument("--alpha-image", type=float, default=1.0, help="Background image alpha.")
+    parser.add_argument("--p-low", type=float, default=1, help="Low percentile for image normalization.")
+    parser.add_argument("--p-high", type=float, default=99, help="High percentile for image normalization.")
+    parser.add_argument("--min-track-length", type=int, default=5, help="Minimum track length to visualize.")
+    return parser
+
+
+def main():
+    args = build_arg_parser().parse_args()
+    trail_length = None if args.trail_length <= 0 else args.trail_length
+    plot_tracks_on_frames(
+        image_dir=args.image_dir,
+        csv_path=args.csv_path,
+        output_dir=args.output_dir,
+        image_format=args.image_format,
+        image_pattern=args.image_pattern,
+        draw_bbox=args.draw_bbox,
+        draw_id=not args.hide_id,
+        draw_trail=not args.hide_trail,
+        trail_length=trail_length,
+        linewidth=args.linewidth,
+        marker_size=args.marker_size,
+        alpha_image=args.alpha_image,
+        p_low=args.p_low,
+        p_high=args.p_high,
+        min_track_length=args.min_track_length,
+    )
+
+
+if __name__ == "__main__":
+    main()

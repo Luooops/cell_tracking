@@ -1,3 +1,4 @@
+import argparse
 import re
 from pathlib import Path
 
@@ -5,6 +6,7 @@ import numpy as np
 import pandas as pd
 import tifffile
 import matplotlib.pyplot as plt
+from PIL import Image
 
 from scipy.optimize import linear_sum_assignment
 from skimage.measure import regionprops
@@ -27,6 +29,62 @@ def sort_key_by_time(path: Path):
 
 def has_time_index(path: Path) -> bool:
     return sort_key_by_time(path) is not None
+
+
+def find_mask_files(mask_dir: Path, mask_format: str = "tiff") -> list[Path]:
+    """
+    Find mask files for one image format.
+    """
+    mask_format = mask_format.lower()
+    suffixes_by_format = {
+        "tif": {".tif"},
+        "tiff": {".tif", ".tiff"},
+        "png": {".png"},
+    }
+
+    if mask_format not in suffixes_by_format:
+        valid = ", ".join(sorted(suffixes_by_format))
+        raise ValueError(f"Unsupported mask_format={mask_format!r}. Use one of: {valid}")
+
+    suffixes = suffixes_by_format[mask_format]
+    mask_files = [
+        p
+        for p in mask_dir.iterdir()
+        if p.is_file()
+        and p.stem.endswith("_mask")
+        and p.suffix.lower() in suffixes
+        and has_time_index(p)
+    ]
+    return sorted(mask_files, key=sort_key_by_time)
+
+
+def read_mask_file(path: Path) -> np.ndarray:
+    """
+    Read TIFF or PNG labeled mask as a 2D array.
+    """
+    if path.suffix.lower() in {".tif", ".tiff"}:
+        arr = tifffile.imread(str(path))
+    elif path.suffix.lower() == ".png":
+        arr = np.array(Image.open(path))
+    else:
+        raise ValueError(f"Unsupported mask file extension: {path.suffix}")
+
+    if arr.ndim > 2:
+        arr = np.squeeze(arr)
+
+    if arr.ndim == 3 and arr.shape[-1] in (3, 4):
+        rgb = arr[..., :3]
+        if np.all(rgb[..., 0] == rgb[..., 1]) and np.all(rgb[..., 0] == rgb[..., 2]):
+            arr = rgb[..., 0]
+        else:
+            raise ValueError(
+                f"{path} looks like an RGB/RGBA PNG. Tracking expects a single-channel labeled mask."
+            )
+
+    if arr.ndim != 2:
+        raise ValueError(f"{path} produced an array with shape {arr.shape}; expected a 2D mask.")
+
+    return arr
 
 
 def remove_small_instances(mask: np.ndarray, min_area: int = 0) -> np.ndarray:
@@ -61,27 +119,23 @@ def load_mask_sequence(
     mask_dir: str,
     min_area: int | list[int] | tuple[int, ...] | dict[str, int] | None = 0,
     auto_min_area_fraction: float = 0.25,
+    mask_format: str = "tiff",
 ):
     """
     Load all mask files and stack them into (T, Y, X).
     """
     mask_dir = Path(mask_dir)
 
-    mask_files = list(mask_dir.glob("*_mask.tif")) + list(mask_dir.glob("*_mask.tiff"))
-    mask_files = [p for p in mask_files if has_time_index(p)]
-    mask_files = sorted(mask_files, key=sort_key_by_time)
+    mask_files = find_mask_files(mask_dir, mask_format=mask_format)
 
     if len(mask_files) == 0:
-        raise FileNotFoundError(f"No mask files found in: {mask_dir}")
+        raise FileNotFoundError(f"No {mask_format} mask files found in: {mask_dir}")
 
     masks = []
     counts_per_frame = []
 
     for frame_idx, p in enumerate(mask_files):
-        arr = tifffile.imread(str(p))
-        if arr.ndim > 2:
-            arr = np.squeeze(arr)
-
+        arr = read_mask_file(p)
         arr = arr.astype(np.int32)
         frame_min_area = resolve_min_area_for_mask(min_area, frame_idx, p)
         if frame_min_area is None:
@@ -847,6 +901,7 @@ def save_summary(
     min_track_length: int,
     max_angle_diff_deg: float,
     max_close_cost: float,
+    mask_format: str,
 ):
     with open(out_txt, "w", encoding="utf-8") as f:
         f.write("Simple Hungarian Cell Tracker V2 Summary\n")
@@ -855,6 +910,7 @@ def save_summary(
         f.write(f"image_height: {segmentation.shape[1]}\n")
         f.write(f"image_width: {segmentation.shape[2]}\n")
         f.write(f"num_mask_files: {len(mask_files)}\n")
+        f.write(f"mask_format: {mask_format}\n")
         f.write("\n")
         f.write(f"min_area: {summarize_min_area_setting(min_area)}\n")
         f.write(f"auto_min_area_fraction: {auto_min_area_fraction}\n")
@@ -884,9 +940,14 @@ def save_summary(
 # Main pipeline
 # =====================================
 
+DEFAULT_MASK_DIR = "/media/NAS_R01_P1S1/RAW_DATA/Scripta/example_images/1a40f06e-8691-4124-b410-fb724a5e203b/r01c01"
+DEFAULT_OUTPUT_DIR = DEFAULT_MASK_DIR
+DEFAULT_ROOT_DIR = "/media/NAS_R01_P1S1/RAW_DATA/Scripta/example_images/1a40f06e-8691-4124-b410-fb724a5e203b"
+
 def run_tracking_pipeline(
     mask_dir: str,
     output_dir: str,
+    mask_format: str = "tiff",
     min_area=500,
     auto_min_area_fraction: float = 0.25,
     max_distance: float = 45.0,
@@ -907,6 +968,7 @@ def run_tracking_pipeline(
         mask_dir=mask_dir,
         min_area=min_area,
         auto_min_area_fraction=auto_min_area_fraction,
+        mask_format=mask_format,
     )
 
     print(f"[INFO] Segmentation shape: {segmentation.shape}")
@@ -984,26 +1046,147 @@ def run_tracking_pipeline(
         min_track_length=min_track_length,
         max_angle_diff_deg=max_angle_diff_deg,
         max_close_cost=max_close_cost,
+        mask_format=mask_format,
     )
 
     print("[DONE] All outputs saved to:", output_dir)
 
 
-if __name__ == "__main__":
-    MASK_DIR = "/media/NAS_R01_P1S1/RAW_DATA/Scripta/example_images/dcfa8e4f-a731-4dd1-89b7-ac285232aca8/images/r01c12/ch2/masks_out"
-    OUTPUT_DIR = "/media/NAS_R01_P1S1/RAW_DATA/Scripta/example_images/dcfa8e4f-a731-4dd1-89b7-ac285232aca8/images/r01c12/ch2/simple_tracking_results_v2"
+def find_tracking_input_dirs(root_dir: str, folder_glob: str = "r*") -> list[Path]:
+    root_dir = Path(root_dir)
+    if not root_dir.is_dir():
+        raise NotADirectoryError(f"Root folder does not exist or is not a directory: {root_dir}")
 
-    run_tracking_pipeline(
-        mask_dir=MASK_DIR,
-        output_dir=OUTPUT_DIR,
-        min_area=500,
-        auto_min_area_fraction=0.25,
-        max_distance=45.0,
-        max_area_ratio=1.8,
-        max_shape_ratio=1.8,
-        max_lost=3,
-        area_weight=5.0,
-        shape_weight=3.0,
-        min_track_length=5,
-        max_close_cost=12.0,
+    input_dirs = sorted(
+        [p for p in root_dir.glob(folder_glob) if p.is_dir()],
+        key=lambda p: p.name,
     )
+    if len(input_dirs) == 0:
+        raise FileNotFoundError(f"No input folders matching {folder_glob!r} found under: {root_dir}")
+    return input_dirs
+
+
+def run_tracking_for_root(
+    root_dir: str,
+    folder_glob: str = "r*",
+    continue_on_error: bool = False,
+    **tracking_kwargs,
+):
+    input_dirs = find_tracking_input_dirs(root_dir, folder_glob=folder_glob)
+    print(f"[INFO] Found {len(input_dirs)} input folders under: {root_dir}")
+
+    failed = []
+    for idx, input_dir in enumerate(input_dirs, start=1):
+        print("\n" + "=" * 80)
+        print(f"[INFO] Batch {idx}/{len(input_dirs)} | input={input_dir}")
+        try:
+            run_tracking_pipeline(
+                mask_dir=str(input_dir),
+                output_dir=str(input_dir),
+                **tracking_kwargs,
+            )
+        except Exception as exc:
+            if not continue_on_error:
+                raise
+            failed.append((input_dir, exc))
+            print(f"[ERROR] Failed: {input_dir} | {exc}")
+
+    if failed:
+        print("\n[WARN] Some input folders failed:")
+        for input_dir, exc in failed:
+            print(f"  - {input_dir}: {exc}")
+    print("\n[DONE] Batch tracking finished.")
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Run simple cell tracking from labeled mask images.",
+    )
+    parser.add_argument(
+        "--root-dir",
+        default=None,
+        help=f"Root folder containing r* input folders. Example: {DEFAULT_ROOT_DIR}",
+    )
+    parser.add_argument(
+        "--input-folder-glob",
+        default="r*",
+        help="Glob pattern for input folders under --root-dir.",
+    )
+    parser.add_argument(
+        "--continue-on-error",
+        action="store_true",
+        help="In --root-dir batch mode, continue after a folder fails.",
+    )
+    parser.add_argument("--mask-dir", default=DEFAULT_MASK_DIR, help="Directory containing *_mask files.")
+    parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="Directory for tracking outputs.")
+    parser.add_argument(
+        "--mask-format",
+        default="png",
+        choices=("tif", "tiff", "png"),
+        help="Mask image format to load.",
+    )
+    parser.add_argument("--min-area", type=int, default=500, help="Minimum instance area to keep.")
+    parser.add_argument(
+        "--auto-min-area",
+        action="store_true",
+        help="Use automatic min-area filtering based on each frame's mean instance area.",
+    )
+    parser.add_argument(
+        "--auto-min-area-fraction",
+        type=float,
+        default=0.25,
+        help="Fraction of mean instance area used when --auto-min-area is set.",
+    )
+    parser.add_argument("--max-distance", type=float, default=45.0, help="Maximum linking distance.")
+    parser.add_argument("--max-area-ratio", type=float, default=1.8, help="Maximum area ratio for matching.")
+    parser.add_argument("--max-shape-ratio", type=float, default=1.8, help="Maximum shape ratio for matching.")
+    parser.add_argument("--max-lost", type=int, default=3, help="Maximum consecutive missing frames for active tracks.")
+    parser.add_argument("--area-weight", type=float, default=5.0, help="Area penalty weight in matching cost.")
+    parser.add_argument("--shape-weight", type=float, default=3.0, help="Shape penalty weight in matching cost.")
+    parser.add_argument("--min-track-length", type=int, default=5, help="Minimum track length to export.")
+    parser.add_argument(
+        "--max-angle-diff-deg",
+        type=float,
+        default=90.0,
+        help="Maximum track direction angle difference in degrees.",
+    )
+    parser.add_argument("--max-close-cost", type=float, default=12.0, help="Maximum cost for gap closing.")
+    return parser
+
+
+def main():
+    args = build_arg_parser().parse_args()
+    min_area = None if args.auto_min_area else args.min_area
+
+    tracking_kwargs = dict(
+        mask_format=args.mask_format,
+        min_area=min_area,
+        auto_min_area_fraction=args.auto_min_area_fraction,
+        max_distance=args.max_distance,
+        max_area_ratio=args.max_area_ratio,
+        max_shape_ratio=args.max_shape_ratio,
+        max_lost=args.max_lost,
+        area_weight=args.area_weight,
+        shape_weight=args.shape_weight,
+        min_track_length=args.min_track_length,
+        max_angle_diff_deg=args.max_angle_diff_deg,
+        max_close_cost=args.max_close_cost,
+    )
+
+    if args.root_dir is not None:
+        run_tracking_for_root(
+            root_dir=args.root_dir,
+            folder_glob=args.input_folder_glob,
+            continue_on_error=args.continue_on_error,
+            **tracking_kwargs,
+        )
+    else:
+        run_tracking_pipeline(
+            mask_dir=args.mask_dir,
+            output_dir=args.output_dir,
+            **tracking_kwargs,
+        )
+
+
+if __name__ == "__main__":
+    main()
