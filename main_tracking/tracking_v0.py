@@ -11,7 +11,11 @@ from PIL import Image
 from scipy.optimize import linear_sum_assignment
 from skimage.measure import regionprops
 
-from mask_area_filter import filter_small_instances_by_mean
+if __package__ in (None, ""):
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from main_tracking.mask_area_filter import filter_small_instances_by_mean
 
 
 # =====================================
@@ -53,9 +57,27 @@ def find_mask_files(mask_dir: Path, mask_format: str = "tiff") -> list[Path]:
         if p.is_file()
         and p.stem.endswith("_mask")
         and p.suffix.lower() in suffixes
-        and has_time_index(p)
     ]
-    return sorted(mask_files, key=sort_key_by_time)
+    for path in mask_files:
+        if not has_time_index(path):
+            raise ValueError(f"Mask file has no time index t<number>: {path.name}")
+
+    mask_files = sorted(mask_files, key=sort_key_by_time)
+    for previous, current in zip(mask_files, mask_files[1:]):
+        previous_time = sort_key_by_time(previous)
+        current_time = sort_key_by_time(current)
+        if current_time == previous_time:
+            raise ValueError(
+                f"Duplicate time index t{current_time}: {previous.name}, {current.name}. "
+                "Use one mask per time point in a single field of view."
+            )
+        if current_time != previous_time + 1:
+            raise ValueError(
+                f"Missing time indices t{previous_time + 1} through t{current_time - 1} "
+                f"between {previous.name} and {current.name}. "
+                "Tracking requires consecutive frames."
+            )
+    return mask_files
 
 
 def read_mask_file(path: Path) -> np.ndarray:
@@ -213,11 +235,13 @@ def filter_tracks_by_length(tracks, min_length=5):
     return [trk for trk in tracks if len(trk["history"]) >= min_length]
 
 
-def _track_direction(history, window: int = 3):
+def _track_direction(history, window: int = 3, *, from_start: bool = False):
+    """Estimate forward-time direction near the selected end of a track."""
     if len(history) < 2:
         return None
 
-    recent = history[-(min(window, len(history) - 1) + 1):]
+    sample_count = min(window, len(history) - 1) + 1
+    recent = history[:sample_count] if from_start else history[-sample_count:]
     dy_sum = 0.0
     dx_sum = 0.0
 
@@ -234,7 +258,7 @@ def _track_direction(history, window: int = 3):
 
 def _direction_match(track_a, track_b, max_angle_diff_deg: float = 90.0) -> bool:
     dir_a = _track_direction(track_a["history"])
-    dir_b = _track_direction(track_b["history"])
+    dir_b = _track_direction(track_b["history"], from_start=True)
 
     if dir_a is None or dir_b is None:
         return True
@@ -246,10 +270,11 @@ def _direction_match(track_a, track_b, max_angle_diff_deg: float = 90.0) -> bool
 
 def _track_angle_diff_deg(track_a, track_b):
     """
-    Return direction difference in degrees, or None if either track is too short.
+    Compare A's ending direction with B's starting direction at the gap.
+    Return None if either local direction is unavailable.
     """
     dir_a = _track_direction(track_a["history"])
-    dir_b = _track_direction(track_b["history"])
+    dir_b = _track_direction(track_b["history"], from_start=True)
 
     if dir_a is None or dir_b is None:
         return None
@@ -837,7 +862,10 @@ def export_tracks_to_csv(tracks, out_csv: str):
                 }
             )
 
-    df = pd.DataFrame(rows).sort_values(["track_id", "frame"])
+    columns = ["track_id", "frame", "x", "y", "area", "major_axis_length",
+               "minor_axis_length", "eccentricity", "solidity", "label",
+               "bbox_min_row", "bbox_min_col", "bbox_max_row", "bbox_max_col"]
+    df = pd.DataFrame(rows, columns=columns).sort_values(["track_id", "frame"])
     df.to_csv(out_csv, index=False)
     return df
 

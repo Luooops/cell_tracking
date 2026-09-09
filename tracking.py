@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from scipy.optimize import linear_sum_assignment
 from skimage.measure import regionprops
 
-from mask_area_filter import filter_small_instances_by_mean
+from main_tracking.mask_area_filter import filter_small_instances_by_mean
 
 
 # =====================================

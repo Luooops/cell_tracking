@@ -1,0 +1,28 @@
+{
+  "model": "cpsam_v2",
+  "gpu": true,
+  "parameters": {
+    "diameter": 25,
+    "cellprob_threshold": 1.8,
+    "flow_threshold": 1.0,
+    "p_low": 1,
+    "p_high": 99,
+    "bg_sigma": 80,
+    "black_gamma": 1.8,
+    "auto_min_area_fraction": 0.25
+  },
+  "images": [
+    {
+      "input": "E:\\aws_gt_data\\4cbffe68-5969-4f0a-8be6-9e02efd9720f\\r16c13\\r16c13f01p01-ch01t01.tiff",
+      "shape": [
+        2160,
+        2160
+      ],
+      "instances_before_filter": 244,
+      "instances": 236,
+      "min_area": 767,
+      "seconds": 9.67,
+      "output_prefix": "D:\\code\\cell_tracking\\cell_seg\\001_r16c13f01p01-ch01t01"
+    }
+  ]
+}

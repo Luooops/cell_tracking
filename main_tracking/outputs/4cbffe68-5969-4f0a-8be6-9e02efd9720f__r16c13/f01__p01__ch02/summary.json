@@ -1,0 +1,41 @@
+{
+  "status": "complete",
+  "input_dir": "E:\\aws_gt_data\\4cbffe68-5969-4f0a-8be6-9e02efd9720f\\r16c13",
+  "sequence_id": "4cbffe68-5969-4f0a-8be6-9e02efd9720f__r16c13/f01__p01__ch02",
+  "parameters": {
+    "input_dir": "E:\\aws_gt_data\\4cbffe68-5969-4f0a-8be6-9e02efd9720f\\r16c13",
+    "output_root": "D:\\code\\cell_tracking\\main_tracking\\outputs",
+    "model": "cpsam_v2",
+    "cpu": false,
+    "channel": null,
+    "diameter": 25,
+    "cellprob_threshold": 1.8,
+    "flow_threshold": 1.0,
+    "preprocessing": "legacy",
+    "min_area": null,
+    "auto_min_area_fraction": 0.25,
+    "max_distance": 45,
+    "max_area_ratio": 1.8,
+    "max_shape_ratio": 1.8,
+    "max_lost": 3,
+    "min_track_length": 5,
+    "gap_close_max_gap": 2,
+    "gap_close_max_distance": 30,
+    "max_close_cost": 12,
+    "alpha": 0.3
+  },
+  "model": {
+    "requested": "cpsam_v2",
+    "weights": "D:\\MiniConda\\envs\\cellpose\\cpsam_v2",
+    "device": "cuda:0",
+    "cellpose": "4.2.1.1",
+    "torch": "2.11.0+cu130",
+    "numpy": "2.2.5"
+  },
+  "mask_values": "0=background; positive=frame-local instance_id",
+  "coordinates": "x=column, y=row, zero-based pixels; frame_index starts at 0; time_index from filename",
+  "frames": 30,
+  "tracks": 1286,
+  "detections": 6872,
+  "seconds": 230.628
+}
