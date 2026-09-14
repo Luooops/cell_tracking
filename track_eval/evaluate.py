@@ -251,6 +251,8 @@ def run(args):
             visual_rows.append(dict(image_name=frame["name"], file=str(target), background=background))
         print(f"{frame['name']}: GT={len(local)}, matched={len(matches)}, ambiguous={ambiguous.sum()}", flush=True)
     metrics, transitions = track_metrics(rows)
+    from track_eval.metrics import export_recovery
+    recovery = export_recovery(output, rows, metrics)
     columns = ["sequence", "image_name", "xml_frame_id", "time_index", "gt_instance_id", "gt_track_id", "gt_x", "gt_y", "prediction_available", "pred_instance_id", "pred_track_id", "pred_x", "pred_y", "distance", "candidate_count", "ambiguous"]
     csv_write(output / "position_matches.csv", rows, columns + ["gt_id_conflict"])
     csv_write(output / "gt_id_conflicts.csv", [r for r in rows if r["gt_id_conflict"]], columns + ["gt_id_conflict"])
@@ -272,7 +274,11 @@ def run(args):
         unambiguous_adjacent_pairs=pairs, unambiguous_id_changes=changes,
         unambiguous_association_accuracy=(pairs-changes)/pairs if pairs else None,
         limitations="Position-based diagnostic, not standardized IDSW/IDF1. Unmatched predictions are not false positives. GT completeness unknown. Consecutive GT observations may be temporally sparse; see time_gap. Ambiguous matches are retained but excluded from unambiguous adjacent metrics.")
+    report['recovery_evaluation'] = recovery
     (output / "summary.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    for name, item in recovery['metrics'].items():
+        value = 'N/A' if item['value'] is None else f"{item['value']:.2%}"
+        print(f"{name}: {value} ({item['numerator']}/{item['denominator']})")
     print(f"Evaluation saved: {output}")
     return 0
 

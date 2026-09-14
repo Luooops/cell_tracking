@@ -1,0 +1,10 @@
+﻿metric,numerator,denominator,value
+position_coverage,6803,7537,0.902613772057848
+reliable_position_coverage,6742,7537,0.8945203661934457
+complete_gt_track_recovery,70,367,0.1907356948228883
+conditional_identity_retention,4515,5289,0.8536585365853658
+gt_link_recovery_conservative,4515,6074,0.7433322357589727
+gt_link_recovery_decidable,4515,5970,0.7562814070351759
+ambiguous_link_fraction,104,6074,0.017122160026341784
+track_review_fraction,49,367,0.1335149863760218
+observed_prediction_mixing_fraction,183,1021,0.1792360430950049

@@ -1,0 +1,104 @@
+{
+  "status": "complete",
+  "gt": "E:\\aws_gt_data\\4cbffe68-5969-4f0a-8be6-9e02efd9720f\\r16c13",
+  "dataset": "4cbffe68-5969-4f0a-8be6-9e02efd9720f",
+  "predictions_root": "D:\\code\\cell_tracking\\main_tracking\\outputs",
+  "max_distance": 45,
+  "ambiguity_rule": "either endpoint has multiple candidates within radius; ID-independent position matching",
+  "gt_frames": 30,
+  "missing_prediction_frames": [],
+  "gt_objects": 7537,
+  "matched_objects": 6803,
+  "position_coverage": 0.902613772057848,
+  "ambiguous_gt_objects": 84,
+  "gt_tracks": 396,
+  "gt_objects_without_track_id": 490,
+  "excluded_conflicting_gt_tracks": [
+    "r16c13/f01__p01__ch02:10",
+    "r16c13/f01__p01__ch02:104",
+    "r16c13/f01__p01__ch02:17",
+    "r16c13/f01__p01__ch02:179",
+    "r16c13/f01__p01__ch02:184",
+    "r16c13/f01__p01__ch02:19",
+    "r16c13/f01__p01__ch02:21",
+    "r16c13/f01__p01__ch02:211",
+    "r16c13/f01__p01__ch02:215",
+    "r16c13/f01__p01__ch02:224",
+    "r16c13/f01__p01__ch02:25",
+    "r16c13/f01__p01__ch02:59",
+    "r16c13/f01__p01__ch02:75",
+    "r16c13/f01__p01__ch02:77",
+    "r16c13/f01__p01__ch02:95"
+  ],
+  "unambiguous_adjacent_pairs": 5359,
+  "unambiguous_id_changes": 805,
+  "unambiguous_association_accuracy": 0.8497854077253219,
+  "limitations": "Position-based diagnostic, not standardized IDSW/IDF1. Unmatched predictions are not false positives. GT completeness unknown. Consecutive GT observations may be temporally sparse; see time_gap. Ambiguous matches are retained but excluded from unambiguous adjacent metrics.",
+  "recovery_evaluation": {
+    "schema_version": 2,
+    "metrics": {
+      "position_coverage": {
+        "metric": "position_coverage",
+        "numerator": 6803,
+        "denominator": 7537,
+        "value": 0.902613772057848
+      },
+      "reliable_position_coverage": {
+        "metric": "reliable_position_coverage",
+        "numerator": 6742,
+        "denominator": 7537,
+        "value": 0.8945203661934457
+      },
+      "complete_gt_track_recovery": {
+        "metric": "complete_gt_track_recovery",
+        "numerator": 70,
+        "denominator": 367,
+        "value": 0.1907356948228883
+      },
+      "conditional_identity_retention": {
+        "metric": "conditional_identity_retention",
+        "numerator": 4515,
+        "denominator": 5289,
+        "value": 0.8536585365853658
+      },
+      "gt_link_recovery_conservative": {
+        "metric": "gt_link_recovery_conservative",
+        "numerator": 4515,
+        "denominator": 6074,
+        "value": 0.7433322357589727
+      },
+      "gt_link_recovery_decidable": {
+        "metric": "gt_link_recovery_decidable",
+        "numerator": 4515,
+        "denominator": 5970,
+        "value": 0.7562814070351759
+      },
+      "ambiguous_link_fraction": {
+        "metric": "ambiguous_link_fraction",
+        "numerator": 104,
+        "denominator": 6074,
+        "value": 0.017122160026341784
+      },
+      "track_review_fraction": {
+        "metric": "track_review_fraction",
+        "numerator": 49,
+        "denominator": 367,
+        "value": 0.1335149863760218
+      },
+      "observed_prediction_mixing_fraction": {
+        "metric": "observed_prediction_mixing_fraction",
+        "numerator": 183,
+        "denominator": 1021,
+        "value": 0.1792360430950049
+      }
+    },
+    "counts": {
+      "eligible_tracks": 367,
+      "single_observation_tracks": 29,
+      "missing_prediction_tracks": 0,
+      "total_gt_adjacent_links": 6074,
+      "excluded_missing_prediction_links": 0
+    },
+    "scope": "Recovery at GT annotated observations only; single-observation and conflicting GT tracks excluded. Ambiguous tracks remain in conservative denominator. Mixing checked only against reliable valid annotated GT identities."
+  }
+}
