@@ -1,0 +1,24 @@
+# Core workflows: main_tracking/, gt_process/, track_eval/.
+# Version baseline: existing torch environment, Python 3.10.20.
+# Install the appropriate PyTorch build first (GPU command below), then this file:
+# python -m pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu130
+# python -m pip install -r requirements.txt
+# Plain version pins also accept the corresponding +cu130 builds.
+torch==2.11.0
+torchvision==0.26.0
+cellpose==4.2.1.1
+numpy==2.2.5
+scipy==1.15.3
+scikit-image==0.25.2
+pandas==2.3.3
+tifffile==2024.12.12
+Pillow==11.1.0
+matplotlib==3.10.9
+opencv-python-headless==5.0.0.93
+openpyxl==3.1.5
+
+# Do not additionally install opencv-python: both packages provide cv2.
+# Cellpose's transitive dependencies are installed automatically by pip.
+# Local model weights are not included; configure --model if moved.
+# Excel export also requires Node.js and @oai/artifact-tool (not pip packages).
+# Experimental trackastra_tracking/ is outside this core environment.
