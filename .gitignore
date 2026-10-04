@@ -221,3 +221,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Ignore presentations exports and assets
+presentations/
+
+# Ignore directories beginning with output at any depth
+output*/

@@ -1,5 +1,6 @@
 """Position-based tracking evaluation against per-image polygon GT XML/ZIP."""
 import argparse
+from copy import copy
 import csv
 import json
 import re
@@ -79,7 +80,7 @@ def load_frames(gt, label):
     return sorted(frames, key=lambda f: (f["sequence"], f["time"]))
 
 
-def match_positions(gt_xy, pred_xy, radius):
+def match_positions(gt_xy, pred_xy, radius, priority_radius=0):
     """Maximize number of gated matches, then minimize total distance.
 
     Dummy assignments prevent rejected pairs from consuming valid candidates.
@@ -97,39 +98,64 @@ def match_positions(gt_xy, pred_xy, radius):
     matches = {int(i): (int(j), float(distances[i, j])) for i, j in zip(row, col) if j < m and valid[i, j]}
     counts = valid.sum(axis=1)
     ambiguity = (counts > 1) | np.any(valid & (valid.sum(axis=0) > 1)[None, :], axis=1)
+    if priority_radius > 0:
+        # Lock only mutual unique candidates in the tighter gate.
+        near = distances <= min(priority_radius, radius)
+        secure = near & (near.sum(axis=1) == 1)[:, None] & (near.sum(axis=0) == 1)[None, :]
+        gi, pj = np.where(secure)
+        if len(gi):
+            remaining_g = [i for i in range(n) if i not in set(gi)]
+            remaining_p = [j for j in range(m) if j not in set(pj)]
+            rest, rest_ambiguity, _ = match_positions(
+                np.asarray(gt_xy)[remaining_g], np.asarray(pred_xy)[remaining_p], radius)
+            staged = {int(i): (int(j), float(distances[i, j])) for i, j in zip(gi, pj)}
+            staged.update({remaining_g[i]: (remaining_p[j], distance) for i, (j, distance) in rest.items()})
+            # Do not let a priority pair steal another object's only viable match.
+            if len(staged) == len(matches):
+                matches = staged
+                ambiguity = np.zeros(n, dtype=bool)
+                ambiguity[remaining_g] = rest_ambiguity
+    # Counts always describe the original outer gate, even after priority resolution.
     return matches, ambiguity, counts
 
 
 def prediction_index(root, dataset):
     index = {}
-    for directory in sorted(root.glob(f"{dataset}__*")):
-        for manifest in sorted(directory.rglob("frames.csv")):
-            folder = manifest.parent
-            if not (folder / "instance_tracks.csv").is_file() or not (folder / "summary.json").is_file():
+    if not root.is_dir():
+        raise FileNotFoundError(f"Tracking output directory does not exist: {root}")
+    for manifest in sorted(root.rglob("frames.csv")):
+        folder = manifest.parent
+        if not (folder / "instance_tracks.csv").is_file() or not (folder / "summary.json").is_file():
+            continue
+        summary = json.loads((folder / "summary.json").read_text(encoding="utf-8-sig"))
+        # Tracking manifests identify the dataset even inside nested experiment folders.
+        identifiers = UUID.findall(summary.get("sequence_id", ""))
+        if not identifiers:
+            identifiers = UUID.findall(str(folder.resolve()))
+        if not identifiers or identifiers[-1].lower() != dataset.lower():
+            continue
+        if summary.get("status") != "complete":
+            continue
+        detections = defaultdict(list)
+        seen_instances, seen_tracks = set(), set()
+        for row in csv_read(folder / "instance_tracks.csv"):
+            key = (row["image_name"], row["instance_id"])
+            identity = (row["image_name"], row["track_id"])
+            if key in seen_instances or identity in seen_tracks or not row["track_id"]:
+                raise ValueError(f"Invalid prediction mapping: {folder}")
+            seen_instances.add(key)
+            seen_tracks.add(identity)
+            row["x"], row["y"] = float(row["x"]), float(row["y"])
+            if not np.isfinite([row["x"], row["y"]]).all():
+                raise ValueError(f"Nonfinite prediction position: {folder}")
+            detections[row["image_name"]].append(row)
+        for row in csv_read(manifest):
+            if row["status"] != "complete":
                 continue
-            summary = json.loads((folder / "summary.json").read_text(encoding="utf-8"))
-            if summary.get("status") != "complete":
-                continue
-            detections = defaultdict(list)
-            seen_instances, seen_tracks = set(), set()
-            for row in csv_read(folder / "instance_tracks.csv"):
-                key = (row["image_name"], row["instance_id"])
-                identity = (row["image_name"], row["track_id"])
-                if key in seen_instances or identity in seen_tracks or not row["track_id"]:
-                    raise ValueError(f"Invalid prediction mapping: {folder}")
-                seen_instances.add(key)
-                seen_tracks.add(identity)
-                row["x"], row["y"] = float(row["x"]), float(row["y"])
-                if not np.isfinite([row["x"], row["y"]]).all():
-                    raise ValueError(f"Nonfinite prediction position: {folder}")
-                detections[row["image_name"]].append(row)
-            for row in csv_read(manifest):
-                if row["status"] != "complete":
-                    continue
-                name = row["image_name"]
-                if name in index:
-                    raise ValueError(f"Multiple predictions for {name}")
-                index[name] = dict(folder=folder, frame=row, detections=detections[name], summary=summary)
+            name = row["image_name"]
+            if name in index:
+                raise ValueError(f"Multiple predictions for {name}")
+            index[name] = dict(folder=folder, frame=row, detections=detections[name], summary=summary)
     return index
 
 
@@ -220,8 +246,14 @@ def run(args):
         print("Use a raw-image directory for --input-dir. Existing nonempty output folders must be resolved before rerunning.")
         if not args.allow_missing or len(missing) == len(frames):
             return 2
-    output = args.output_root / f"{dataset}__{datetime.now():%Y%m%d_%H%M%S_%f}"
-    output.mkdir(parents=True)
+    # GT image names supply the well for both directory and XML/ZIP inputs.
+    wells = sorted({frame["sequence"].split("/", 1)[0] for frame in frames})
+    gt_wells = "_".join(wells)
+    output = (args.output_root / dataset / gt_wells if getattr(args, "batch", False)
+              else args.output_root / f"{dataset}__{gt_wells}__{datetime.now():%Y%m%d_%H%M%S_%f}")
+    if output.exists() and any(output.iterdir()):
+        raise ValueError(f"Output is not empty: {output}; choose another --output-root")
+    output.mkdir(parents=True, exist_ok=True)
     (output / "visualizations").mkdir()
     rows, frame_rows, visual_rows = [], [], []
     for frame in frames:
@@ -229,7 +261,7 @@ def run(args):
         preds = prediction["detections"] if prediction else []
         if prediction and (int(prediction["frame"]["width"]), int(prediction["frame"]["height"])) != (frame["width"], frame["height"]):
             raise ValueError(f"GT/prediction dimensions differ: {frame['name']}")
-        matches, ambiguous, counts = match_positions([(o["x"], o["y"]) for o in frame["objects"]], [(p["x"], p["y"]) for p in preds], args.max_distance)
+        matches, ambiguous, counts = match_positions([(o["x"], o["y"]) for o in frame["objects"]], [(p["x"], p["y"]) for p in preds], args.max_distance, getattr(args, "priority_distance", 0))
         local = []
         for i, obj in enumerate(frame["objects"]):
             pair = matches.get(i)
@@ -251,6 +283,8 @@ def run(args):
             visual_rows.append(dict(image_name=frame["name"], file=str(target), background=background))
         print(f"{frame['name']}: GT={len(local)}, matched={len(matches)}, ambiguous={ambiguous.sum()}", flush=True)
     metrics, transitions = track_metrics(rows)
+    from track_eval.metrics import export_recovery
+    recovery = export_recovery(output, rows, metrics)
     columns = ["sequence", "image_name", "xml_frame_id", "time_index", "gt_instance_id", "gt_track_id", "gt_x", "gt_y", "prediction_available", "pred_instance_id", "pred_track_id", "pred_x", "pred_y", "distance", "candidate_count", "ambiguous"]
     csv_write(output / "position_matches.csv", rows, columns + ["gt_id_conflict"])
     csv_write(output / "gt_id_conflicts.csv", [r for r in rows if r["gt_id_conflict"]], columns + ["gt_id_conflict"])
@@ -262,7 +296,8 @@ def run(args):
     changes = sum(m["unambiguous_id_changes"] for m in metrics)
     report = dict(status="partial" if missing else "complete", gt=str(args.gt.resolve()), dataset=dataset,
         predictions_root=str(args.predictions_root.resolve()), max_distance=args.max_distance,
-        ambiguity_rule="either endpoint has multiple candidates within radius; ID-independent position matching",
+        priority_distance=getattr(args, "priority_distance", 0),
+        ambiguity_rule="Mutual unique priority-gate pairs first, only if outer-gate match count is preserved; remaining ambiguity uses residual outer-gate candidates. candidate_count uses original outer gate. Zero priority restores legacy rule.",
         gt_frames=len(frames), missing_prediction_frames=[f["name"] for f in missing], gt_objects=len(rows),
         matched_objects=sum(bool(r["pred_track_id"]) for r in rows),
         position_coverage=sum(bool(r["pred_track_id"]) for r in rows)/len(rows) if rows else None,
@@ -272,18 +307,46 @@ def run(args):
         unambiguous_adjacent_pairs=pairs, unambiguous_id_changes=changes,
         unambiguous_association_accuracy=(pairs-changes)/pairs if pairs else None,
         limitations="Position-based diagnostic, not standardized IDSW/IDF1. Unmatched predictions are not false positives. GT completeness unknown. Consecutive GT observations may be temporally sparse; see time_gap. Ambiguous matches are retained but excluded from unambiguous adjacent metrics.")
+    report['recovery_evaluation'] = recovery
     (output / "summary.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    for name, item in recovery['metrics'].items():
+        value = 'N/A' if item['value'] is None else f"{item['value']:.2%}"
+        print(f"{name}: {value} ({item['numerator']}/{item['denominator']})")
     print(f"Evaluation saved: {output}")
     return 0
+
+
+def run_inputs(args):
+    direct = sorted(p for p in args.gt.iterdir() if p.is_file() and p.suffix.lower() in {".xml", ".zip"}) if args.gt.is_dir() else []
+    batch = getattr(args, "batch", False) or (args.gt.is_dir() and not direct)
+    if not batch:
+        return run(args)
+    files = sorted(p for p in args.gt.rglob("*") if p.is_file() and p.suffix.lower() in {".xml", ".zip"}) if args.gt.is_dir() else [args.gt]
+    if not files:
+        raise FileNotFoundError(f"No GT XML/ZIP found in {args.gt}")
+    failures = 0
+    for gt in files:
+        job = copy(args)
+        job.gt, job.batch = gt, True
+        print(f"Evaluating: {gt}", flush=True)
+        try:
+            failures += int(run(job) != 0)
+        except (ValueError, OSError, KeyError) as exc:
+            failures += 1
+            print(f"Evaluation failed: {gt}: {exc}", flush=True)
+    print(f"Batch complete: {len(files) - failures} succeeded; {failures} failed.")
+    return 2 if failures else 0
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gt", type=Path, required=True, help="XML/ZIP or directory containing one XML/ZIP")
+    parser.add_argument("--batch", action="store_true", help="Recursively evaluate XML/ZIP files into output-root/UUID/well")
     parser.add_argument("--dataset-id", help="UUID override if absent from GT path")
-    parser.add_argument("--predictions-root", type=Path, default=ROOT / "main_tracking/outputs")
+    parser.add_argument("--predictions-root", "--tracking-output", dest="predictions_root", type=Path, default=ROOT / "main_tracking/outputs", help="Recursively search this tracking output directory")
     parser.add_argument("--output-root", type=Path, default=Path(__file__).parent / "outputs")
     parser.add_argument("--data-dir", type=Path, help="Raw images, optional for visualization and suggested CLI")
+    parser.add_argument("--priority-distance", type=float, default=30, help="Mutual unique candidate gate; 0 restores legacy matching; capped at max-distance")
     parser.add_argument("--max-distance", type=float, default=45, help="Position gate in pixels; provisional default, calibrate manually")
     parser.add_argument("--label", default="cell")
     parser.add_argument("--visualize", choices=["issues", "all", "none"], default="issues")
@@ -291,8 +354,10 @@ def main():
     args = parser.parse_args()
     if not np.isfinite(args.max_distance) or args.max_distance <= 0:
         parser.error("--max-distance must be positive and finite")
+    if not np.isfinite(args.priority_distance) or args.priority_distance < 0:
+        parser.error("--priority-distance must be nonnegative and finite")
     try:
-        return run(args)
+        return run_inputs(args)
     except (ValueError, FileNotFoundError, KeyError) as exc:
         parser.exit(2, f"Evaluation error: {exc}\n")
 

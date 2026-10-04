@@ -549,6 +549,8 @@ class SimpleCellTrackerV3:
         iou_weight: float = 8.0,
         n_history: int = 3,
         gap_growth: float = 0.35,
+        deformable: bool = False,
+        motion_scale: float = 1.0,
     ):
         self.max_distance = max_distance
         self.max_area_ratio = max_area_ratio
@@ -558,6 +560,8 @@ class SimpleCellTrackerV3:
         self.shape_weight = shape_weight
         self.iou_weight = iou_weight
         self.n_history = n_history
+        self.deformable = deformable
+        self.motion_scale = motion_scale
         self.gap_growth = gap_growth
 
         self.next_track_id = 1
@@ -575,6 +579,7 @@ class SimpleCellTrackerV3:
             "last_frame": det["frame"],
             "lost_count": 0,
             "history": [det.copy()],
+            "prediction_errors": [],
         }
 
     def _finish_track(self, track_id: int):
@@ -592,17 +597,12 @@ class SimpleCellTrackerV3:
         """
         hist = self._get_recent_history(trk)
 
-        ref = {
-            "area": float(np.mean([h["area"] for h in hist])),
-            "major_axis_length": float(np.mean([h["major_axis_length"] for h in hist])),
-            "minor_axis_length": float(np.mean([h["minor_axis_length"] for h in hist])),
-            "eccentricity": float(np.mean([h["eccentricity"] for h in hist])),
-            "solidity": float(np.mean([h["solidity"] for h in hist])),
-            "bbox_min_row": int(round(np.mean([h["bbox_min_row"] for h in hist]))),
-            "bbox_min_col": int(round(np.mean([h["bbox_min_col"] for h in hist]))),
-            "bbox_max_row": int(round(np.mean([h["bbox_max_row"] for h in hist]))),
-            "bbox_max_col": int(round(np.mean([h["bbox_max_col"] for h in hist]))),
-        }
+        reducer = np.median if self.deformable else np.mean
+        fields = ("area", "major_axis_length", "minor_axis_length", "eccentricity", "solidity",
+                  "bbox_min_row", "bbox_min_col", "bbox_max_row", "bbox_max_col")
+        ref = {key: float(reducer([h[key] for h in hist])) for key in fields}
+        for key in fields[5:]:
+            ref[key] = int(round(ref[key]))
         return ref
 
     def _predict_position(self, trk: dict, frame_idx: int):
@@ -638,16 +638,37 @@ class SimpleCellTrackerV3:
         last_obs = hist[-1]
         frame_gap = frame_idx - last_obs["frame"]
 
+        vy *= self.motion_scale
+        vx *= self.motion_scale
         pred_y = last_obs["y"] + vy * frame_gap
         pred_x = last_obs["x"] + vx * frame_gap
 
         return pred_y, pred_x, vy, vx
 
-    def _gap_adjusted_max_distance(self, gap: int):
+    def _search_radius(self, trk, gap):
+        """Bounded radius from accepted one-step prediction residuals, in pixels.
+
+        Bootstrap at the configured distance; a floor prevents collapse, and a
+        ceiling limits feedback from occasional incorrect associations.
         """
-        Allow a slightly larger search radius for larger frame gaps.
-        """
-        return self.max_distance * (1.0 + self.gap_growth * max(0, gap - 1))
+        base = self.max_distance
+        errors = trk.get("prediction_errors", [])
+        if self.deformable and len(errors) >= 3:
+            median = float(np.median(errors))
+            mad = float(np.median(np.abs(np.asarray(errors) - median)))
+            base = float(np.clip(median + 3 * 1.4826 * mad, 0.75 * base, 2 * base))
+        return base * (1 + self.gap_growth * max(0, gap - 1))
+
+    def _assignment(self, cost):
+        """Dummy columns let every track decline an expensive association."""
+        if not self.deformable:
+            return linear_sum_assignment(cost)
+        # Same scale as distance (0..10) plus bounded morphology penalties.
+        # This is a heuristic rejection cost, not a calibrated probability.
+        unmatched_cost = 12.0
+        real = np.where(cost < unmatched_cost, cost, 1e9)
+        augmented = np.concatenate((real, np.full((len(cost), len(cost)), unmatched_cost)), axis=1)
+        return linear_sum_assignment(augmented)
 
     def _build_cost_matrix(self, track_ids, detections):
         n_tracks = len(track_ids)
@@ -667,17 +688,17 @@ class SimpleCellTrackerV3:
                 pred_y, pred_x, _, _ = self._predict_position(trk, det["frame"])
                 dist = euclidean_distance(pred_y, pred_x, det["y"], det["x"])
 
-                allowed_dist = self._gap_adjusted_max_distance(gap)
+                allowed_dist = self._search_radius(trk, gap)
                 if dist > allowed_dist:
                     continue
 
-                if not ratio_ok(ref["area"], det["area"], self.max_area_ratio):
+                if not self.deformable and not ratio_ok(ref["area"], det["area"], self.max_area_ratio):
                     continue
 
-                if not ratio_ok(ref["major_axis_length"], det["major_axis_length"], self.max_shape_ratio):
+                if not self.deformable and not ratio_ok(ref["major_axis_length"], det["major_axis_length"], self.max_shape_ratio):
                     continue
 
-                if not ratio_ok(ref["minor_axis_length"], det["minor_axis_length"], self.max_shape_ratio):
+                if not self.deformable and not ratio_ok(ref["minor_axis_length"], det["minor_axis_length"], self.max_shape_ratio):
                     continue
 
                 area_ratio = safe_ratio(ref["area"], det["area"])
@@ -700,6 +721,13 @@ class SimpleCellTrackerV3:
                     det["bbox_max_col"],
                 )
 
+                if self.deformable:
+                    dy = pred_y - (track_box[0] + track_box[2]) / 2
+                    dx = pred_x - (track_box[1] + track_box[3]) / 2
+                    track_box = (track_box[0]+dy, track_box[1]+dx, track_box[2]+dy, track_box[3]+dx)
+                    area_ratio = 1 + abs(ref["area"]-det["area"]) / max(ref["area"]+det["area"], 1e-6)
+                    shape_penalty = 0.5 * sum(abs(ref[k]-det[k]) / max(ref[k]+det[k], 1e-6)
+                                              for k in ("major_axis_length", "minor_axis_length"))
                 iou = bbox_iou(track_box, det_box)
                 iou_penalty = 1.0 - iou
 
@@ -729,13 +757,13 @@ class SimpleCellTrackerV3:
             return set(), set()
 
         cost = self._build_cost_matrix(track_ids, available_dets)
-        row_ind, col_ind = linear_sum_assignment(cost)
+        row_ind, col_ind = self._assignment(cost)
 
         matched_tracks = set()
         matched_dets_global = set()
 
         for r, c in zip(row_ind, col_ind):
-            if cost[r, c] >= 1e8:
+            if c >= len(available_dets) or cost[r, c] >= 1e8:
                 continue
 
             track_id = track_ids[r]
@@ -745,6 +773,11 @@ class SimpleCellTrackerV3:
             trk = self.active_tracks[track_id]
 
             frame_gap = det["frame"] - trk["last_frame"]
+            if self.deformable and frame_gap == 1:
+                py, px, _, _ = self._predict_position(trk, det["frame"])
+                error = euclidean_distance(py, px, det["y"], det["x"])
+                trk["prediction_errors"].append(error)
+                trk["prediction_errors"] = trk["prediction_errors"][-8:]
             if frame_gap > 0:
                 new_vy = (det["y"] - trk["history"][-1]["y"]) / frame_gap
                 new_vx = (det["x"] - trk["history"][-1]["x"]) / frame_gap

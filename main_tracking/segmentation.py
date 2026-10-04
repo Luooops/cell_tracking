@@ -30,8 +30,10 @@ def read_image(path):
 
 def segment_image(model, image, *, diameter=25, cellprob_threshold=1.8,
                   flow_threshold=1.0, min_area=None, auto_min_area_fraction=0.25,
-                  preprocessing="legacy", **preprocess_kwargs):
+                  preprocessing="legacy", input_channels=1, **preprocess_kwargs):
     processed = preprocess(image, **preprocess_kwargs) if preprocessing == "legacy" else image
+    if input_channels == 3:
+        processed = np.stack([processed]*3, axis=-1)
     masks, _, _ = model.eval(processed, diameter=diameter,
                             cellprob_threshold=cellprob_threshold, flow_threshold=flow_threshold)
     stats = compute_mask_area_stats(masks)

@@ -30,9 +30,10 @@ def write_frames(path, rows):
         writer.writerows(rows)
 
 
-def discover(source, output_root, channel=None):
+def discover(source, output_root, channel=None, batch=False):
     """Validate every selected image before model loading or output creation."""
     source, output_root = source.resolve(), output_root.resolve()
+    batch = batch or any(p.is_dir() and (UUID.fullmatch(p.name) or re.fullmatch(r"r\d+c\d+", p.name, re.I)) for p in source.iterdir())
     if source == output_root or source in output_root.parents:
         raise ValueError("Output root must be outside the input tree")
     if channel and not re.fullmatch(r"ch\d+", channel, re.I):
@@ -72,7 +73,8 @@ def discover(source, output_root, channel=None):
                 image_name=path.name, source_relative_path=path.relative_to(source).as_posix(),
                 mask_path=f"masks/{path.stem}_mask.tiff", overlay_path=f"overlays/{path.stem}_overlay.png",
                 height=shape[0], width=shape[1], status="pending", instances="", min_area=""))
-        destination = output_root.joinpath(*key)
+        dataset, well = key[0].rsplit("__", 1)
+        destination = output_root.joinpath(dataset, well, key[1]) if batch else output_root.joinpath(*key)
         if destination.exists() and any(destination.iterdir()):
             raise ValueError(f"Output is not empty: {destination}; choose another --output-root")
         result[destination] = rows
@@ -117,13 +119,14 @@ def process_sequence(args, model, destination, rows, model_info):
     try:
         tracker = SimpleCellTrackerV3(max_distance=args.max_distance, max_area_ratio=args.max_area_ratio,
             max_shape_ratio=args.max_shape_ratio, max_lost=args.max_lost,
-            area_weight=5, shape_weight=3, iou_weight=2, n_history=3, gap_growth=0.35)
+            area_weight=5, shape_weight=3, iou_weight=2, n_history=3, gap_growth=0.35,
+            deformable=getattr(args, "deformable", False), motion_scale=getattr(args, "motion_scale", 1.0))
         for current in rows:
             raw = read_image(source / current["source_relative_path"])
             mask, threshold, _ = segment_image(model, raw, diameter=args.diameter,
                 cellprob_threshold=args.cellprob_threshold, flow_threshold=args.flow_threshold,
                 min_area=args.min_area, auto_min_area_fraction=args.auto_min_area_fraction,
-                preprocessing=args.preprocessing)
+                preprocessing=args.preprocessing, input_channels=getattr(args, "input_channels", 1))
             if mask.shape != raw.shape:
                 raise ValueError("Model mask dimensions differ from source")
             save_mask(destination / current["mask_path"], mask)
@@ -133,7 +136,9 @@ def process_sequence(args, model, destination, rows, model_info):
             write_frames(destination / "frames.csv", rows)
             print(f"[{current['frame_index'] + 1}/{len(rows)}] {current['image_name']}: {len(detections)} instances", flush=True)
         tracker.finish_all()
-        tracks = gap_close_tracks(tracker.get_all_tracks(), max_gap=args.gap_close_max_gap,
+        tracks = tracker.get_all_tracks()
+        if args.gap_close_max_gap > 0:
+            tracks = gap_close_tracks(tracks, max_gap=args.gap_close_max_gap,
             max_dist=args.gap_close_max_distance, max_area_ratio=args.max_area_ratio,
             max_shape_ratio=args.max_shape_ratio, max_angle_diff_deg=120, max_close_cost=args.max_close_cost)
         df = export_tracks_to_csv(tracks, destination / "tracks.csv")
@@ -166,7 +171,7 @@ def process_sequence(args, model, destination, rows, model_info):
 
 
 def run(args):
-    jobs = discover(args.input_dir, args.output_root, args.channel)
+    jobs = discover(args.input_dir, args.output_root, args.channel, getattr(args, "batch", False))
     import torch
     from cellpose import models
     model_source = args.model
