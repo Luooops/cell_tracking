@@ -84,10 +84,22 @@ trackastra_tracking/outputs/<数据UUID>__<孔位>/f01__p01__ch02/
 
 位置覆盖率两者相同（89.99%），因为检测是同一批。GT 用的是 2026-10 重新标注的版本。30 帧序列在 GPU 上约 7–9 秒。
 
+同一序列，用 `track_eval/perfect_tracks.py`（完美轨迹比例和 ID 切换，定义见 `track_eval/README_perfect_tracks.md`）：
+
+| 指标 | 经典算法（仓库中的现有输出） | Trackastra（general_2d，greedy_nodiv） |
+|---|---|---|
+| 完美轨迹比例 | 19.28%（91/472） | 38.77%（183/472） |
+| ID 切换 | 1248 | 377 |
+| 纯度 | 0.924 | 0.940 |
+
+```powershell
+python track_eval/perfect_tracks.py --gt "<XML 或 ZIP>" --predictions-root trackastra_tracking/outputs
+```
+
 ### 为什么默认用 general_2d + greedy_nodiv
 
-在 15 个重新标注的孔上试了 2 个预训练模型 × 3 种连接方式（检测为实验室微调的 Cellpose，指标为"整条 GT 轨迹只对应一个预测 ID、
-且该 ID 不混入其他细胞"的比例；这是我们自己的评估脚本，口径和 `track_eval` 的完整跟踪成功率接近但不完全相同）：
+在 15 个重新标注的孔上试了 2 个预训练模型 × 3 种连接方式（检测为实验室微调的 Cellpose，指标为完美轨迹比例，
+即 `track_eval/perfect_tracks.py` 的口径）：
 
 | 模型 | 模式 | 3 个留出孔 | 其余 12 个孔 |
 |---|---|---|---|
