@@ -64,20 +64,30 @@ def find_sequences(predictions_root):
 def track_sequence(seq_dir, input_dir, output_root, model, mode, copy_masks, overwrite):
     seq_dir = Path(seq_dir)
     summary_in = json.loads((seq_dir / "summary.json").read_text(encoding="utf-8"))
-    frames = [r for r in csv_read(seq_dir / "frames.csv") if r["status"] == "complete"]
+    frames = csv_read(seq_dir / "frames.csv")
+    if summary_in.get("status") != "complete" or any(r["status"] != "complete" for r in frames):
+        raise ValueError(f"source sequence is not complete: {seq_dir}")
     frames.sort(key=lambda r: int(r["frame_index"]))
     if not frames:
         raise ValueError(f"no complete frames in {seq_dir}")
+    times = [int(r["time_index"]) for r in frames]
+    if any(b != a + 1 for a, b in zip(times, times[1:])):
+        raise ValueError(f"duplicate, missing or out-of-order time points in {seq_dir}: {times}")
     input_dir = Path(input_dir) if input_dir else Path(summary_in["input_dir"])
     if not input_dir.is_dir():
         raise FileNotFoundError(f"raw image folder not found: {input_dir} (pass --input-dir)")
     sequence_id = frames[0]["sequence_id"]
-    out_dir = Path(output_root) / sequence_id
+    sequence_path = Path(sequence_id)
+    if sequence_path.is_absolute() or sequence_path.drive or ".." in sequence_path.parts:
+        raise ValueError(f"invalid sequence_id: {sequence_id}")
+    out_dir = (Path(output_root) / sequence_path).resolve()
+    if Path(output_root).resolve() not in out_dir.parents:
+        raise ValueError(f"output must be inside output root: {out_dir}")
+    if out_dir == seq_dir.resolve() or out_dir in seq_dir.resolve().parents:
+        raise ValueError(f"output would overwrite the source sequence: {out_dir}")
     if out_dir.exists() and any(out_dir.iterdir()):
         if not overwrite:
             raise FileExistsError(f"{out_dir} is not empty (use --overwrite)")
-        shutil.rmtree(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
 
     t0 = time.time()
     masks = np.stack([tifffile.imread(seq_dir / r["mask_path"]) for r in frames]).astype(np.int32)
@@ -86,14 +96,18 @@ def track_sequence(seq_dir, input_dir, output_root, model, mode, copy_masks, ove
         raise ValueError(f"image stack {imgs.shape} and mask stack {masks.shape} differ")
 
     # Trackastra: learned association scores between detections of adjacent frames, then its own linker.
-    graph, _ = model.track(imgs, masks, mode=mode)
+    if np.any(masks > 0):
+        graph, _ = model.track(imgs, masks, mode=mode)
+    else:
+        import networkx as nx
+        graph = nx.DiGraph()
     track_of = {}                                         # (position in `frames`, instance label) -> track id
     if mode == "greedy_nodiv":                            # every node has <= 1 predecessor and successor:
         import networkx as nx                             # a track = one connected chain of the solution graph
         for tid, comp in enumerate(nx.weakly_connected_components(graph), start=1):
             for n in comp:
                 track_of[(int(graph.nodes[n]["time"]), int(graph.nodes[n]["label"]))] = tid
-    else:                                                 # with divisions: CTC convention, daughters get new ids
+    elif graph.number_of_nodes():                         # with divisions: CTC convention, daughters get new ids
         from trackastra.tracking import graph_to_ctc
         _, tracked = graph_to_ctc(graph, masks)
         for fi in range(len(frames)):
@@ -104,20 +118,33 @@ def track_sequence(seq_dir, input_dir, output_root, model, mode, copy_masks, ove
     next_id = max(track_of.values(), default=0) + 1
 
     pos = {r["image_name"]: i for i, r in enumerate(frames)}
-    rows = [r for r in csv_read(seq_dir / "instance_tracks.csv") if r["image_name"] in pos]
+    with open(seq_dir / "instance_tracks.csv", newline="", encoding="utf-8-sig") as stream:
+        reader = csv.DictReader(stream)
+        columns = reader.fieldnames
+        rows = list(reader)
+    if not columns or any(r["image_name"] not in pos for r in rows):
+        raise ValueError(f"invalid instance manifest in {seq_dir}")
+    instances = [(pos[r["image_name"]], int(float(r["instance_id"]))) for r in rows]
+    mask_instances = {(fi, int(lab)) for fi, mask in enumerate(masks) for lab in np.unique(mask) if lab > 0}
+    if len(instances) != len(set(instances)) or set(instances) != mask_instances:
+        raise ValueError(f"instance CSV and masks disagree in {seq_dir}")
     for r in rows:
         key = (pos[r["image_name"]], int(float(r["instance_id"])))
         if key not in track_of:                           # a detection the linker left out: its own one-frame track
             track_of[key] = next_id; next_id += 1
         r["track_id"] = track_of[key]
+    frame_tracks = [(r["image_name"], r["track_id"]) for r in rows]
+    if len(frame_tracks) != len(set(frame_tracks)):
+        raise ValueError(f"multiple instances assigned to the same track in one frame: {seq_dir}")
     length = Counter(r["track_id"] for r in rows)
     min_len = int(summary_in.get("parameters", {}).get("min_track_length", 5))
     for r in rows:
         r["track_length"] = length[r["track_id"]]
         r["passes_min_track_length"] = length[r["track_id"]] >= min_len
     rows.sort(key=lambda r: (int(r["track_id"]), int(r["frame_index"])))
-    columns = list(csv_read(seq_dir / "instance_tracks.csv")[0].keys())
-    csv_write(out_dir / "instance_tracks.csv", rows, columns)
+    if out_dir.exists() and any(out_dir.iterdir()):
+        shutil.rmtree(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
     tracks_cols = ["track_id", "frame", "x", "y", "area", "major_axis_length", "minor_axis_length", "eccentricity",
                    "solidity", "label", "bbox_min_row", "bbox_min_col", "bbox_max_row", "bbox_max_col"]
     csv_write(out_dir / "tracks.csv", rows, [c for c in tracks_cols if c in columns])
@@ -125,7 +152,9 @@ def track_sequence(seq_dir, input_dir, output_root, model, mode, copy_masks, ove
     if copy_masks:
         (out_dir / "masks").mkdir(exist_ok=True)
         for r in frames:
-            shutil.copyfile(seq_dir / r["mask_path"], out_dir / r["mask_path"])
+            source_mask = seq_dir / r["mask_path"]
+            r["mask_path"] = f"masks/{r['frame_index']}_{source_mask.name}"
+            shutil.copyfile(source_mask, out_dir / r["mask_path"])
     else:                                                 # keep frames.csv pointing at the masks actually used
         for r in frames:
             src = (seq_dir / r["mask_path"]).resolve()
@@ -135,12 +164,17 @@ def track_sequence(seq_dir, input_dir, output_root, model, mode, copy_masks, ove
                 r["mask_path"] = str(src)
     for r in frames:
         r["overlay_path"] = ""
+    mask_paths = {r["image_name"]: r["mask_path"] for r in frames}
+    for r in rows:
+        r["mask_path"] = mask_paths[r["image_name"]]
+    csv_write(out_dir / "instance_tracks.csv", rows, columns)
     csv_write(out_dir / "frames.csv", frames, list(frames[0].keys()))
 
     import torch, trackastra
     summary = dict(status="complete", input_dir=str(input_dir), sequence_id=sequence_id,
                    tracker="trackastra", masks_from=str(seq_dir.resolve()),
-                   parameters=dict(trackastra_model=model_name(model), mode=mode, copy_masks=copy_masks),
+                   parameters=dict(trackastra_model=model_name(model), mode=mode, copy_masks=copy_masks,
+                                   min_track_length=min_len),
                    segmentation_parameters=summary_in.get("parameters", {}),
                    model=dict(trackastra=getattr(trackastra, "__version__", "unknown"), torch=torch.__version__,
                               numpy=np.__version__, device=str(getattr(model, "device", "unknown"))),

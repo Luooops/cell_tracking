@@ -338,7 +338,7 @@ def run_inputs(args):
     return 2 if failures else 0
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gt", type=Path, required=True, help="XML/ZIP or directory containing one XML/ZIP")
     parser.add_argument("--batch", action="store_true", help="Recursively evaluate XML/ZIP files into output-root/UUID/well")
@@ -351,7 +351,7 @@ def main():
     parser.add_argument("--label", default="cell")
     parser.add_argument("--visualize", choices=["issues", "all", "none"], default="issues")
     parser.add_argument("--allow-missing", action="store_true", help="Evaluate partial predictions with explicit missing-frame records")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not np.isfinite(args.max_distance) or args.max_distance <= 0:
         parser.error("--max-distance must be positive and finite")
     if not np.isfinite(args.priority_distance) or args.priority_distance < 0:
