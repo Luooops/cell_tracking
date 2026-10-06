@@ -224,9 +224,12 @@ __marimo__/
 
 # Ignore presentations exports and assets
 presentations/
-<<<<<<< HEAD
 
 # Ignore directories beginning with output at any depth
 output*/
-=======
->>>>>>> a22f8b0ce0e4be00a180212f3e07f3f7f5ca2cf8
+
+# Ignore dataset
+data/
+
+# Ignore model
+cellpose_model/
