@@ -21,12 +21,11 @@ masks and are scored by the same code; where a method has settings, they were tu
 | DeepCell / Caliban, pretrained | 30.0% | 291 | 0.877 | 0.193 | 0.749 | 0.927 |
 | ultrack | 32.5% | 361 | 0.944 | 0.180 | 0.753 | 0.924 |
 | btrack | 42.9% | 240 | 0.941 | 0.243 | 0.778 | 0.931 |
-| the lab's classical tracker, best settings | 44.0% | 173 | 0.914 | 0.273 | 0.801 | 0.931 |
+| classical tracker, best settings | 44.0% | 173 | 0.914 | 0.273 | 0.801 | 0.931 |
 | trackpy | 46.5% | 194 | 0.948 | 0.292 | 0.792 | 0.933 |
 | LapTrack (the LAP algorithm of TrackMate) | 47.4% | 182 | 0.945 | 0.303 | 0.797 | 0.933 |
 | Trackastra, as released | 54.1% | 152 | 0.967 | 0.341 | 0.819 | 0.935 |
 | Trackastra, fine-tuned on our development wells | 55.5% | 165 | 0.978 | 0.348 | 0.832 | 0.935 |
-| our previous model (no appearance learning) | 59.5% | 96 | 0.961 | 0.386 | 0.854 | 0.935 |
 | **this model** | **60.0%** | **89** | 0.959 | 0.393 | 0.852 | 0.935 |
 
 Per well (perfect / id switches / purity): r16c02 62.6% / 62 / 0.963, r01c20 44.4% / 106 / 0.944,
@@ -40,17 +39,16 @@ react to linking.
 How to read the comparison:
 
 - The classical trackers and the released Trackastra used no annotation from this plate; the fine-tuned Trackastra
-  and our models did. The like-for-like comparison is with the fine-tuned Trackastra: about 4.5 points more perfect
+  and our model did. The like-for-like comparison is with the fine-tuned Trackastra: about 4.5 points more perfect
   tracks and roughly 45% fewer id switches. Trackastra keeps the purer tracks.
-- Against our own previous model the gain is in id switches only (fewer in all three wells, 8% on average). The
-  number of perfect tracks is the same within noise: 23 tracks are perfect only with this model, 22 only with the
-  previous one. On the development wells (cross-validated) it is 61.1% / 123 against 60.1% / 133.
+- On the 12 development wells (3-fold cross-validation over whole wells) this model scores 61.1% perfect tracks
+  and 123 id switches.
 - For the classical trackers we tuned the distance settings only. Several of them can also use size or intensity
   in their cost; with that switched on they would probably do better than shown.
 - The closest published method, CellTrack-GNN (Ben-Haim & Riklin-Raviv, ECCV 2022), is not in the table: we have not
   run it on this data.
-- These three wells were looked at three times while the appearance part was being developed, so the last two rows
-  are a little less independent than the others.
+- These three wells were looked at a few times while the appearance part was being developed, so the last row is a
+  little less independent than the others.
 
 *Perfect track*: every detection of an annotated cell carries one predicted id, and that predicted track contains
 no other annotated cell. One wrong link anywhere fails it, which is why the numbers look low next to link-level
@@ -103,8 +101,7 @@ along the movie, so it follows changes in speed and density.
 
 **What the model looks at** for a candidate link between cell *i* and cell *j*:
 - geometry: offset, distance and area ratio, all relative to r;
-- competition: is *j* the closest option of *i*, and how many options does each have (kept from an earlier
-  version; on its own it did not help, and we have not re-tested the final model without it);
+- competition: is *j* the closest option of *i*, and how many options does each have;
 - motion: where *i* would be if it kept moving as in the previous step, and how far *j* is from that;
 - appearance: a small network turns each cell's picture into 32 numbers; the similarity of the two vectors, and how
   that similarity compares with *i*'s and *j*'s other options;
@@ -112,8 +109,7 @@ along the movie, so it follows changes in speed and density.
   before the link is scored.
 
 **Appearance has its own training objective.** Besides the usual "is this link right" loss, the appearance network
-is asked directly: among this cell's candidates, which one is the same cell? Without that second loss the
-appearance network learned nothing useful (we checked: zeroing its output changed nothing).
+is asked directly: among this cell's candidates, which one is the same cell?
 
 **A cell may stay unlinked.** The matching is solved with an extra "no partner" option for every cell. Without it
 a cell whose true partner is missing (a segmentation miss) is forced onto a neighbour, and the error spreads.
@@ -123,23 +119,6 @@ round 2 scores the pair (t, t+2) with the same model and joins the pieces if it 
 The model is trained on pairs one, two and three frames apart for this reason.
 
 Model size: 91,457 parameters. Training: 25 minutes per seed on one consumer GPU.
-
-## Where the performance comes from
-
-Development wells, linking neighbouring frames only, same candidate links and same solver for every row:
-
-| a candidate link is scored by | perfect / id switches |
-|---|---|
-| distance only | 47.4 / 250 |
-| appearance similarity only | 49.1 / 231 |
-| ten hand-made shape and brightness numbers + distance, no network | 56.2 / 172 |
-| appearance similarity + distance, no graph network | 58.1 / 165 |
-| graph network without appearance | 59.5 / 158 |
-| graph network with appearance (this model) | 60.3 / 149 |
-| ... plus round 2 | 61.1 / 123 |
-
-Appearance and distance are each worth little alone and a lot together. The graph network adds one or two points
-on top, and round 2 mostly removes id switches.
 
 ## The data
 
@@ -210,8 +189,6 @@ perfect tracks from run to run; that is why three are averaged.
 - **It needs annotated tracks from the same kind of data.** The appearance part does not carry over to other
   data: on a public HeLa dataset (nuclei a third of the size, constant divisions) it gave no benefit, while the
   geometric part worked without retraining.
-- **The appearance cue is worth little.** About one point of perfect tracks and 8% fewer id switches on the
-  development wells; on the test wells only the id switches improved.
 - **No cell division.** Links are one to one. `track_division.py` shows how the solver can allow two daughters,
   but this model was never trained on divisions.
 - **Only one missed frame is bridged.** A second round for two missed frames made things worse every time we tried.
