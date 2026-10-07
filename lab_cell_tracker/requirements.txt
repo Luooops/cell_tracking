@@ -1,0 +1,10 @@
+# Python 3.10. Versions the results were produced with.
+# Install PyTorch first for your machine (GPU: https://pytorch.org/get-started/locally/), then the rest.
+torch==2.6.0
+torch_geometric==2.8.0.post1
+numpy==2.2.6
+pandas==2.3.3
+scipy==1.15.3
+scikit-image==0.25.2
+tifffile==2025.5.10
+imagecodecs

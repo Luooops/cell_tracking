@@ -1,0 +1,4 @@
+# The 15 wells (6.3 GB) and the cache built from them are not stored in the repository.
+data/
+cache/
+__pycache__/
