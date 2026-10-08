@@ -1,0 +1,30 @@
+{
+  "data_root": "data/data",
+  "output_root": "outputs",
+  "test_wells": ["r16c02", "r01c20", "r07c07"],
+  "models": {
+    "gnn_division": {
+      "weights": "models/gnn_tracking/weights",
+      "test": {"gap_round": true, "div_thresh": 0.5}
+    },
+    "gnn_tracking": {
+      "weights": "models/gnn_tracking/weights",
+      "train": {"epochs": 40, "batch": 16, "lr": 0.001, "seeds": [0, 1, 2]},
+      "test": {"gap_round": true}
+    },
+    "trackastra": {"test": {"pretrained": "general_2d", "mode": "greedy_nodiv"}},
+    "classical_tracking": {
+      "test": {"max_distance": 45, "max_area_ratio": 1.8, "max_shape_ratio": 1.8,
+        "max_lost": 3, "area_weight": 5, "shape_weight": 3, "iou_weight": 2,
+        "n_history": 3, "gap_growth": 0.35, "deformable": true, "motion_scale": 0.5,
+        "gap_close_max_gap": 0, "gap_close_max_distance": 30, "max_close_cost": 12}
+    },
+    "classical_legacy": {"test": {}},
+    "mitosis": {"test": {}},
+    "motion_tracking": {
+      "train": {"epochs": 30, "width": 128, "layers": 3, "max_gap": 3,
+        "distance": 60, "max_tokens": 1024, "lr": 0.0001, "seed": 42},
+      "test": {"threshold": 0.5, "max_tokens": 1024}
+    }
+  }
+}

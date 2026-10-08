@@ -227,6 +227,7 @@ presentations/
 
 # Ignore directories beginning with output at any depth
 output*/
+history_outputs/
 
 # Ignore dataset
 data/
