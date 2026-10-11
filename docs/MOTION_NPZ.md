@@ -1,8 +1,8 @@
 # Motion NPZ 数据准备
 
-`python -m utils.prepare_motion_npz --output-root outputs/motion_tracking/npz_v001`
+`python -m models.motion_tracking.prepare_npz --output-root outputs/motion_tracking/npz_v001`
 
-数据适配脚本位于 utils/prepare_motion_npz.py；不修改模型、损失、训练循环或解码算法。原图和 mask 只读。默认数据源为 data/data，输出目录必须不存在，拒绝覆盖或写入原数据目录。
+数据适配脚本位于 models/motion_tracking/prepare_npz.py；不修改模型、损失、训练循环或解码算法。原图和 mask 只读。默认数据源为 data/data，输出目录必须不存在，拒绝覆盖或写入原数据目录。
 
 ## 数据划分
 
@@ -20,11 +20,11 @@ coords 为 float32 [N,3] 的 (原帧号,x,y)。features 为 float32 [N,7]，依�
 
 亮度由每张完整原图的 1%/99% 分位数归一化到 [0,1] 后统计。分母最小 1e-6；标准差使用总体标准差。逐帧规则固定，不跨数据集拟合参数；训练集特征 z-score 仍由原训练脚本计算并保存在 checkpoint 中。以后处理推理图像必须复用相同特征定义。
 
-GT 标签只用于制备 parents 和追溯，不作为输入特征。NPZ 额外保存 gt_labels、source_indices、feature_names、max_gap、distance，原训练器只读取其原有四个字段。
+GT 标签只用于制备 parents 和追溯，不作为输入特征。NPZ 额外保存 gt_labels、source_indices、feature_names、max_gap、distance，训练器还检查 feature_names、max_gap、distance（字段缺失的旧 NPZ 仍可读取）。
 
 ## 窗口与标签
 
-默认 window-frames=6、stride=3、max-tokens=1024。窗口过密时按完整帧缩短，步长同步缩小以保留至少一个重叠帧。不会随机丢弃检测或空间裁剪。若连续两帧仍超过上限，明确报错；改变上限时必须匹配训练的 --set max_tokens 值，并评估显存。
+默认 window-frames=6、stride=3、max-tokens=2048。窗口过密时按完整帧缩短，步长同步缩小以保留至少一个重叠帧。数据准备不随机丢弃检测或空间裁剪；训练时的可选漏检增强会重新映射前驱。若连续两帧仍超过上限，明确报错；改变上限时必须匹配训练的 --set max_tokens 值，并评估显存。
 
 parents[j] 是当前 NPZ 内的行索引，不是 GT ID。使用整个孔位的已知 GT 身份寻找最近检测前驱，然后映射到窗口局部索引：
 
@@ -54,6 +54,6 @@ manifest.json 记录参数、特征定义、分组单位、每个窗口实际帧
 python train.py --model motion_tracking --version v001 --train-dir outputs/motion_tracking/npz_v001/train --val-dir outputs/motion_tracking/npz_v001/val
 ```
 
-默认网络 width=128、layers=3 保持不变，训练 30 轮。每个窗口独立训练和解码；本脚本不增加完整视频窗口融合。
+默认网络 width=128、layers=3，训练 30 轮。每个窗口独立训练，完整视频推理由 models/motion_tracking/inference.py 执行。默认新增后继辅助损失和检测/几何增强，详见 MOTION_V2.md。
 
-验证命令：`python -B -m unittest tests.test_prepare_motion_npz tests.test_preservation`。包含跨漏检前驱索引、窗口截断、未知检测歧义、门限排除、超限窗口以及原模型损失和反向传播兼容性。
+验证命令：`python -B -m unittest tests.test_prepare_motion_npz tests.test_motion`。包含跨漏检前驱索引、窗口截断、未知检测歧义、门限排除、超限窗口以及原模型损失和反向传播兼容性。

@@ -8,7 +8,8 @@ from utils.config import save_config
 
 def run_test(a):
     if a.model == 'motion_tracking':
-        return motion_test(a)
+        from models.motion_tracking.inference import run
+        return run(a)
     os.environ['LAB_TRACKER_DATA'] = str(a.data_root)
     os.environ['LAB_TRACKER_CACHE'] = str(a.destination / 'cache')
     if a.device != 'auto':
@@ -96,38 +97,4 @@ def run_test(a):
         (destination / 'metrics.json').write_text(json.dumps(reports[well], indent=2), encoding='utf-8')
         print(well, reports[well])
     (a.destination / 'metrics.json').write_text(json.dumps(reports, indent=2), encoding='utf-8')
-    return 0
-
-
-def motion_test(a):
-    if not a.windows_dir or not a.weights:
-        raise ValueError('Motion requires --windows-dir and --weights; each existing NPZ window is decoded independently, without new video fusion.')
-    import numpy as np
-    import torch
-    from utils.ctc import write_csv
-    module = get_model(a.model)
-    device = ('cuda' if torch.cuda.is_available() else 'cpu') if a.device == 'auto' else a.device
-    checkpoint = torch.load(a.weights, map_location=device, weights_only=False)
-    model = module.MotionAssociation(**checkpoint['config']).to(device)
-    model.load_state_dict(checkpoint['model'])
-    model.eval()
-    paths = sorted(a.windows_dir.rglob('*.npz'))
-    if not paths:
-        raise ValueError('No NPZ windows found')
-    save_config(a)
-    with torch.no_grad():
-        for path in paths:
-            with np.load(path, allow_pickle=False) as data:
-                coords = torch.as_tensor(data['coords'], dtype=torch.float32, device=device)
-                features = torch.as_tensor(data['features'], dtype=torch.float32, device=device)
-            if len(coords) > a.params['max_tokens']:
-                raise ValueError(f'Window exceeds max_tokens: {path}; no automatic truncation or fusion')
-            features = (features - checkpoint['feature_mean'].to(device)) / checkpoint['feature_std'].to(device)
-            edges, ids = module.decode_tracks(model(coords, features), coords, threshold=a.params['threshold'])
-            dest = a.destination / path.relative_to(a.windows_dir).with_suffix('')
-            dest.mkdir(parents=True)
-            points = coords.cpu().numpy()
-            rows = [dict(instance_index=i, frame_index=int(c[0]), x=float(c[1]), y=float(c[2]), track_id=ids[i]) for i, c in enumerate(points)]
-            write_csv(dest / 'instance_tracks.csv', rows, ['instance_index','frame_index','x','y','track_id'])
-            (dest / 'edges.json').write_text(json.dumps(edges), encoding='utf-8')
     return 0

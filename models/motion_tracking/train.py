@@ -12,6 +12,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from models.motion_tracking.model import MotionAssociation, association_loss
+from models.motion_tracking.augmentation import augment
+from models.motion_tracking.prepare_npz import FEATURE_NAMES
 import numpy as np
 import torch
 
@@ -33,7 +35,11 @@ def load_windows(folder):
                 raise ValueError(f'empty ID/window/supervision: {path}')
             if not np.isfinite(coords).all() or not np.isfinite(features).all():
                 raise ValueError(f'nonfinite window: {path}')
+            if 'feature_names' in data and list(data['feature_names']) != FEATURE_NAMES:
+                raise ValueError(f'feature order differs from inference: {path}')
             samples.append(dict(coords=coords, features=features,
+                                max_gap=int(data['max_gap']) if 'max_gap' in data else None,
+                                distance=float(data['distance']) if 'distance' in data else None,
                                 parents=raw_parents.astype(np.int64), dataset_id=dataset_id))
     if not samples:
         raise ValueError(f'no NPZ training windows in {folder}')
@@ -50,21 +56,31 @@ def main(argv=None):
     parser.add_argument('--layers', type=int, default=3)
     parser.add_argument('--max-gap', type=int, default=3)
     parser.add_argument('--distance', type=float, default=60)
-    parser.add_argument('--max-tokens', type=int, default=1024)
+    parser.add_argument('--max-tokens', type=int, default=2048)
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--device', choices=['auto', 'cpu', 'cuda'], default='auto')
     parser.add_argument('--no-motion', action='store_true')
     parser.add_argument('--no-pair-features', action='store_true')
+    parser.add_argument('--use-successor', action='store_true')
+    parser.add_argument('--successor-weight', type=float, default=0.1)
+    parser.add_argument('--detection-dropout', type=float, default=0.0)
+    parser.add_argument('--geometric-augmentation', action='store_true')
     args = parser.parse_args(argv)
     if args.epochs < 1 or args.max_tokens < 1 or not np.isfinite(args.lr) or args.lr <= 0:
         parser.error('epochs, token limit and learning rate must be positive')
+    if not 0 <= args.detection_dropout < 1 or not np.isfinite(args.successor_weight) or args.successor_weight < 0:
+        parser.error('invalid augmentation or successor loss weight')
     if args.output.exists() and any(args.output.iterdir()):
         parser.error('output directory must be empty; use a new experiment directory')
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     train, val = load_windows(args.train_dir), load_windows(args.val_dir)
+    for sample in train + val:
+        if ((sample['max_gap'] is not None and sample['max_gap'] != args.max_gap) or
+                (sample['distance'] is not None and not np.isclose(sample['distance'], args.distance))):
+            raise ValueError('NPZ and training max_gap/distance must match; regenerate windows')
     if any(len(s['coords']) > args.max_tokens for s in train + val):
         raise ValueError('window exceeds --max-tokens; crop spatially without splitting track labels')
     train_ids, val_ids = [{s['dataset_id'] for s in samples} for samples in (train, val)]
@@ -77,20 +93,21 @@ def main(argv=None):
     device = ('cuda' if torch.cuda.is_available() else 'cpu') if args.device == 'auto' else args.device
     model = MotionAssociation(feature_dim=features.shape[1], width=args.width, layers=args.layers,
         max_gap=args.max_gap, distance=args.distance, use_motion=not args.no_motion,
-        use_pair_features=not args.no_pair_features).to(device)
+        use_pair_features=not args.no_pair_features, use_successor=args.use_successor).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
     tensors = []
     for samples in (train, val):
-        tensors.append([(torch.as_tensor(s['coords'], device=device),
-                         torch.as_tensor((s['features'] - mean) / std, device=device),
-                         torch.as_tensor(s['parents'], device=device)) for s in samples])
+        tensors.append([(torch.as_tensor(s['coords']),
+                         torch.as_tensor((s['features'] - mean) / std),
+                         torch.as_tensor(s['parents'])) for s in samples])
     # Validate gates/labels BEFORE creating outputs or taking an optimizer step.
     model.eval()
     with torch.no_grad():
         for split in tensors:
             for coords, feats, parents in split:
+                coords, feats, parents = [tensor.to(device) for tensor in (coords, feats, parents)]
                 association_loss(model(coords, feats), coords, parents,
-                                 motion_weight=0 if args.no_motion else 0.1)
+                                 motion_weight=0 if args.no_motion else 0.1, successor_weight=args.successor_weight)
     args.output.mkdir(parents=True, exist_ok=True)
     history, best = [], float('inf')
     for epoch in range(1, args.epochs + 1):
@@ -100,12 +117,17 @@ def main(argv=None):
             order = list(range(len(split)))
             if index == 0:
                 random.shuffle(order)
-            total, count = 0.0, 0
+            total, count, correct, gap_correct, gap_count = 0.0, 0, 0, 0, 0
             with torch.set_grad_enabled(index == 0):
                 for i in order:
                     coords, feats, parents = split[i]
-                    loss = association_loss(model(coords, feats), coords, parents,
-                        motion_weight=0 if args.no_motion else 0.1)['loss']
+                    if index == 0:
+                        coords, feats, parents = augment(coords, feats, parents, args.max_gap, args.distance,
+                            args.detection_dropout, args.geometric_augmentation)
+                    coords, feats, parents = [tensor.to(device) for tensor in (coords, feats, parents)]
+                    output = model(coords, feats)
+                    loss = association_loss(output, coords, parents,
+                        motion_weight=0 if args.no_motion else 0.1, successor_weight=args.successor_weight)['loss']
                     if not torch.isfinite(loss):
                         raise ValueError('nonfinite training loss')
                     if index == 0:
@@ -114,16 +136,28 @@ def main(argv=None):
                         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                         optimizer.step()
                     verified = int((parents != -2).sum())
+                    prediction = torch.cat([output['logits'], output['null_logits'][None]], dim=0).argmax(0)
+                    truth = parents.clone()
+                    truth[truth == -1] = len(coords)
+                    correct += int(((prediction == truth) & (parents != -2)).sum())
+                    children = torch.nonzero(parents >= 0, as_tuple=True)[0]
+                    gaps = children[coords[children, 0] - coords[parents[children], 0] > 1]
+                    gap_count += len(gaps)
+                    gap_correct += int((prediction[gaps] == parents[gaps]).sum())
                     total += float(loss.detach()) * verified
                     count += verified
-            results.append(total / count)
-        history.append(dict(epoch=epoch, train_loss=results[0], val_loss=results[1]))
+            results.append(dict(loss=total / count, parent_accuracy=correct / count,
+                gap_parent_accuracy=gap_correct / gap_count if gap_count else None, gap_targets=gap_count))
+        history.append(dict(epoch=epoch, train_loss=results[0]['loss'], val_loss=results[1]['loss'],
+            train=results[0], val=results[1]))
         print(json.dumps(history[-1]), flush=True)
-        if results[1] < best:
-            best = results[1]
+        if results[1]['loss'] < best:
+            best = results[1]['loss']
             torch.save(dict(config=model.config, model=model.state_dict(),
                 feature_mean=torch.from_numpy(mean), feature_std=torch.from_numpy(std),
-                epoch=epoch, val_loss=best, train_ids=sorted(train_ids), val_ids=sorted(val_ids)),
+                epoch=epoch, val_loss=best, train_ids=sorted(train_ids), val_ids=sorted(val_ids),
+                training_options={k: str(v) if isinstance(v, Path) else v for k,v in vars(args).items()},
+                feature_names=FEATURE_NAMES),
                 args.output / 'best.pt')
         (args.output / 'history.json').write_text(json.dumps(history, indent=2), encoding='utf-8')
     return 0

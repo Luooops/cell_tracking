@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 import tifffile
 
-from utils.prepare_motion_npz import main, previous_detections, window_parents, windows
+from models.motion_tracking.prepare_npz import main, previous_detections, window_parents, windows
 
 
 class MotionPreparationTests(unittest.TestCase):

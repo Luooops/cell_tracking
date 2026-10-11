@@ -8,10 +8,10 @@
 models/
   gnn_tracking/        GNN、原训练、两种跟踪求解流程、已有权重
   trackastra/          原官方预训练调用与导出流程
-  motion_tracking/     原 MotionAssociation、NPZ 窗口训练、解码
+  motion_tracking/     MotionAssociation、专用 NPZ 数据准备、训练、窗口推理与解码
   classical_tracking/  当前经典算法、legacy 算法、mitosis 扩展、原分割流水线
-utils/                 数据准备、读取、评估、输入输出适配、可视化
-tests/                 原回归测试、入口测试、算法结构保留校验
+utils/                 通用数据准备、读取、评估、入口分发、输入输出适配、可视化
+tests/                 motion 模型、数据准备、完整视频推理与统一入口测试
 data/data/             已有 15 孔位数据；未移动或修改
 outputs/<model>/<version>/train|test/
 history_outputs/       按原来源保留历史输出
@@ -44,25 +44,31 @@ python test.py --model gnn_division --version experimental
 
 Python 中可用 `from models import get_model`，例如 `get_model('motion_tracking').MotionAssociation(...)`。返回原实现模块，不创建新的算法包装层。
 
-### Motion 的原有边界
+### Motion 完整视频追踪
 
-该模型的数据契约是 NPZ 窗口。现在可使用独立的数据适配脚本从现有实验室 CTC 数据生成窗口，网络和训练循环不变：
+motion 专用数据准备、增强、网络、训练和推理都在 `models/motion_tracking/`。训练使用 NPZ 窗口；默认推理直接读取整段 CTC 视频，在滑窗中预测关联、合并连接分数并统一解码，输出整段视频的轨迹 ID。
 
-```powershell
-python -m utils.prepare_motion_npz --output-root outputs/motion_tracking/npz_v001
-python train.py --model motion_tracking --version v001 --train-dir outputs/motion_tracking/npz_v001/train --val-dir outputs/motion_tracking/npz_v001/val
+```bash
+python -m models.motion_tracking.prepare_npz --output-root outputs/motion_tracking/npz_v2 --max-tokens 2048
+python train.py --model motion_tracking --version v2 --train-dir outputs/motion_tracking/npz_v2/train --val-dir outputs/motion_tracking/npz_v2/val
+python test.py --model motion_tracking --version v2 --weights outputs/motion_tracking/v2/train/checkpoints/best.pt
 ```
 
-默认使用 8 个开发孔训练、4 个开发孔验证，保留原 3 个测试孔。分组单位明确为孔位，验证同实验内的跨孔泛化，不宣称独立实验泛化。默认最多 6 帧/窗口、1024 个检测；超限时缩短到完整的连续帧，若两帧仍超限则报错。每个窗口保留全部检测，不能确定的前驱监督设为 -2。详细标签规则、归一化和生成记录见 `docs/MOTION_NPZ.md` 与输出目录的 `manifest.json`。
+默认 8 孔训练、4 孔验证、3 孔保留测试。推理输出每孔的 `instance_tracks.csv`、`frames.csv`、`summary.json`、`edges.json`、`association_candidates.csv`、`metrics.json` 和逐帧追踪 PNG。mask 和原图只读，不重新分割。默认 max_gap=3，可跨过 2 帧漏检，不补出缺失 mask，不处理分裂。
 
-也可以提供自行审核的兼容窗口：
+默认启用后继辅助损失、10% 保守检测删除和窗口级旋转/镜像增强，可用 `--set` 关闭做消融。旧权重可用于新的视频推理；新增后继头需要重新训练。默认最多 2048 个检测/窗口，若完整候选历史仍超限则报错，不能通过静默缩短丢弃跨漏检候选。
 
-```powershell
-python train.py --model motion_tracking --version v001 --train-dir <NPZ训练目录> --val-dir <NPZ验证目录>
-python test.py --model motion_tracking --version v001 --windows-dir <NPZ测试目录> --weights outputs/motion_tracking/v001/train/checkpoints/best.pt
+保留 `--windows-dir <NPZ目录>` 作为独立窗口调试模式，它不输出完整视频轨迹。motion 自动从 `<well>_GT/TRA/man_track*.tif` 与 `man_track.txt` 评价，保存每孔 `evaluation/` 下的轨迹明细和 comparison PNG，不再调用 XML 评价器。
+
+已有结果可独立重评，不需要权重或重新推理：
+
+```bash
+python evaluate.py --data-root data/data --tracking-output outputs/motion_tracking/v2/test --output-root outputs/motion_tracking/v2/evaluate --visualize all
 ```
 
-每个窗口保持独立，测试复用权重中的特征均值/标准差，调用原 forward 与 decode_tracks；输出逐窗口 CSV 和边列表，不宣称完整视频评估。不自动拆分超限窗口。训练仍保留原 dataset_id 泄漏检查、未知监督和候选门限检查。
+这是同一批 CTC 检测上的身份关联评价；不是独立分割评估，也不冒充官方 TRA/SEG。身份未知的 mask 标签 >=50000 不计入身份指标。
+
+研究依据、推理细节、服务器 CLI 和消融计划见 [Motion v2 说明](docs/MOTION_V2.md)。所有结构改进仍须通过真实数据验证，不能把合成测试当作性能证据。
 
 ### 数据与指标
 
@@ -86,4 +92,4 @@ $env:MKL_THREADING_LAYER='SEQUENTIAL'
 python -B -m unittest discover -s tests
 ```
 
-`test_preservation` 对照整理前 Git HEAD 的函数/类 AST 指纹，忽略 import 和文档字符串，验证核心算法未改写。它不替代真实模型数值验证；详细实测范围见 `docs/REORGANIZATION_REVIEW.md`。
+当前仅保留 motion 相关测试，包括 CTC 评价与 PNG 输出。其他模型测试及历史 AST 指纹校验已移除；历史验证记录见 `docs/REORGANIZATION_REVIEW.md`。

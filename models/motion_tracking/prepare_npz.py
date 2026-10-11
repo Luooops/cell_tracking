@@ -1,6 +1,6 @@
 """Convert lab CTC masks/images to MotionAssociation windows; no model changes.
 
-Run from the project root: python -m utils.prepare_motion_npz --output-root outputs/motion_tracking/npz_v001
+Run from the project root: python -m models.motion_tracking.prepare_npz --output-root outputs/motion_tracking/npz_v001
 Default split: 8 development wells for training, fold 0 (4 wells) for validation.
 dataset_id denotes a WELL here, explicitly evaluating within-experiment generalization.
 """
@@ -36,6 +36,13 @@ def read_detections(root, well):
         table = np.loadtxt(lineage, dtype=np.int64, ndmin=2)
         if table.shape[1] != 4 or np.any(table[:, 3] != 0):
             raise ValueError(f'{well}: expected no-division lab track table with four columns')
+    return extract_frames(frames)
+
+
+def extract_frames(frames):
+    """Shared training/inference features; labels are returned only as metadata."""
+    times = [t for t, _, _ in frames]
+    well = "sequence"
     coords, features, labels = [], [], []
     for t, raw_path, mask_path in frames:
         raw, mask = tifffile.imread(raw_path), tifffile.imread(mask_path)
@@ -134,14 +141,14 @@ def windows(coords, times, window_frames, stride, max_tokens):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--data-root', type=Path, default=Path(__file__).resolve().parents[1] / 'data/data')
+    parser.add_argument('--data-root', type=Path, default=Path(__file__).resolve().parents[2] / 'data/data')
     parser.add_argument('--output-root', type=Path, required=True)
     parser.add_argument('--dataset-name', default='lab_cells', help='Stable source name; IDs are source/well (well-level split)')
     parser.add_argument('--train-wells', nargs='+', default=DEFAULT_TRAIN)
     parser.add_argument('--val-wells', nargs='+', default=DEFAULT_VAL)
     parser.add_argument('--window-frames', type=int, default=6)
     parser.add_argument('--stride', type=int, default=3)
-    parser.add_argument('--max-tokens', type=int, default=1024)
+    parser.add_argument('--max-tokens', type=int, default=2048)
     parser.add_argument('--max-gap', type=int, default=3)
     parser.add_argument('--distance', type=float, default=60)
     args = parser.parse_args(argv)

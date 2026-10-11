@@ -23,7 +23,7 @@ def options(stage, argv=None):
         p.add_argument('--val-dir', type=Path, help='Motion: existing audited NPZ validation windows')
         p.add_argument('--cv', action='store_true', help='GNN: original three-fold cross-validation')
     else:
-        p.add_argument('--windows-dir', type=Path, help='Motion: existing NPZ windows (no automatic video fusion)')
+        p.add_argument('--windows-dir', type=Path, help='Motion: optional independent NPZ window debug mode')
     a = p.parse_args(argv)
     if not a.version or a.version in {'.', '..'} or any(c in a.version for c in '/\\:'):
         p.error('version must be a single directory name')

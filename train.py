@@ -9,7 +9,7 @@ def main(argv=None):
         raise ValueError(f'{a.model} has no training entry (Trackastra fine-tuning is not included)')
     if a.model == 'motion_tracking':
         if not a.train_dir or not a.val_dir:
-            raise ValueError('Motion requires --train-dir and --val-dir with NPZ windows. Generate lab CTC windows with python -m utils.prepare_motion_npz --output-root <new directory>.')
+            raise ValueError('Motion requires --train-dir and --val-dir with NPZ windows. Generate lab CTC windows with python -m models.motion_tracking.prepare_npz --output-root <new directory>.')
         from models.motion_tracking.train import main as train
         args = ['--train-dir', str(a.train_dir), '--val-dir', str(a.val_dir),
                 '--output', str(a.destination / 'checkpoints'), '--device', a.device]

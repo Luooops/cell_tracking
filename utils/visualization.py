@@ -11,6 +11,62 @@ from matplotlib.patches import Rectangle
 from PIL import Image
 
 
+def render_ctc_comparison(raw_path, mask_path, rows, destination):
+    """GT IDs and independent predicted IDs; color means whole-track quality."""
+    from PIL import ImageDraw
+    from skimage.segmentation import find_boundaries
+    from skimage.measure import regionprops
+    colors={'recovered':(0,255,0),'fragmented':(255,165,0),'mixed':(255,0,255),
+            'missing':(255,0,0),'unknown_identity':(140,140,140)}
+    raw=read_image_file(Path(raw_path))
+    mask=tifffile.imread(mask_path)
+    if raw.shape != mask.shape or raw.ndim != 2:
+        raise ValueError(f'image/mask dimensions differ: {raw_path}')
+    base=np.repeat((normalize_for_display(raw)*255).astype(np.uint8)[...,None],3,axis=2)
+    color_by_id={r['instance_id']:colors[r['status']] for r in rows}
+    # Restrict each outline computation to its own bounding box.
+    for obj in regionprops(mask):
+        y0,x0,y1,x1=obj.bbox
+        outline=find_boundaries(np.pad(obj.image,1),mode='inner')[1:-1,1:-1]
+        base[y0:y1,x0:x1][outline]=color_by_id[obj.label]
+    image=Image.fromarray(base)
+    draw=ImageDraw.Draw(image)
+    for row in rows:
+        color=colors[row['status']]
+        gt=str(row['gt_track_id']) if row['gt_track_id'] != '' else '?'
+        pred=str(row['pred_track_id']) if row['pred_track_id'] != '' else 'missing'
+        draw.text((row['x']+4,row['y']+4),f'G:{gt} P:{pred}',fill=color,stroke_width=1,stroke_fill='black')
+    draw.rectangle((0,0,image.width,28),fill='black')
+    draw.text((4,4),'G=GT P=prediction | green=recovered orange=fragmented magenta=mixed red=missing gray=unknown',fill='white')
+    image.save(destination)
+
+
+def render_tracking_frames(frames, rows, output_dir):
+    """Render a manifest's exact images with stable IDs and observed trajectories."""
+    from PIL import ImageDraw
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    by_frame, histories = {}, {}
+    for row in rows:
+        by_frame.setdefault(int(row['frame_index']), []).append(row)
+    for t, raw_path, _ in frames:
+        raw = read_image_file(Path(raw_path))
+        base = Image.fromarray((normalize_for_display(raw) * 255).astype(np.uint8)).convert('RGB')
+        draw = ImageDraw.Draw(base)
+        for row in by_frame.get(t, []):
+            tid = int(row['track_id'])
+            color = tuple(int(v*255) for v in plt.get_cmap('tab20')((tid-1) % 20))[:3]
+            point = (float(row['x']), float(row['y']))
+            history = histories.setdefault(tid, [])
+            history.append(point)
+            if len(history) > 1:
+                draw.line(history, fill=color, width=2)
+            x, y = point
+            draw.ellipse((x-3,y-3,x+3,y+3), outline=color, width=2)
+            draw.text((x+5,y+3), str(tid), fill=color, stroke_width=1, stroke_fill='black')
+        base.save(output_dir / f'{Path(raw_path).stem}_tracking.png')
+
+
 def sort_key_by_time(path: Path):
     """
     Extract time index from filenames like:

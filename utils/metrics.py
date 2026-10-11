@@ -40,9 +40,11 @@ def score(assign, gt):
             content[pid].append(gt[key])
     perfect = switches = 0
     for gt_id, keys in by_gt.items():
-        pids = [assign[k] for k in keys]
-        switches += sum(a != b for a, b in zip(pids[:-1], pids[1:]))
-        perfect += len(set(pids)) == 1 and set(content[pids[0]]) == {gt_id}
+        pids = [assign.get(k) for k in keys]
+        observed = [pid for pid in pids if pid is not None]
+        switches += sum(a != b for a, b in zip(observed[:-1], observed[1:]))
+        perfect += (None not in pids and len(set(pids)) == 1 and set(content[pids[0]]) == {gt_id})
     purity = [Counter(v).most_common(1)[0][1] / len(v) for v in content.values()]
-    return dict(perfect=100.0 * perfect / len(by_gt), id_switches=int(switches), purity=float(np.mean(purity)),
+    return dict(perfect=100.0 * perfect / len(by_gt) if by_gt else None, id_switches=int(switches),
+                purity=float(np.mean(purity)) if purity else None,
                 n_gt_tracks=len(by_gt), n_pred_tracks=len(content))

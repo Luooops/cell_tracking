@@ -30,7 +30,8 @@ class ContextBlock(nn.Module):
 
 class MotionAssociation(nn.Module):
     def __init__(self, feature_dim=7, width=128, heads=4, layers=3, max_gap=3,
-                 distance=60.0, dropout=0.1, use_motion=True, use_pair_features=True):
+                 distance=60.0, dropout=0.1, use_motion=True, use_pair_features=True,
+                 use_successor=False):
         super().__init__()
         if (feature_dim < 1 or width < 1 or heads < 1 or width % heads or
                 layers < 1 or max_gap < 1 or not math.isfinite(distance) or distance <= 0 or
@@ -38,7 +39,7 @@ class MotionAssociation(nn.Module):
             raise ValueError('invalid architecture or candidate-gate settings')
         self.config = dict(feature_dim=feature_dim, width=width, heads=heads, layers=layers,
             max_gap=max_gap, distance=distance, dropout=dropout, use_motion=use_motion,
-            use_pair_features=use_pair_features)
+            use_pair_features=use_pair_features, use_successor=use_successor)
         self.frequencies = nn.Linear(3, 16, bias=False)
         self.input = nn.Sequential(nn.Linear(feature_dim + 32, width), nn.LayerNorm(width))
         self.blocks = nn.ModuleList(ContextBlock(width, heads, dropout) for _ in range(layers))
@@ -47,6 +48,8 @@ class MotionAssociation(nn.Module):
         self.pair = nn.Sequential(nn.Linear(feature_dim + 4, width), nn.GELU(), nn.Linear(width, 1))
         self.motion = nn.Linear(width, 3)  # velocity x/y and isotropic standard deviation
         self.birth = nn.Linear(width, 1)  # no observed predecessor within this window
+        if use_successor:
+            self.end = nn.Linear(width, 1)  # no observed successor; no division
 
     def forward(self, coords, features):
         if coords.ndim != 2 or coords.shape[1] != 3:
@@ -80,9 +83,12 @@ class MotionAssociation(nn.Module):
         x = x.squeeze(0)
         logits = self.source(x) @ self.target(x).T / math.sqrt(x.shape[-1])
         if self.config['use_pair_features']:
-            geometry = torch.cat([delta, (dt / self.config['max_gap']).unsqueeze(-1),
-                                  dist.unsqueeze(-1), features[None, :, :] - features[:, None, :]], dim=-1)
-            logits = logits + self.pair(geometry).squeeze(-1)
+            source, target = torch.nonzero(valid, as_tuple=True)
+            geometry = torch.cat([delta[source,target], (dt[source,target] / self.config['max_gap'])[:,None],
+                                  dist[source,target,None], features[target] - features[source]], dim=-1)
+            pair_logits = torch.zeros_like(logits)
+            pair_logits[source,target] = self.pair(geometry).squeeze(-1)
+            logits = logits + pair_logits
         prediction = self.motion(x)
         velocity = prediction[:, :2].tanh()  # displacement / distance per frame
         sigma = F.softplus(prediction[:, 2]) + 0.05
@@ -95,12 +101,15 @@ class MotionAssociation(nn.Module):
         null_logits = self.birth(x).squeeze(-1)
         # All candidate time gaps compete for ONE observed predecessor, plus null.
         distribution = torch.cat([logits, null_logits.unsqueeze(0)], dim=0).softmax(dim=0)
-        return dict(logits=logits, valid=valid, probabilities=distribution[:-1],
+        result = dict(logits=logits, valid=valid, probabilities=distribution[:-1],
                     null_logits=null_logits, null_probabilities=distribution[-1],
                     velocity=velocity * self.config['distance'], sigma=sigma * self.config['distance'])
+        if self.config['use_successor']:
+            result['end_logits'] = self.end(x).squeeze(-1)
+        return result
 
 
-def association_loss(output, coords, parents, motion_weight=0.1):
+def association_loss(output, coords, parents, motion_weight=0.1, successor_weight=0.1):
     """parents[j]: verified predecessor index, -1 verified null, -2 unknown/ignored.
 
     A positive label must name the nearest detected predecessor, not any ancestor.
@@ -109,7 +118,7 @@ def association_loss(output, coords, parents, motion_weight=0.1):
     n = len(coords)
     if parents.shape != (n,) or parents.dtype != torch.long:
         raise ValueError('parents must be an int64 vector with N entries')
-    if ((parents < -2) | (parents >= n)).any() or motion_weight < 0:
+    if ((parents < -2) | (parents >= n)).any() or motion_weight < 0 or successor_weight < 0:
         raise ValueError('invalid parent index or motion weight')
     supervised = parents != -2
     if not supervised.any():
@@ -130,7 +139,19 @@ def association_loss(output, coords, parents, motion_weight=0.1):
         residual = displacement - output['velocity'][source] * dt[:, None]
         sigma = output['sigma'][source] * dt.sqrt()
         motion = (0.5 * (residual / sigma[:, None]).square().sum(-1) + 2 * sigma.log()).mean()
-    return dict(loss=association + motion_weight * motion, association=association, motion=motion)
+    successor = association.new_zeros(())
+    if 'end_logits' in output and successor_weight:
+        # Only known successors are supervised. Window exits and unknown detections
+        # cannot establish a verified end, so no artificial end labels are made.
+        sources = parents[parents >= 0]
+        if len(sources) != len(sources.unique()):
+            raise ValueError('successor supervision requires no-division labels')
+        if len(sources):
+            children = torch.arange(n, device=coords.device)[parents >= 0]
+            scores = torch.cat([output['logits'], output['end_logits'][:, None]], dim=1)
+            successor = F.cross_entropy(scores[sources], children)
+    return dict(loss=association + motion_weight * motion + successor_weight * successor,
+                association=association, motion=motion, successor=successor)
 
 
 def decode_tracks(output, coords, threshold=0.5):

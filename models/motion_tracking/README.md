@@ -1,3 +1,5 @@
+> 当前 v2 已支持整段视频滑窗融合、全局轨迹和 PNG；以下为历史设计说明。当前命令与研究依据见 ../../docs/MOTION_V2.md。
+
 > Historical model documentation. For current commands and paths, use the root README.md.
 
 # Trackastra 流程与运动关联模型原型
