@@ -69,6 +69,7 @@ def options(stage, argv=None):
         p.add_argument('--train-dir', type=Path, nargs='+', help='Motion: existing audited NPZ training windows (one or more roots)')
         p.add_argument('--val-dir', type=Path, nargs='+', help='Motion: existing audited NPZ validation windows (one or more roots)')
         p.add_argument('--cv', action='store_true', help='GNN: original three-fold cross-validation')
+        p.add_argument('--gpus', nargs='+', metavar='ID', help='GNN: CUDA device ids; seeds (or CV folds) train in parallel, one process per GPU')
     else:
         p.add_argument('--windows-dir', type=Path, help='Motion: optional independent NPZ window debug mode')
     a = p.parse_args(argv)

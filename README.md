@@ -31,6 +31,7 @@ Windows 测试时使用 `$env:MKL_THREADING_LAYER='SEQUENTIAL'`，避免本机 N
 ```powershell
 python train.py --model gnn_tracking --version v001
 python train.py --model gnn_tracking --version cv001 --cv
+python train.py --model gnn_tracking --version v002 --gpus 0 1        # 多卡：各 seed（或 --cv 时各折）分到不同 GPU 并行
 python test.py --model gnn_tracking --version pretrained --device cpu
 python test.py --model gnn_tracking --version v001 --weights outputs/scripta_data/gnn_tracking/v001/train/checkpoints
 python test.py --model trackastra --version pretrained
