@@ -6,6 +6,7 @@ Labels >=50000 have unknown identity and are excluded from identity scoring.
 import argparse
 import csv
 import json
+import shutil
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -195,13 +196,14 @@ def main(argv=None):
     parser.add_argument('--compare',type=Path,nargs='+',metavar='EVALUATION',
                         help='Compare existing evaluate.py outputs of different runs on the same sequences')
     parser.add_argument('--labels',nargs='+',help='Display names for --compare runs (default: model and version)')
+    parser.add_argument('--overwrite',action='store_true',
+                        help='Replace an existing output-root that holds an earlier evaluate.py result')
     args=parser.parse_args(argv)
     cfg,base=read_config(args.config)
     if args.compare:
-        if args.output_root.exists():
-            parser.error('output-root already exists; select a new comparison directory')
         if args.labels and len(args.labels)!=len(args.compare):
             parser.error('--labels needs one name per --compare folder')
+        clear_output(parser,args.output_root,args.overwrite,args.compare)
         log=log_path(log_root(args.output_root,base/cfg['output_root']),'evaluate',f'{args.output_root.resolve().name}_compare')
         return run_logged(log,compare_runs,args,argv=argv)
     if not args.tracking_output:
@@ -211,13 +213,31 @@ def main(argv=None):
     except FileNotFoundError as exc:
         parser.error(str(exc))
     args.data_root,args.dataset_name=dataset['root'],dataset['name']
-    if args.output_root.exists():
-        parser.error('output-root already exists; select a new evaluation directory')
     wells=args.wells or sorted(p.parent.name for p in args.tracking_output.glob('*/instance_tracks.csv'))
     if not wells or len(wells)!=len(set(wells)):
         parser.error('no wells found or duplicate wells supplied')
+    clear_output(parser,args.output_root,args.overwrite,[args.data_root,args.tracking_output])
     return run_logged(evaluation_log(args.tracking_output,args.output_root,base/cfg['output_root'],dataset['name']),
                       evaluate_wells,args,wells,argv=argv)
+
+
+def clear_output(parser,output_root,overwrite,protected):
+    """Refuse an existing output-root unless --overwrite; then delete it only if it is an earlier evaluate.py
+    result (metrics.json / comparison.json / run.json at its root or per-sequence metrics.json) and contains none
+    of the protected inputs."""
+    if not output_root.exists():
+        return
+    if not overwrite:
+        parser.error('output-root already exists; pass --overwrite to replace it or select a new directory')
+    root=output_root.resolve()
+    markers=('metrics.json','comparison.json','run.json')
+    if not root.is_dir() or not (any((root/m).is_file() for m in markers) or any(root.glob('*/metrics.json'))):
+        parser.error(f'--overwrite only replaces an earlier evaluate.py output; {root} does not look like one')
+    for path in protected:
+        path=Path(path).resolve()
+        if path==root or root in path.parents:
+            parser.error(f'--overwrite refused: {root} contains input {path}')
+    shutil.rmtree(root)
 
 
 def evaluation_log(tracking_output,output_root,default_output_root,dataset):

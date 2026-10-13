@@ -72,7 +72,7 @@ python evaluate.py --dataset scripta_data --tracking-output outputs/scripta_data
 python evaluate.py --output-root outputs/scripta_data/compare_v1 --compare outputs/scripta_data/gnn_tracking/pretrained/evaluate outputs/scripta_data/motion_tracking/v2/evaluate
 ```
 
-图例名默认取自 `<模型> · <版本>`，可用 `--labels` 指定；孔位不一致时拒绝比较。
+图例名默认取自 `<模型> · <版本>`，可用 `--labels` 指定；孔位不一致时拒绝比较。`evaluate.py` 的输出目录已存在时默认报错，加 `--overwrite` 可替换：只删除此前 `evaluate.py` 生成的目录（含 metrics.json/comparison.json/run.json），且不能包含数据或被评估的预测结果。`train.py`/`test.py` 仍不覆盖已有运行。
 
 这是同一批 CTC 检测上的身份关联评价；不是独立分割评估，也不冒充官方 TRA/SEG。身份未知的 mask 标签 >=50000 不计入身份指标。
 
