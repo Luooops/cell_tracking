@@ -52,10 +52,12 @@ def run_test(a):
             reports[well] = score(assign, gt_lookup(video))
             df = video.df.copy()
             df = df.rename(columns={'track_id': 'instance_id', 'frame': 'frame_index'})
-            df['track_id'] = [assign[(fi, i)] for fi, t in enumerate(video.frames) for i in range(len(video.rows[t]))]
+            # GNN track ids start at 0; exported ids are shifted by 1 because 0 is background in CTC (evaluate.py).
+            df['track_id'] = [assign[(fi, i)] + 1 for fi, t in enumerate(video.frames) for i in range(len(video.rows[t]))]
             destination.mkdir()
             if parent is not None:
-                (destination / 'lineage.json').write_text(json.dumps(parent), encoding='utf-8')
+                lineage = {int(d) + 1: int(m) + 1 for d, m in parent.items()}
+                (destination / 'lineage.json').write_text(json.dumps(lineage), encoding='utf-8')
             df.to_csv(destination / 'instance_tracks.csv', index=False)
         else:
             frames, rows, gt = detections(a.data_root, well)
