@@ -12,10 +12,10 @@ models/
   classical_tracking/  当前经典算法、legacy 算法、mitosis 扩展、原分割流水线
 utils/                 通用数据准备、读取、评估、入口分发、输入输出适配、可视化
 tests/                 motion 模型、数据准备、完整视频推理与统一入口测试
-data/data/             已有 15 孔位数据；未移动或修改
-outputs/<model>/<version>/train|test/
+data/<dataset>/        CTC 数据集；scripta_data 为已有 15 孔位数据，未移动或修改
+outputs/<dataset>/<model>/<version>/train|test/
 history_outputs/       按原来源保留历史输出
-config.json            数据路径、孔位与模型参数
+config.json            数据集、孔位划分与模型参数
 ```
 
 ## 环境
@@ -32,7 +32,7 @@ Windows 测试时使用 `$env:MKL_THREADING_LAYER='SEQUENTIAL'`，避免本机 N
 python train.py --model gnn_tracking --version v001
 python train.py --model gnn_tracking --version cv001 --cv
 python test.py --model gnn_tracking --version pretrained --device cpu
-python test.py --model gnn_tracking --version v001 --weights outputs/gnn_tracking/v001/train/checkpoints
+python test.py --model gnn_tracking --version v001 --weights outputs/scripta_data/gnn_tracking/v001/train/checkpoints
 python test.py --model trackastra --version pretrained
 python test.py --model classical_tracking --version baseline
 python test.py --model classical_legacy --version baseline
@@ -49,9 +49,9 @@ Python 中可用 `from models import get_model`，例如 `get_model('motion_trac
 motion 专用数据准备、增强、网络、训练和推理都在 `models/motion_tracking/`。训练使用 NPZ 窗口；默认推理直接读取整段 CTC 视频，在滑窗中预测关联、合并连接分数并统一解码，输出整段视频的轨迹 ID。
 
 ```bash
-python -m models.motion_tracking.prepare_npz --output-root outputs/motion_tracking/npz_v2 --max-tokens 2048
-python train.py --model motion_tracking --version v2 --train-dir outputs/motion_tracking/npz_v2/train --val-dir outputs/motion_tracking/npz_v2/val
-python test.py --model motion_tracking --version v2 --weights outputs/motion_tracking/v2/train/checkpoints/best.pt
+python -m models.motion_tracking.prepare_npz --output-root outputs/scripta_data/motion_tracking/npz_v2 --max-tokens 2048
+python train.py --model motion_tracking --version v2 --train-dir outputs/scripta_data/motion_tracking/npz_v2/train --val-dir outputs/scripta_data/motion_tracking/npz_v2/val
+python test.py --model motion_tracking --version v2 --weights outputs/scripta_data/motion_tracking/v2/train/checkpoints/best.pt
 ```
 
 默认 8 孔训练、4 孔验证、3 孔保留测试。推理输出每孔的 `instance_tracks.csv`、`frames.csv`、`summary.json`、`edges.json`、`association_candidates.csv`、`metrics.json` 和逐帧追踪 PNG。mask 和原图只读，不重新分割。默认 max_gap=3，可跨过 2 帧漏检，不补出缺失 mask，不处理分裂。
@@ -63,16 +63,34 @@ python test.py --model motion_tracking --version v2 --weights outputs/motion_tra
 已有结果可独立重评，不需要权重或重新推理：
 
 ```bash
-python evaluate.py --data-root data/data --tracking-output outputs/motion_tracking/v2/test --output-root outputs/motion_tracking/v2/evaluate --visualize all
+python evaluate.py --dataset scripta_data --tracking-output outputs/scripta_data/motion_tracking/v2/test --output-root outputs/scripta_data/motion_tracking/v2/evaluate --visualize all
 ```
 
 这是同一批 CTC 检测上的身份关联评价；不是独立分割评估，也不冒充官方 TRA/SEG。身份未知的 mask 标签 >=50000 不计入身份指标。
 
 研究依据、推理细节、服务器 CLI 和消融计划见 [Motion v2 说明](docs/MOTION_V2.md)。所有结构改进仍须通过真实数据验证，不能把合成测试当作性能证据。
 
+### 多数据集
+
+`data/` 下每个子目录是一个 CTC 数据集：`<序列>/t*.tif` 原图与 `<序列>_GT/TRA/man_track*.tif`、`man_track.txt`。帧号位数不限（`t000`/`t0000`），序列名不限（`r01c20`、`01`）。`config.json` 的 `dataset` 是默认数据集；所有入口（`train.py`、`test.py`、`evaluate.py`、`prepare_npz`）都可用 `--dataset <名称>` 切换，或用 `--data-root` 直接指定目录。
+
+新数据集放进 `data/<名称>/` 即可用 `--dataset <名称>` 测试，序列自动发现，默认测试全部序列。需要训练或固定测试孔时，在 `config.json` 的 `datasets` 中声明：
+
+```json
+"my_data": {
+  "root": "data/my_data",
+  "test_wells": ["01"],
+  "train_wells": ["02", "03"],
+  "val_wells": ["04"],
+  "folds": [["02"], ["03"], ["04"]]
+}
+```
+
+`test_wells` 永远禁止进入 motion 训练/验证窗口；`folds` 仅 GNN `--cv` 使用，GNN 默认训练孔为 folds 合并，其次 train+val。motion 可把多个数据集的 NPZ 合并训练：`--train-dir <A>/train <B>/train --val-dir <A>/val <B>/val`；NPZ 的 dataset_id 为 `<数据集>/<孔位>`。输出目录为 `outputs/<dataset>/<model>/<version>/<stage>/`，随 `--dataset`（或 `--data-root` 的文件夹名）变化；同一版本可在不同数据集上分别测试，例如用 A 上训练的权重测 B：`python test.py --model motion_tracking --version v2 --dataset B --weights outputs/A/motion_tracking/v2/train/checkpoints/best.pt`。motion 训练只读 NPZ，`--dataset` 仅决定输出文件夹名；合并多数据集训练时可给一个新名称（未在配置中声明也可以）。所有数据集都把 mask 标签 >=50000 视为未知身份。
+
 ### 数据与指标
 
-GNN、Trackastra、经典算法读取同一份 `data/data/<well>` 原图及 `<well>_GT/TRA` mask。Trackastra 的适配器生成原脚本要求的清单，不执行经典跟踪或重新分割。原始 mask 不重标号、不改写；已知身份只用于监督/评估，未知身份 `>=50000` 仍按原规则处理。
+GNN、Trackastra、经典算法读取同一份 `data/<dataset>/<well>` 原图及 `<well>_GT/TRA` mask。Trackastra 的适配器生成原脚本要求的清单，不执行经典跟踪或重新分割。原始 mask 不重标号、不改写；已知身份只用于监督/评估，未知身份 `>=50000` 仍按原规则处理。
 
 统一 CTC 入口采用原 GNN 的 perfect tracks、id switches、purity 定义，保存 `instance_tracks.csv` 和 `metrics.json`。这不等同于旧 XML 位置匹配评估，也不是官方 TRA/CT/IDF1 实现。旧 Trackastra 评估所需代码保留在 `utils/legacy_*`，原入口仍可用：
 

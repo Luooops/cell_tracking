@@ -48,8 +48,8 @@ def load_windows(folder):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--train-dir', type=Path, required=True)
-    parser.add_argument('--val-dir', type=Path, required=True)
+    parser.add_argument('--train-dir', type=Path, nargs='+', required=True, help='One or more NPZ roots (e.g. one per dataset)')
+    parser.add_argument('--val-dir', type=Path, nargs='+', required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--epochs', type=int, default=30)
     parser.add_argument('--width', type=int, default=128)
@@ -76,7 +76,8 @@ def main(argv=None):
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
-    train, val = load_windows(args.train_dir), load_windows(args.val_dir)
+    train = [s for folder in args.train_dir for s in load_windows(folder)]
+    val = [s for folder in args.val_dir for s in load_windows(folder)]
     for sample in train + val:
         if ((sample['max_gap'] is not None and sample['max_gap'] != args.max_gap) or
                 (sample['distance'] is not None and not np.isclose(sample['distance'], args.distance))):
@@ -156,7 +157,7 @@ def main(argv=None):
             torch.save(dict(config=model.config, model=model.state_dict(),
                 feature_mean=torch.from_numpy(mean), feature_std=torch.from_numpy(std),
                 epoch=epoch, val_loss=best, train_ids=sorted(train_ids), val_ids=sorted(val_ids),
-                training_options={k: str(v) if isinstance(v, Path) else v for k,v in vars(args).items()},
+                training_options={k: str(v) if isinstance(v, Path) else [str(x) for x in v] if isinstance(v, list) else v for k,v in vars(args).items()},
                 feature_names=FEATURE_NAMES),
                 args.output / 'best.pt')
         (args.output / 'history.json').write_text(json.dumps(history, indent=2), encoding='utf-8')

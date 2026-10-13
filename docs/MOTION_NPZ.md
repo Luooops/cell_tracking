@@ -1,8 +1,8 @@
 # Motion NPZ 数据准备
 
-`python -m models.motion_tracking.prepare_npz --output-root outputs/motion_tracking/npz_v001`
+`python -m models.motion_tracking.prepare_npz --output-root outputs/scripta_data/motion_tracking/npz_v001`
 
-数据适配脚本位于 models/motion_tracking/prepare_npz.py；不修改模型、损失、训练循环或解码算法。原图和 mask 只读。默认数据源为 data/data，输出目录必须不存在，拒绝覆盖或写入原数据目录。
+数据适配脚本位于 models/motion_tracking/prepare_npz.py；不修改模型、损失、训练循环或解码算法。原图和 mask 只读。默认数据源为 config.json 中 `dataset` 指定的数据集（当前 data/scripta_data，可用 --dataset 切换），输出目录必须不存在，拒绝覆盖或写入原数据目录。
 
 ## 数据划分
 
@@ -51,7 +51,7 @@ npz_v001/
 manifest.json 记录参数、特征定义、分组单位、每个窗口实际帧数/检测数及所有监督过滤原因。重叠窗口的统计是窗口内出现次数，不是去重后的检测数量。只有 status=complete 才表示整个转换成功；失败目录不会被自动删除或覆盖。
 
 ```powershell
-python train.py --model motion_tracking --version v001 --train-dir outputs/motion_tracking/npz_v001/train --val-dir outputs/motion_tracking/npz_v001/val
+python train.py --model motion_tracking --version v001 --train-dir outputs/scripta_data/motion_tracking/npz_v001/train --val-dir outputs/scripta_data/motion_tracking/npz_v001/val
 ```
 
 默认网络 width=128、layers=3，训练 30 轮。每个窗口独立训练，完整视频推理由 models/motion_tracking/inference.py 执行。默认新增后继辅助损失和检测/几何增强，详见 MOTION_V2.md。

@@ -139,7 +139,7 @@ def run(a):
         triples = sequence(a.data_root, well)
         frames = [dict(sequence_id=well, frame_index=t, time_index=t, image_name=raw.name,
             source_relative_path=raw.name, mask_path=str(mask), status='complete') for t, raw, mask in triples]
-        summary = dict(sequence_id=well, input_dir=str(a.data_root / relative))
+        summary = dict(sequence_id=well, dataset=a.dataset, input_dir=str(a.data_root / relative))
         coords, features, labels, times = extract_frames(triples)
         import tifffile
         for frame, (_, raw, _) in zip(frames, triples):

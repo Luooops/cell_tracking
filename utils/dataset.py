@@ -38,20 +38,23 @@ crop, and changes nothing else.
     python data.py                 # build the cache for all 15 wells
     python data.py r16c02          # one well, and print what it contains
 """
-import os, re, sys, glob
+import os, sys
 import numpy as np, pandas as pd, torch, tifffile
 from skimage.measure import regionprops
 from skimage.transform import resize
 
 HERE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "gnn_tracking")
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LAB_ROOT = os.environ.get("LAB_TRACKER_DATA", os.path.join(PROJECT_ROOT, "data", "data"))
-CACHE = os.environ.get("LAB_TRACKER_CACHE", os.path.join(PROJECT_ROOT, "outputs", "cache", "gnn_tracking"))
+LAB_ROOT = os.environ.get("LAB_TRACKER_DATA", os.path.join(PROJECT_ROOT, "data", "scripta_data"))
+# Cached wells are keyed by well name, so the default cache is separated per dataset folder.
+CACHE = os.environ.get("LAB_TRACKER_CACHE", os.path.join(PROJECT_ROOT, "outputs", "cache", "gnn_tracking",
+                                                         os.path.basename(os.path.normpath(LAB_ROOT))))
 
 CROP_SIZE = 64
 UNLABELLED_OFFSET = 50000          # track_id >= this: a detection without a ground-truth identity
 
-# 15 annotated wells. The 3 test wells are for final evaluations only; every design decision is made on the
+# 15 annotated wells of scripta_data (standalone GNN scripts only; the unified entries read splits from
+# config.json). The 3 test wells are for final evaluations only; every design decision is made on the
 # 12 development wells with the 3-fold split below (whole wells held out, never single frames).
 TEST_WELLS = ["r16c02", "r01c20", "r07c07"]
 FOLDS = [["r08c13", "r11c12", "r03c12", "r14c13"],
@@ -74,14 +77,11 @@ def appearance_crop(img, own, size=CROP_SIZE):
 def read_well(well, root=None):
     """Masks + images of one well -> (df, crops, image shape)."""
     root = LAB_ROOT if root is None else root
-    files = sorted(glob.glob(os.path.join(root, f"{well}_GT", "TRA", "man_track*.tif")))
-    if not files:
-        raise FileNotFoundError(f"no masks for {well} under {root}")
+    from utils.ctc import sequence
     rows, crops = [], []
-    for f in files:
-        frame = int(re.search(r"man_track(\d+)", os.path.basename(f)).group(1))
-        mask = tifffile.imread(f)
-        img = tifffile.imread(os.path.join(root, well, f"t{frame:03d}.tif")).astype(np.float32)
+    for frame, image_path, mask_path in sequence(root, well):   # any CTC frame-number padding (t000 / t0000)
+        mask = tifffile.imread(mask_path)
+        img = tifffile.imread(image_path).astype(np.float32)
         for p in regionprops(mask, intensity_image=img):
             cy, cx = p.centroid
             r0, c0, r1, c1 = p.bbox

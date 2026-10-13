@@ -13,6 +13,7 @@ import numpy as np
 import tifffile
 from skimage.measure import regionprops
 
+from utils.config import read_config, resolve_dataset
 from utils.ctc import sequence, write_csv
 from utils.metrics import score
 
@@ -180,12 +181,18 @@ def evaluate_well(data_root, well, prediction_dir, output_dir, visualize=True):
 
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--data-root',type=Path,default=Path(__file__).resolve().parents[1]/'data/data')
+    parser.add_argument('--config',type=Path,help='Default: project config.json')
+    parser.add_argument('--dataset',help='Dataset name from the config, or a folder under data_dir (default: config dataset)')
+    parser.add_argument('--data-root',type=Path,help='Explicit CTC root; overrides the dataset root')
     parser.add_argument('--tracking-output',type=Path,required=True)
     parser.add_argument('--output-root',type=Path,required=True)
     parser.add_argument('--wells',nargs='+')
     parser.add_argument('--visualize',choices=['all','none'],default='all')
     args=parser.parse_args(argv)
+    try:
+        args.data_root=resolve_dataset(*read_config(args.config),args.dataset,args.data_root)['root']
+    except FileNotFoundError as exc:
+        parser.error(str(exc))
     if args.output_root.exists():
         parser.error('output-root already exists; select a new evaluation directory')
     wells=args.wells or sorted(p.parent.name for p in args.tracking_output.glob('*/instance_tracks.csv'))

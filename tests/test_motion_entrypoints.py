@@ -15,12 +15,12 @@ class MotionEntrypointTests(unittest.TestCase):
                 (root/split).mkdir()
                 np.savez(root/split/'window.npz', coords=np.array([[0,1,1],[1,2,1]],np.float32),
                          features=np.ones((2,7),np.float32), parents=np.array([-1,0]), dataset_id=split)
-            args=['--model','motion_tracking','--version','one','--output-root',str(root/'out'),'--device','cpu']
+            args=['--model','motion_tracking','--version','one','--dataset','demo','--output-root',str(root/'out'),'--device','cpu']
             self.assertEqual(train_main(args+['--train-dir',str(root/'train'),'--val-dir',str(root/'val'),
                 '--set','epochs=1','--set','width=16','--set','layers=1']),0)
-            weights=root/'out'/'motion_tracking'/'one'/'train'/'checkpoints'/'best.pt'
+            weights=root/'out'/'demo'/'motion_tracking'/'one'/'train'/'checkpoints'/'best.pt'
             self.assertEqual(test_main(args+['--windows-dir',str(root/'val'),'--weights',str(weights)]),0)
-            self.assertTrue((root/'out'/'motion_tracking'/'one'/'test'/'window'/'instance_tracks.csv').is_file())
+            self.assertTrue((root/'out'/'demo'/'motion_tracking'/'one'/'test'/'window'/'instance_tracks.csv').is_file())
 
 
 if __name__ == '__main__':

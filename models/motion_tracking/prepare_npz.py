@@ -1,7 +1,8 @@
 """Convert lab CTC masks/images to MotionAssociation windows; no model changes.
 
-Run from the project root: python -m models.motion_tracking.prepare_npz --output-root outputs/motion_tracking/npz_v001
-Default split: 8 development wells for training, fold 0 (4 wells) for validation.
+Run from the project root: python -m models.motion_tracking.prepare_npz --output-root outputs/scripta_data/motion_tracking/npz_v001
+Default split: train_wells / val_wells of the selected config.json dataset (scripta_data: 8 development wells
+for training, fold 0 for validation); its test_wells are never allowed into training or validation.
 dataset_id denotes a WELL here, explicitly evaluating within-experiment generalization.
 """
 import argparse
@@ -13,14 +14,12 @@ import numpy as np
 from skimage.measure import regionprops
 import tifffile
 
+from utils.config import read_config, resolve_dataset
 from utils.ctc import sequence
 
 FEATURE_NAMES = ['log1p_area', 'log1p_major_axis', 'log1p_minor_axis',
                  'eccentricity', 'solidity', 'mean_intensity', 'std_intensity']
 UNKNOWN_OFFSET = 50000
-DEFAULT_VAL = ['r08c13', 'r11c12', 'r03c12', 'r14c13']
-DEFAULT_TRAIN = ['r15c12', 'r12c13', 'r07c02', 'r09c01', 'r13c12', 'r16c13', 'r09c09', 'r14c03']
-HELD_OUT = {'r16c02', 'r01c20', 'r07c07'}
 
 
 def read_detections(root, well):
@@ -141,26 +140,38 @@ def windows(coords, times, window_frames, stride, max_tokens):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--data-root', type=Path, default=Path(__file__).resolve().parents[2] / 'data/data')
+    parser.add_argument('--config', type=Path, help='Default: project config.json')
+    parser.add_argument('--dataset', help='Dataset name from the config, or a folder under data_dir (default: config dataset)')
+    parser.add_argument('--data-root', type=Path, help='Explicit CTC root; overrides the dataset root')
     parser.add_argument('--output-root', type=Path, required=True)
-    parser.add_argument('--dataset-name', default='lab_cells', help='Stable source name; IDs are source/well (well-level split)')
-    parser.add_argument('--train-wells', nargs='+', default=DEFAULT_TRAIN)
-    parser.add_argument('--val-wells', nargs='+', default=DEFAULT_VAL)
+    parser.add_argument('--dataset-name', help='Stable source name; IDs are source/well (well-level split). Default: dataset name')
+    parser.add_argument('--train-wells', nargs='+', help='Default: train_wells of the dataset')
+    parser.add_argument('--val-wells', nargs='+', help='Default: val_wells of the dataset')
     parser.add_argument('--window-frames', type=int, default=6)
     parser.add_argument('--stride', type=int, default=3)
     parser.add_argument('--max-tokens', type=int, default=2048)
     parser.add_argument('--max-gap', type=int, default=3)
     parser.add_argument('--distance', type=float, default=60)
     args = parser.parse_args(argv)
+    cfg, base = read_config(args.config)
+    try:
+        dataset = resolve_dataset(cfg, base, args.dataset, args.data_root)
+    except FileNotFoundError as exc:
+        parser.error(str(exc))
+    args.dataset, args.data_root = dataset['name'], dataset['root']
+    args.dataset_name = args.dataset_name or args.dataset
+    args.train_wells = args.train_wells or dataset['train_wells']
+    args.val_wells = args.val_wells or dataset['val_wells']
+    if not args.train_wells or not args.val_wells:
+        parser.error(f'Dataset {args.dataset} declares no train/val split; pass --train-wells and --val-wells')
     if (args.window_frames < 2 or args.stride < 1 or args.max_tokens < 2 or args.max_gap < 1
             or not np.isfinite(args.distance) or args.distance <= 0 or not args.dataset_name.strip()):
         parser.error('Invalid window/gate/dataset parameters')
     train, val = set(args.train_wells), set(args.val_wells)
     if len(train) != len(args.train_wells) or len(val) != len(args.val_wells) or train & val:
         parser.error('Wells must be unique and train/validation must be disjoint')
-    if (train | val) & HELD_OUT:
-        parser.error('Original held-out test wells cannot be used to prepare training/validation')
-    args.data_root = args.data_root.resolve()
+    if (train | val) & set(dataset['held_out']):
+        parser.error('Held-out test wells of the dataset cannot be used to prepare training/validation')
     args.output_root = args.output_root.resolve()
     if args.output_root == args.data_root or args.data_root in args.output_root.parents:
         parser.error('Output must be outside the source dataset')

@@ -137,7 +137,7 @@ class MotionVideoTests(unittest.TestCase):
                 result=test_main(['--model','motion_tracking','--version','video','--data-root',str(root/'data'),
                     '--output-root',str(root/'out'),'--wells','well','--weights',str(weights),'--device','cpu'])
             self.assertEqual(result,0)
-            dest=root/'out/motion_tracking/video/test/well'
+            dest=root/'out/data/motion_tracking/video/test/well'
             with (dest/'instance_tracks.csv').open() as stream:
                 rows=list(csv.DictReader(stream))
             self.assertEqual(len({r['track_id'] for r in rows}),1)

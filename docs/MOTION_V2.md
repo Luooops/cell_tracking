@@ -54,23 +54,23 @@
 cd /projects/u6yk/yitong/cell_tracking
 
 python -m models.motion_tracking.prepare_npz \
-  --data-root ./data/data \
-  --output-root ./outputs/motion_tracking/npz_v2 \
+  --dataset scripta_data \
+  --output-root ./outputs/scripta_data/motion_tracking/npz_v2 \
   --window-frames 6 --stride 3 --max-gap 3 --distance 60 --max-tokens 2048
 
 python train.py --model motion_tracking --version motion_v2 \
-  --train-dir ./outputs/motion_tracking/npz_v2/train \
-  --val-dir ./outputs/motion_tracking/npz_v2/val \
+  --train-dir ./outputs/scripta_data/motion_tracking/npz_v2/train \
+  --val-dir ./outputs/scripta_data/motion_tracking/npz_v2/val \
   --device auto
 
 # 先用验证孔检查门限/全局指标；不要用测试孔选择参数。
 python test.py --model motion_tracking --version motion_v2_val \
-  --weights ./outputs/motion_tracking/motion_v2/train/checkpoints/best.pt \
+  --weights ./outputs/scripta_data/motion_tracking/motion_v2/train/checkpoints/best.pt \
   --wells r08c13 r11c12 r03c12 r14c13 --device auto
 
 # 固定训练与门限后运行保留的三个测试孔，处理整段视频。
 python test.py --model motion_tracking --version motion_v2 \
-  --weights ./outputs/motion_tracking/motion_v2/train/checkpoints/best.pt \
+  --weights ./outputs/scripta_data/motion_tracking/motion_v2/train/checkpoints/best.pt \
   --device auto
 ```
 
@@ -88,9 +88,9 @@ motion 推理不再使用 XML，也不需要原图名称或 UUID 映射。GT 来
 
 ```bash
 python evaluate.py \
-  --data-root ./data/data \
-  --tracking-output ./outputs/motion_tracking/motion_v2/test \
-  --output-root ./outputs/motion_tracking/motion_v2/evaluate \
+  --dataset scripta_data \
+  --tracking-output ./outputs/scripta_data/motion_tracking/motion_v2/test \
+  --output-root ./outputs/scripta_data/motion_tracking/motion_v2/evaluate \
   --wells r16c02 r01c20 r07c07 \
   --visualize all
 ```
