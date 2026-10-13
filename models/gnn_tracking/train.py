@@ -121,13 +121,19 @@ def save(model, pos_weight, path):
     torch.save({"state_dict": model.state_dict(), "pos_weight": pos_weight}, path)
 
 
-def cross_validate(folds=(0, 1, 2), seeds=(0, 1, 2)):
-    """Every development well is scored by models that never saw it. Prints per-well and mean scores."""
+def cross_validate(folds=(0, 1, 2), seeds=(0, 1, 2), save_dir=None):
+    """Every development well is scored by models that never saw it. Prints per-well and mean scores.
+    save_dir: optionally keep each fold's models as <save_dir>/fold<k>_seed<s>.pt (scoring is unchanged)."""
     from models.gnn_tracking.track import track_video
     from utils.metrics import gt_lookup, score
     res = {}
     for k in folds:
-        models = [train([w for w in DEV_WELLS if w not in FOLDS[k]], seed, log=f"fold {k} seed {seed}")[0] for seed in seeds]
+        models = []
+        for seed in seeds:
+            model, pos_weight = train([w for w in DEV_WELLS if w not in FOLDS[k]], seed, log=f"fold {k} seed {seed}")
+            if save_dir:
+                save(model, pos_weight, os.path.join(save_dir, f"fold{k}_seed{seed}.pt"))
+            models.append(model)
         for w in FOLDS[k]:
             video = Video(*load_well(w))
             res[w] = score(track_video(models, video), gt_lookup(video))
