@@ -15,6 +15,7 @@ from skimage.measure import regionprops
 import tifffile
 
 from utils.config import read_config, resolve_dataset
+from utils.run_log import log_path, log_root, run_logged
 from utils.ctc import sequence
 
 FEATURE_NAMES = ['log1p_area', 'log1p_major_axis', 'log1p_minor_axis',
@@ -179,6 +180,11 @@ def main(argv=None):
         parser.error('Output already exists; select a new directory')
     for well in args.train_wells + args.val_wells:
         sequence(args.data_root, well)
+    log = log_path(log_root(args.output_root, base / cfg['output_root']), 'motion_tracking', f'{args.output_root.name}_prepare_{args.dataset}')
+    return run_logged(log, prepare, args, argv=argv)
+
+
+def prepare(args):
     report = dict(status='running', parameters=vars(args), grouping_unit='well',
                   evaluation_scope='within-experiment held-out wells, not independent experiments',
                   feature_names=FEATURE_NAMES, intensity_normalization='per-frame 1st/99th percentile, clip [0,1]',

@@ -13,7 +13,9 @@ import numpy as np
 import tifffile
 from skimage.measure import regionprops
 
+from models import MODEL_MODULES
 from utils.config import read_config, resolve_dataset
+from utils.run_log import log_path, log_root, run_logged
 from utils.ctc import sequence, write_csv
 from utils.metrics import score
 
@@ -189,15 +191,31 @@ def main(argv=None):
     parser.add_argument('--wells',nargs='+')
     parser.add_argument('--visualize',choices=['all','none'],default='all')
     args=parser.parse_args(argv)
+    cfg,base=read_config(args.config)
     try:
-        args.data_root=resolve_dataset(*read_config(args.config),args.dataset,args.data_root)['root']
+        dataset=resolve_dataset(cfg,base,args.dataset,args.data_root)
     except FileNotFoundError as exc:
         parser.error(str(exc))
+    args.data_root=dataset['root']
     if args.output_root.exists():
         parser.error('output-root already exists; select a new evaluation directory')
     wells=args.wells or sorted(p.parent.name for p in args.tracking_output.glob('*/instance_tracks.csv'))
     if not wells or len(wells)!=len(set(wells)):
         parser.error('no wells found or duplicate wells supplied')
+    return run_logged(evaluation_log(args.tracking_output,args.output_root,base/cfg['output_root'],dataset['name']),
+                      evaluate_wells,args,wells,argv=argv)
+
+
+def evaluation_log(tracking_output,output_root,default_output_root,dataset):
+    """Runs laid out as <root>/<dataset>/<model>/<version>/test log next to their test log; others use the
+    evaluation folder name under the output root (see log_root)."""
+    parts=tracking_output.resolve().parts
+    if len(parts)>=5 and parts[-1]=='test' and parts[-3] in MODEL_MODULES:
+        return log_path(Path(*parts[:-4]),parts[-3],f'{parts[-2]}_evaluate_{parts[-4]}')
+    return log_path(log_root(output_root,default_output_root),'evaluate',f'{output_root.resolve().name}_{dataset}')
+
+
+def evaluate_wells(args,wells):
     reports={}
     for well in wells:
         reports[well]=evaluate_well(args.data_root,well,args.tracking_output/well,

@@ -8,6 +8,7 @@ import json
 import shutil
 from pathlib import Path
 from models import MODEL_MODULES
+from utils.run_log import log_path
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -100,6 +101,7 @@ def options(stage, argv=None):
     if stage == 'test':
         a.wells = a.wells or a.dataset_spec['test_wells']
     a.destination = a.output_root / a.dataset / a.model / a.version / stage
+    a.log_path = log_path(a.output_root, a.model, f'{a.version}_{stage}_{a.dataset}')
     if a.destination.exists() and not a.overwrite:
         p.error(f'Run already exists: {a.destination}; select a new version or pass --overwrite')
     return a

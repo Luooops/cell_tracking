@@ -1,10 +1,15 @@
 """Dispatch to existing training routines. No training for fixed/pretrained trackers."""
 import os
 from utils.config import ctc_sequences, options, save_config
+from utils.run_log import run_logged, tee_process
 
 
 def main(argv=None):
     a = options('train', argv)
+    return run_logged(a.log_path, train_model, a, argv=argv)
+
+
+def train_model(a):
     if a.model not in {'gnn_tracking', 'motion_tracking'}:
         raise ValueError(f'{a.model} has no training entry (Trackastra fine-tuning is not included)')
     if a.model == 'motion_tracking':
@@ -34,7 +39,8 @@ def main(argv=None):
     if not (a.wells or dev_wells):
         raise ValueError(f'No training wells for dataset {a.dataset}; pass --wells or declare a split in the config')
     settings = dict(data_root=str(a.data_root), cache=str(a.destination / 'cache'), folds=ds['folds'],
-                    dev_wells=dev_wells, epochs=a.params['epochs'], batch=a.params['batch'], lr=a.params['lr'])
+                    dev_wells=dev_wells, epochs=a.params['epochs'], batch=a.params['batch'], lr=a.params['lr'],
+                    log_path=str(a.log_path))
     seeds = list(a.params['seeds'])
     if a.cv:
         jobs = [('fold', k, seeds) for k in range(len(ds['folds']))]
@@ -100,6 +106,7 @@ class _Prefixed:
 def _gnn_worker(gpu, worker, settings, jobs, queue):
     # Runs in a fresh (spawned) interpreter: pin the GPU before torch is imported.
     import sys
+    tee_process(settings.get('log_path'))
     sys.stdout = _Prefixed(sys.stdout, f'[GPU {gpu} worker {worker}] ')
     os.environ['CUDA_VISIBLE_DEVICES'] = gpu
     os.environ['LAB_TRACKER_DEVICE'] = 'cuda'

@@ -14,6 +14,7 @@ utils/                 通用数据准备、读取、评估、入口分发、输
 tests/                 motion 模型、数据准备、完整视频推理与统一入口测试
 data/<dataset>/        CTC 数据集；scripta_data 为已有 15 孔位数据，未移动或修改
 outputs/<dataset>/<model>/<version>/train|test/
+outputs/logs/<model>/<version>_<stage>_<dataset>.log   每次运行的完整控制台日志
 history_outputs/       按原来源保留历史输出
 config.json            数据集、孔位划分与模型参数
 ```
