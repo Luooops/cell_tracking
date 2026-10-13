@@ -75,8 +75,7 @@ def run_test(a):
                 gap = params.pop('gap_close_max_gap', 0)
                 distance = params.pop('gap_close_max_distance', 30)
                 cost = params.pop('max_close_cost', 12)
-                cls = module.MitosisTracker if a.model == 'mitosis' else module.SimpleCellTrackerV3
-                tracker = cls(**params)
+                tracker = module.SimpleCellTrackerV3(**params)
                 for frame, _, mask in sequence(a.data_root, well):
                     tracker.update(extract_detections_from_mask(tifffile.imread(mask), frame))
                 tracker.finish_all()
@@ -92,8 +91,6 @@ def run_test(a):
                 df.to_csv(destination / 'instance_tracks.csv', index=False)
                 rows = df.to_dict('records')
                 write_csv(destination / 'frames.csv', frames, list(frames[0]))
-                if a.model == 'mitosis':
-                    (destination / 'lineage.json').write_text(json.dumps(tracker.parent_of), encoding='utf-8')
             assign = {(int(r['frame_index']), int(r['instance_id'])): int(r['track_id']) for r in rows}
             reports[well] = score(assign, gt) if gt else {'status': 'no_labelled_detections'}
         (destination / 'metrics.json').write_text(json.dumps(reports[well], indent=2), encoding='utf-8')

@@ -186,17 +186,31 @@ def main(argv=None):
     parser.add_argument('--config',type=Path,help='Default: project config.json')
     parser.add_argument('--dataset',help='Dataset name from the config, or a folder under data_dir (default: config dataset)')
     parser.add_argument('--data-root',type=Path,help='Explicit CTC root; overrides the dataset root')
-    parser.add_argument('--tracking-output',type=Path,required=True)
+    parser.add_argument('--tracking-output',type=Path,help='Saved test output of one run (required unless --compare)')
     parser.add_argument('--output-root',type=Path,required=True)
     parser.add_argument('--wells',nargs='+')
-    parser.add_argument('--visualize',choices=['all','none'],default='all')
+    parser.add_argument('--visualize',choices=['all','none'],default='all',help='Per-frame comparison PNGs')
+    parser.add_argument('--plots',action=argparse.BooleanOptionalAction,default=True,
+                        help='Metric summary figure (PDF/SVG/PNG + source data) under <output-root>/figures')
+    parser.add_argument('--compare',type=Path,nargs='+',metavar='EVALUATION',
+                        help='Compare existing evaluate.py outputs of different runs on the same sequences')
+    parser.add_argument('--labels',nargs='+',help='Display names for --compare runs (default: model and version)')
     args=parser.parse_args(argv)
     cfg,base=read_config(args.config)
+    if args.compare:
+        if args.output_root.exists():
+            parser.error('output-root already exists; select a new comparison directory')
+        if args.labels and len(args.labels)!=len(args.compare):
+            parser.error('--labels needs one name per --compare folder')
+        log=log_path(log_root(args.output_root,base/cfg['output_root']),'evaluate',f'{args.output_root.resolve().name}_compare')
+        return run_logged(log,compare_runs,args,argv=argv)
+    if not args.tracking_output:
+        parser.error('--tracking-output is required unless --compare is given')
     try:
         dataset=resolve_dataset(cfg,base,args.dataset,args.data_root)
     except FileNotFoundError as exc:
         parser.error(str(exc))
-    args.data_root=dataset['root']
+    args.data_root,args.dataset_name=dataset['root'],dataset['name']
     if args.output_root.exists():
         parser.error('output-root already exists; select a new evaluation directory')
     wells=args.wells or sorted(p.parent.name for p in args.tracking_output.glob('*/instance_tracks.csv'))
@@ -215,6 +229,31 @@ def evaluation_log(tracking_output,output_root,default_output_root,dataset):
     return log_path(log_root(output_root,default_output_root),'evaluate',f'{output_root.resolve().name}_{dataset}')
 
 
+def run_info(tracking_output,dataset):
+    """Model/version of a run laid out as <root>/<dataset>/<model>/<version>/test (used for figure labels)."""
+    parts=tracking_output.resolve().parts
+    info=dict(tracking_output=str(tracking_output.resolve()),dataset=dataset)
+    if len(parts)>=5 and parts[-1]=='test' and parts[-3] in MODEL_MODULES:
+        info.update(model=parts[-3],version=parts[-2],dataset=parts[-4])
+    return info
+
+
+def compare_runs(args):
+    from utils.metric_plots import load_evaluation, plot_metrics
+    runs=[load_evaluation(folder,label) for folder,label in zip(args.compare,args.labels or [None]*len(args.compare))]
+    wells=[sorted(run['wells']) for run in runs]
+    if any(w!=wells[0] for w in wells):
+        raise ValueError('Compared evaluations must cover the same sequences: '+
+                         '; '.join(f"{run['label']}: {' '.join(w)}" for run,w in zip(runs,wells)))
+    args.output_root.mkdir(parents=True)
+    (args.output_root/'comparison.json').write_text(json.dumps(dict(
+        evaluations=[str(Path(f).resolve()) for f in args.compare],labels=[run['label'] for run in runs],
+        sequences=wells[0]),indent=2),encoding='utf-8')
+    for path in plot_metrics(runs,args.output_root/'figures'/'metrics_comparison'):
+        print('saved',path,flush=True)
+    return 0
+
+
 def evaluate_wells(args,wells):
     reports={}
     for well in wells:
@@ -223,6 +262,13 @@ def evaluate_wells(args,wells):
         print(well,{key:reports[well][key] for key in
             ('perfect','id_switches','purity','observation_coverage','identity_link_recall')},flush=True)
     (args.output_root/'metrics.json').write_text(json.dumps(reports,indent=2),encoding='utf-8')
+    info=run_info(args.tracking_output,args.dataset_name)
+    (args.output_root/'run.json').write_text(json.dumps(info,indent=2),encoding='utf-8')
+    if args.plots:
+        from utils.metric_plots import load_evaluation, plot_metrics
+        run=load_evaluation(args.output_root)
+        for path in plot_metrics([run],args.output_root/'figures'/'metrics_summary',title=f"{run['label']} · {info['dataset']}"):
+            print('saved',path,flush=True)
     return 0
 
 

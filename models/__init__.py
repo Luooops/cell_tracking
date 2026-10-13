@@ -7,8 +7,6 @@ MODEL_MODULES = {
     'trackastra': 'models.trackastra.run_trackastra',
     'motion_tracking': 'models.motion_tracking.model',
     'classical_tracking': 'models.classical_tracking.tracking_v0',
-    'classical_legacy': 'models.classical_tracking.legacy',
-    'mitosis': 'models.classical_tracking.mitosis',
 }
 
 

@@ -9,7 +9,7 @@ models/
   gnn_tracking/        GNN、原训练、两种跟踪求解流程、已有权重
   trackastra/          原官方预训练调用与导出流程
   motion_tracking/     MotionAssociation、专用 NPZ 数据准备、训练、窗口推理与解码
-  classical_tracking/  当前经典算法、legacy 算法、mitosis 扩展、原分割流水线
+  classical_tracking/  经典规则追踪基线（无训练，用于对比简单算法与训练模型）与原分割流水线
 utils/                 通用数据准备、读取、评估、入口分发、输入输出适配、可视化
 tests/                 motion 模型、数据准备、完整视频推理与统一入口测试
 data/<dataset>/        CTC 数据集；scripta_data 为已有 15 孔位数据，未移动或修改
@@ -37,8 +37,6 @@ python test.py --model gnn_tracking --version pretrained --device cpu
 python test.py --model gnn_tracking --version v001 --weights outputs/scripta_data/gnn_tracking/v001/train/checkpoints
 python test.py --model trackastra --version pretrained
 python test.py --model classical_tracking --version baseline
-python test.py --model classical_legacy --version baseline
-python test.py --model mitosis --version baseline
 python test.py --model gnn_division --version experimental
 ```
 
@@ -67,6 +65,14 @@ python test.py --model motion_tracking --version v2 --weights outputs/scripta_da
 ```bash
 python evaluate.py --dataset scripta_data --tracking-output outputs/scripta_data/motion_tracking/v2/test --output-root outputs/scripta_data/motion_tracking/v2/evaluate --visualize all
 ```
+
+每次评估还会在 `<output-root>/figures/` 生成汇总图 `metrics_summary`（PDF 可编辑文字、SVG、600 dpi PNG）、逐项数值 `_source_data.csv` 和图注 `_legend.txt`：a 身份指标（均值±s.d.，点为各孔），b 按间隔帧数的连接召回，c GT 轨迹结局（recovered/fragmented/mixed/missing），d 每 100 条 GT 连接的 ID switch。`--no-plots` 关闭。多个模型在同一批孔上的已有评估可合成对比图：
+
+```bash
+python evaluate.py --output-root outputs/scripta_data/compare_v1 --compare outputs/scripta_data/gnn_tracking/pretrained/evaluate outputs/scripta_data/motion_tracking/v2/evaluate
+```
+
+图例名默认取自 `<模型> · <版本>`，可用 `--labels` 指定；孔位不一致时拒绝比较。
 
 这是同一批 CTC 检测上的身份关联评价；不是独立分割评估，也不冒充官方 TRA/SEG。身份未知的 mask 标签 >=50000 不计入身份指标。
 

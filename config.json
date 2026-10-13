@@ -30,8 +30,6 @@
         "n_history": 3, "gap_growth": 0.35, "deformable": true, "motion_scale": 0.5,
         "gap_close_max_gap": 0, "gap_close_max_distance": 30, "max_close_cost": 12}
     },
-    "classical_legacy": {"test": {}},
-    "mitosis": {"test": {}},
     "motion_tracking": {
       "train": {"epochs": 30, "width": 128, "layers": 3, "max_gap": 3,
         "distance": 60, "max_tokens": 2048, "lr": 0.0001, "seed": 42,

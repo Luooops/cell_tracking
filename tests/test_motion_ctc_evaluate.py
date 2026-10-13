@@ -53,6 +53,25 @@ class MotionCTCEvaluationTests(unittest.TestCase):
                 '--output-root',str(root/'rescore'),'--visualize','none']),0)
             saved=json.loads((root/'rescore/well/metrics.json').read_text())
             self.assertEqual(saved,report)
+            for suffix in ('.pdf','.svg','.png','_legend.txt','_source_data.csv'):
+                self.assertTrue((root/f'rescore/figures/metrics_summary{suffix}').is_file())
+
+    def test_compare_figure_from_saved_evaluations(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            self.make_data(root)
+            for name in ('one','two'):
+                self.assertEqual(main(['--data-root',str(root/'data'),'--tracking-output',str(root/'pred'),
+                    '--output-root',str(root/name),'--visualize','none','--no-plots']),0)
+            self.assertFalse((root/'one/figures').exists())
+            self.assertEqual(main(['--output-root',str(root/'cmp'),'--compare',str(root/'one'),str(root/'two'),
+                '--labels','A','B']),0)
+            self.assertTrue((root/'cmp/figures/metrics_comparison.pdf').is_file())
+            data=(root/'cmp/figures/metrics_comparison_source_data.csv').read_text(encoding='utf-8')
+            self.assertIn('Perfect tracks',data)
+            self.assertIn('A',data)
+            with self.assertRaises(SystemExit):
+                main(['--output-root',str(root/'cmp2'),'--compare',str(root/'one'),'--labels','A','B'])
 
     def test_missing_prediction_reduces_coverage_and_track_recovery(self):
         with tempfile.TemporaryDirectory() as folder:
