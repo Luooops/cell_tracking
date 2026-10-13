@@ -101,6 +101,7 @@ def load_well(well, flip=None):
         d = torch.load(path, weights_only=False)
         df, crops, (height, width) = d["df"], d["crops"].numpy(), d["shape"]
     else:
+        print(f"  caching {well} (first use: reading frames and masks)", flush=True)
         df, crops, (height, width) = read_well(well)
         os.makedirs(CACHE, exist_ok=True)
         torch.save({"df": df, "crops": torch.from_numpy(crops), "shape": (height, width)}, path)

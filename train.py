@@ -80,8 +80,27 @@ def _run_gnn_jobs(settings, jobs):
     return results
 
 
-def _gnn_worker(gpu, settings, jobs, queue):
+class _Prefixed:
+    """Line-prefixing stdout so interleaved worker logs show their GPU."""
+    def __init__(self, stream, prefix):
+        self.stream, self.prefix, self.at_line_start = stream, prefix, True
+
+    def write(self, text):
+        for line in text.splitlines(keepends=True):
+            if self.at_line_start:
+                self.stream.write(self.prefix)
+            self.stream.write(line)
+            self.at_line_start = line.endswith('\n')
+        return len(text)
+
+    def flush(self):
+        self.stream.flush()
+
+
+def _gnn_worker(gpu, worker, settings, jobs, queue):
     # Runs in a fresh (spawned) interpreter: pin the GPU before torch is imported.
+    import sys
+    sys.stdout = _Prefixed(sys.stdout, f'[GPU {gpu} worker {worker}] ')
     os.environ['CUDA_VISIBLE_DEVICES'] = gpu
     os.environ['LAB_TRACKER_DEVICE'] = 'cuda'
     try:
@@ -98,12 +117,13 @@ def _run_gnn_parallel(settings, jobs, gpus, wells):
     # Build the well cache once up front so the workers only read it (no concurrent writes of the same file).
     dataset.LAB_ROOT = settings['data_root']
     dataset.CACHE = settings['cache']
-    for well in sorted(set(wells) | set(settings['dev_wells'])):
+    cv = any(job[0] == 'fold' for job in jobs)
+    for well in sorted(settings['dev_wells'] if cv else set(wells)):
         dataset.load_well(well)
     ctx = mp.get_context('spawn')
     queue = ctx.Queue()
     # One worker per entry; repeating an id (--gpus 0 0 1 1) runs several workers on that GPU.
-    workers = [ctx.Process(target=_gnn_worker, args=(gpu, settings, jobs[i::len(gpus)], queue))
+    workers = [ctx.Process(target=_gnn_worker, args=(gpu, i, settings, jobs[i::len(gpus)], queue))
                for i, gpu in enumerate(gpus) if jobs[i::len(gpus)]]
     for worker in workers:
         worker.start()

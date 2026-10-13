@@ -82,15 +82,20 @@ def contrastive_loss(sim, src, dst, positive):
 
 
 def train(wells, seed=0, log=None):
+    if log:
+        print(f"  {log}: building training graphs for {len(wells)} wells", flush=True)
     graphs = training_graphs(wells, np.random.default_rng(seed))          # kept on the CPU; a batch moves to the GPU
     y = torch.cat([g.candidate_edge_label[~g.candidate_edge_unknown] for g in graphs])
     pos_weight = torch.tensor([float((1 - y).sum() / y.sum())], device=DEVICE)
     torch.manual_seed(seed)
     model = TrackerGNN().to(DEVICE)
     opt = torch.optim.Adam(model.parameters(), lr=LR)
+    if log:
+        print(f"  {log}: {len(graphs)} graphs, {-(-len(graphs) // BATCH)} batches per epoch", flush=True)
     t0 = time.time()
     for ep in range(EPOCHS):
         model.train()
+        loss_sum, n_batches = torch.zeros((), device=DEVICE), 0      # summed on the device: one sync per epoch
         for b in DataLoader(graphs, batch_size=BATCH, shuffle=True):       # 16 graphs glued into one big graph
             b = b.to(DEVICE)
             known = ~b.candidate_edge_unknown
@@ -100,11 +105,14 @@ def train(wells, seed=0, log=None):
             src, dst = b.candidate_edge_index
             loss = loss + AUX * contrastive_loss(model.sim[known], src[known], dst[known], label > 0.5)
             opt.zero_grad(); loss.backward(); opt.step()
+            loss_sum += loss.detach(); n_batches += 1
         if DEVICE.type == "cuda":
             torch.cuda.empty_cache()       # batches differ in size and fragment the cache; on Windows a full GPU
                                            # silently spills into system RAM and training becomes ~10x slower
-        if log and ep in (0, 9, 19, 29, EPOCHS - 1):
-            print(f"  {log}: epoch {ep + 1} / {EPOCHS} ({(time.time() - t0) / 60:.1f} min)", flush=True)
+        if log:
+            elapsed = (time.time() - t0) / 60
+            print(f"  {log}: epoch {ep + 1} / {EPOCHS}  loss {float(loss_sum) / n_batches:.4f}  "
+                  f"({elapsed:.1f} min, ~{elapsed / (ep + 1) * (EPOCHS - ep - 1):.1f} min left)", flush=True)
     return model.eval(), float(pos_weight)
 
 

@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import random
 import sys
+import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from models.motion_tracking.model import MotionAssociation, association_loss
@@ -110,7 +111,7 @@ def main(argv=None):
                 association_loss(model(coords, feats), coords, parents,
                                  motion_weight=0 if args.no_motion else 0.1, successor_weight=args.successor_weight)
     args.output.mkdir(parents=True, exist_ok=True)
-    history, best = [], float('inf')
+    history, best, started = [], float('inf'), time.time()
     for epoch in range(1, args.epochs + 1):
         results = []
         for index, split in enumerate(tensors):
@@ -149,8 +150,10 @@ def main(argv=None):
                     count += verified
             results.append(dict(loss=total / count, parent_accuracy=correct / count,
                 gap_parent_accuracy=gap_correct / gap_count if gap_count else None, gap_targets=gap_count))
+        elapsed = (time.time() - started) / 60
         history.append(dict(epoch=epoch, train_loss=results[0]['loss'], val_loss=results[1]['loss'],
-            train=results[0], val=results[1]))
+            train=results[0], val=results[1], elapsed_min=round(elapsed, 2),
+            eta_min=round(elapsed / epoch * (args.epochs - epoch), 2)))
         print(json.dumps(history[-1]), flush=True)
         if results[1]['loss'] < best:
             best = results[1]['loss']
