@@ -103,12 +103,12 @@ class _Prefixed:
         self.stream.flush()
 
 
-def _gnn_worker(gpu, worker, settings, jobs, queue):
+def _gnn_worker(gpu, device, worker, settings, jobs, queue):
     # Runs in a fresh (spawned) interpreter: pin the GPU before torch is imported.
     import sys
     tee_process(settings.get('log_path'))
     sys.stdout = _Prefixed(sys.stdout, f'[GPU {gpu} worker {worker}] ')
-    os.environ['CUDA_VISIBLE_DEVICES'] = gpu
+    os.environ['CUDA_VISIBLE_DEVICES'] = device
     os.environ['LAB_TRACKER_DEVICE'] = 'cuda'
     try:
         queue.put((gpu, _run_gnn_jobs(settings, jobs)))
@@ -120,7 +120,18 @@ def _gnn_worker(gpu, worker, settings, jobs, queue):
 def _run_gnn_parallel(settings, jobs, gpus, wells):
     """Independent seeds / folds on separate GPUs; each job trains exactly as in the serial run."""
     import multiprocessing as mp
+    import torch
     from utils import dataset
+    # --gpus are indices into the GPUs this process can see (0..n-1). Under Slurm/CUDA_VISIBLE_DEVICES they are
+    # mapped back to the allocated devices, so a worker never leaves the job's allocation.
+    available = torch.cuda.device_count()
+    visible = [d.strip() for d in os.environ.get('CUDA_VISIBLE_DEVICES', '').split(',') if d.strip()]
+    bad = [g for g in gpus if not g.isdigit() or int(g) >= available]
+    if bad:
+        raise ValueError(f'--gpus {" ".join(bad)} not available: this process sees {available} GPU(s) '
+                         f'(use 0..{available - 1})' + (f'; CUDA_VISIBLE_DEVICES={",".join(visible)}' if visible else ''))
+    device_of = {g: visible[int(g)] if visible else g for g in gpus}
+    print('GPU mapping: ' + ', '.join(f'--gpus {g} -> device {device_of[g]}' for g in dict.fromkeys(gpus)), flush=True)
     # Build the well cache once up front so the workers only read it (no concurrent writes of the same file).
     dataset.LAB_ROOT = settings['data_root']
     dataset.CACHE = settings['cache']
@@ -130,7 +141,7 @@ def _run_gnn_parallel(settings, jobs, gpus, wells):
     ctx = mp.get_context('spawn')
     queue = ctx.Queue()
     # One worker per entry; repeating an id (--gpus 0 0 1 1) runs several workers on that GPU.
-    workers = [ctx.Process(target=_gnn_worker, args=(gpu, i, settings, jobs[i::len(gpus)], queue))
+    workers = [ctx.Process(target=_gnn_worker, args=(gpu, device_of[gpu], i, settings, jobs[i::len(gpus)], queue))
                for i, gpu in enumerate(gpus) if jobs[i::len(gpus)]]
     for worker in workers:
         worker.start()
