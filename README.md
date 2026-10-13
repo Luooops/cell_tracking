@@ -26,7 +26,7 @@ Windows 测试时使用 `$env:MKL_THREADING_LAYER='SEQUENTIAL'`，避免本机 N
 
 ## 使用
 
-从项目根目录执行。相对配置路径以配置文件目录为基准；命令行路径以当前工作目录为基准。`--version` 必填，相同模型/版本/阶段不覆盖已有输出。
+从项目根目录执行。相对配置路径以配置文件目录为基准；命令行路径以当前工作目录为基准。`--version` 必填，相同模型/版本/阶段默认不覆盖已有输出；中断后需重跑同一版本时加 `--overwrite`，会先删除该 `<model>/<version>/<train|test>/` 目录再重新运行。
 
 ```powershell
 python train.py --model gnn_tracking --version v001

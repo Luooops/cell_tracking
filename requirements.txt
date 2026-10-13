@@ -1,4 +1,4 @@
-# Core workflows: models/classical_tracking/ and utils/.
+# Core workflows: models/classical_tracking/, models/motion_tracking/, models/gnn_tracking/ and utils/.
 # Version baseline: existing torch environment, Python 3.10.20.
 # Install the appropriate PyTorch build first (GPU command below), then this file:
 # python -m pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu130
@@ -6,12 +6,14 @@
 # Plain version pins also accept the corresponding +cu130 builds.
 torch==2.11.0
 torchvision==0.26.0
+torch_geometric==2.8.0.post1
 cellpose==4.2.1.1
 numpy==2.2.5
 scipy==1.15.3
 scikit-image==0.25.2
 pandas==2.3.3
 tifffile==2024.12.12
+imagecodecs
 Pillow==11.1.0
 matplotlib==3.10.9
 opencv-python-headless==5.0.0.93
@@ -21,4 +23,6 @@ openpyxl==3.1.5
 # Cellpose's transitive dependencies are installed automatically by pip.
 # Local model weights are not included; configure --model if moved.
 # Excel export also requires Node.js and @oai/artifact-tool (not pip packages).
-# models/trackastra/ and models/gnn_tracking/ have separate dependency records.
+# GNN training/inference verified with torch 2.11 + torch_geometric 2.8.0.post1 (pure Python; no torch_scatter/pyg-lib needed).
+# models/gnn_tracking/requirements.txt records the torch 2.6 versions its original results were produced with.
+# models/trackastra/ has a separate dependency record.

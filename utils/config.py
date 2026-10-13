@@ -5,6 +5,7 @@ config['datasets'][name] may declare root and well splits; any other folder unde
 can be selected by name with --dataset and its sequences are discovered automatically (no predefined split)."""
 import argparse
 import json
+import shutil
 from pathlib import Path
 from models import MODEL_MODULES
 
@@ -65,6 +66,7 @@ def options(stage, argv=None):
     p.add_argument('--wells', nargs='+')
     p.add_argument('--device', choices=['auto', 'cpu', 'cuda'], default='auto')
     p.add_argument('--set', action='append', default=[], metavar='KEY=JSON', help='Override a model parameter, e.g. epochs=1')
+    p.add_argument('--overwrite', action='store_true', help='Delete an existing run of this model/version/stage and start it again')
     if stage == 'train':
         p.add_argument('--train-dir', type=Path, nargs='+', help='Motion: existing audited NPZ training windows (one or more roots)')
         p.add_argument('--val-dir', type=Path, nargs='+', help='Motion: existing audited NPZ validation windows (one or more roots)')
@@ -98,11 +100,15 @@ def options(stage, argv=None):
     if stage == 'test':
         a.wells = a.wells or a.dataset_spec['test_wells']
     a.destination = a.output_root / a.dataset / a.model / a.version / stage
-    if a.destination.exists():
-        p.error(f'Run already exists: {a.destination}; select a new version')
+    if a.destination.exists() and not a.overwrite:
+        p.error(f'Run already exists: {a.destination}; select a new version or pass --overwrite')
     return a
 
 
 def save_config(a):
+    if getattr(a, 'overwrite', False) and a.destination.exists():
+        # Only the selected <model>/<version>/<stage> directory is removed, after all arguments were validated.
+        print(f'Overwriting existing run: {a.destination}', flush=True)
+        shutil.rmtree(a.destination)
     a.destination.mkdir(parents=True, exist_ok=False)
     (a.destination / 'config.json').write_text(json.dumps(vars(a), default=str, indent=2), encoding='utf-8')

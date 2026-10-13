@@ -1,4 +1,5 @@
-# Python 3.10. Versions the results were produced with.
+# Python 3.10. Versions the original results were produced with (reproduction record).
+# For the unified entries, the root requirements.txt (torch 2.11 + torch_geometric 2.8.0.post1) also runs GNN.
 # Install PyTorch first for your machine (GPU: https://pytorch.org/get-started/locally/), then the rest.
 torch==2.6.0
 torch_geometric==2.8.0.post1
