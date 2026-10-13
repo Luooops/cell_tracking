@@ -60,7 +60,33 @@ def train_model(a):
         print(f"all folds, mean over {len(res)} wells: perfect {np.mean([r['perfect'] for r in res.values()]):.2f}  "
               f"id switches {np.mean([r['id_switches'] for r in res.values()]):.1f}  "
               f"purity {np.mean([r['purity'] for r in res.values()]):.3f}", flush=True)
+        path = _write_cv_metrics(a.destination / 'cv_metrics.json', res, ds['folds'], seeds)
+        print(f'cross-validation metrics saved to {path}', flush=True)
     return 0
+
+
+def _write_cv_metrics(path, res, folds, seeds):
+    """Per-well CV reports with their fold, per-fold means, and the overall mean / std over folds."""
+    import json
+    import numpy as np
+    keys = ('perfect', 'id_switches', 'purity')
+
+    def mean(reports):
+        return {k: float(np.mean(v)) if (v := [r[k] for r in reports if r.get(k) is not None]) else None
+                for k in keys}
+
+    fold_of = {w: k for k, fold in enumerate(folds) for w in fold}
+    per_fold = [dict(fold=k, wells=fold, **mean([res[w] for w in fold if w in res])) for k, fold in enumerate(folds)]
+    overall = dict(n_wells=len(res), **mean(res.values()))
+    for k in keys:
+        values = [f[k] for f in per_fold if f[k] is not None]
+        overall[f'{k}_std_over_folds'] = float(np.std(values)) if len(values) > 1 else None
+    report = dict(seeds=seeds, ensemble='per fold: mean edge probability of the seeds trained on the other folds',
+                  metric_scope='project identity metrics (perfect / id_switches / purity), not official CTC TRA/IDF1',
+                  overall=overall, folds=per_fold,
+                  wells={w: dict(fold=fold_of.get(w), **r) for w, r in sorted(res.items())})
+    path.write_text(json.dumps(report, indent=2), encoding='utf-8')
+    return path
 
 
 def _run_gnn_jobs(settings, jobs):
