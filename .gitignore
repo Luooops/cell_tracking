@@ -229,6 +229,9 @@ presentations/
 output*/
 history_outputs/
 
+# Development runs (stage results: development/<stage purpose>/<run>)
+development/
+
 # Ignore dataset
 data/
 

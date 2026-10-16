@@ -44,14 +44,10 @@ from scipy.spatial import cKDTree
 from torch_geometric.data import Data
 
 from utils.dataset import UNLABELLED_OFFSET, load_well
+from models.gnn_tracking.gating import gating_radius
 
 KNN = 4                  # same-frame neighbours per cell in the message graph
-# --- adaptive gating radius (no ground truth needed; constants calibrated in September on the dnn benchmark) ---
-SAFETY = 2.1             # r = SAFETY x the 99% quantile of the frame-to-frame step ...
-R_MIN = 10.0             # ... at least this many pixels ...
-SPACING_CAP = 1.5        # ... and at most SPACING_CAP x the median distance between neighbouring cells
-WINDOW = 8               # frame pairs around t that the estimate uses
-R_FALLBACK = 40.0        # fewer than 5 usable cells in the window
+# The adaptive gating radius (SAFETY, R_MIN, SPACING_CAP, WINDOW, R_FALLBACK) lives in gating.py.
 
 
 class Video:
@@ -74,32 +70,10 @@ class Video:
         self._radius = {}
 
     def radius(self, t):
-        """Gating radius for links leaving frame t, estimated from positions alone.
-
-        Step size: in each consecutive frame pair of a window around t, take the cells that are each other's
-        nearest neighbour (almost always the same cell) and collect their distances; q99 = the 99% quantile.
-        Density: the median distance from a cell to its nearest neighbour in the same frame.
-        r = clip(2.1 x q99, at least 10 px, at most 1.5 x spacing). The cap keeps the candidate graph sparse in
-        dense wells: beyond 1.5 neighbour spacings a link would have to jump over other cells."""
+        """Gating radius for links leaving frame t, estimated from positions alone (gating.gating_radius:
+        clip(2.1 x q99 of the frame-to-frame step, at least 10 px, at most 1.5 x the neighbour spacing))."""
         if t not in self._radius:
-            i = self.frames.index(t)
-            win = self.frames[max(0, i - WINDOW // 2): min(len(self.frames), i + WINDOW // 2 + 2)]
-            steps, spacing = [], []
-            for a, b in zip(win[:-1], win[1:]):
-                pa, pb = self.pos[a], self.pos[b]
-                d_ab, nn_ab = cKDTree(pb).query(pa, k=1)          # for every cell of a: nearest cell of b
-                _, nn_ba = cKDTree(pa).query(pb, k=1)             # and the other way round
-                steps += [d_ab[k] for k, j in enumerate(nn_ab) if nn_ba[j] == k]
-            for a in win:
-                if len(self.pos[a]) >= 2:
-                    d, _ = cKDTree(self.pos[a]).query(self.pos[a], k=2)   # k=2: [itself, nearest other cell]
-                    spacing.append(d[:, 1])
-            if len(steps) < 5:
-                self._radius[t] = R_FALLBACK
-            else:
-                r = max(SAFETY * float(np.quantile(steps, 0.99)), R_MIN)
-                spacing = float(np.median(np.concatenate(spacing))) if spacing else float("inf")
-                self._radius[t] = float(min(r, SPACING_CAP * spacing))
+            self._radius[t] = gating_radius(self.frames, self.pos, t)[0]
         return self._radius[t]
 
 

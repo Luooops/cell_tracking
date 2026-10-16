@@ -135,12 +135,19 @@ def load_model(path):
 
 
 @torch.no_grad()
+def edge_scores(models, gr):
+    """(p [C], logits [C, M]) numpy: p = the mean over the ensemble members' sigmoid outputs (the tracker's input);
+    logits = every member's raw logit, kept for calibration and uncertainty analysis."""
+    gd = gr.to(DEVICE)
+    z = torch.stack([m(gd) for m in models])                                  # [M, C]
+    p = torch.sigmoid(z).mean(0).cpu().numpy()
+    gr.cpu()
+    return p, z.T.float().cpu().numpy()
+
+
 def edge_probabilities(models, gr):
     """Probability of every candidate edge = the mean over the ensemble members' sigmoid outputs. [C] numpy."""
-    gd = gr.to(DEVICE)
-    p = torch.stack([torch.sigmoid(m(gd)) for m in models]).mean(0).cpu().numpy()
-    gr.cpu()
-    return p
+    return edge_scores(models, gr)[0]
 
 
 if __name__ == "__main__":

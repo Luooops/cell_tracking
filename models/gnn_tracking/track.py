@@ -27,14 +27,15 @@ import numpy as np
 
 from utils.dataset import HERE, load_well
 from models.gnn_tracking.graph import Video, pair_graph
-from models.gnn_tracking.model import load_model, edge_probabilities
+from models.gnn_tracking.model import load_model, edge_scores
 from models.gnn_tracking.solver import match
 
 LINK_THRESH = 0.5        # round 1. Fixed a priori ("more likely the same cell than not"), not tuned on the data
 GAP_THRESH = 0.9         # round 2
 
 
-def track_video(models, video, gap_round=True):
+def track_video(models, video, gap_round=True, recorder=None):
+    """recorder: optional edge_record.EdgeRecorder; it only observes every solver call, the result is unchanged."""
     frames = video.frames
     f0 = frames[0]
     assert frames == list(range(f0, f0 + len(frames))), "frames must be consecutive"
@@ -55,10 +56,13 @@ def track_video(models, video, gap_round=True):
     for t in frames[:-1]:
         fi = t - f0
         gr = pair_graph(video, t, 1, velocities(fi))
-        p = edge_probabilities(models, gr)
+        p, logits = edge_scores(models, gr)
         src, dst = gr.candidate_edge_index.numpy()
         matched = set()
-        for i, j in match(p, src, dst - gr.n_t, gr.n_t, gr.n_n, LINK_THRESH):
+        links = match(p, src, dst - gr.n_t, gr.n_t, gr.n_n, LINK_THRESH)
+        if recorder is not None:
+            recorder(1, t, 1, src, dst - gr.n_t, p, logits, np.ones(len(src), bool), links)
+        for i, j in links:
             tid = assign[(fi, i)]
             assign[(fi + 1, j)] = tid; members[tid].append((fi + 1, j)); matched.add(j)
         for j in range(gr.n_n):
@@ -75,15 +79,21 @@ def track_video(models, video, gap_round=True):
         if not ends or not starts:
             continue
         gr = pair_graph(video, t, 2, velocities(fi))
-        p = edge_probabilities(models, gr)
+        p, logits = edge_scores(models, gr)
         src, dst = gr.candidate_edge_index.numpy(); dst = dst - gr.n_t
         row = {members[tid][-1][1]: r for r, tid in enumerate(ends)}       # local index in frame t   -> solver row
         col = {members[tid][0][1]: c for c, tid in enumerate(starts)}      # local index in frame t+2 -> solver column
         sel = [e for e in range(len(src)) if src[e] in row and dst[e] in col]
         if not sel:
+            if recorder is not None:
+                recorder(2, t, 2, src, dst, p, logits, np.zeros(len(src), bool), [])
             continue
-        for r, c in match(p[sel], np.array([row[src[e]] for e in sel]), np.array([col[dst[e]] for e in sel]),
-                          len(ends), len(starts), GAP_THRESH):
+        links = match(p[sel], np.array([row[src[e]] for e in sel]), np.array([col[dst[e]] for e in sel]),
+                      len(ends), len(starts), GAP_THRESH)
+        if recorder is not None:
+            recorder(2, t, 2, src, dst, p, logits, np.isin(np.arange(len(src)), sel),
+                     [(members[ends[r]][-1][1], members[starts[c]][0][1]) for r, c in links])
+        for r, c in links:
             a, b = ends[r], starts[c]
             for k in members[b]:
                 assign[k] = a

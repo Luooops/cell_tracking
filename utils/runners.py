@@ -45,10 +45,15 @@ def run_test(a):
             from utils.metrics import gt_lookup
             video = Video(*load_well(well))
             parent = None
+            params = dict(a.params)
+            recorder = None
+            if params.pop('record_edges', False):
+                from models.gnn_tracking.edge_record import EdgeRecorder
+                recorder = EdgeRecorder(video)
             if a.model == 'gnn_division':
-                assign, parent = module.track_video_division(model, video, **a.params)
+                assign, parent = module.track_video_division(model, video, recorder=recorder, **params)
             else:
-                assign = module.track_video(model, video, gap_round=a.params['gap_round'])
+                assign = module.track_video(model, video, gap_round=params['gap_round'], recorder=recorder)
             reports[well] = score(assign, gt_lookup(video))
             df = video.df.copy()
             df = df.rename(columns={'track_id': 'instance_id', 'frame': 'frame_index'})
@@ -59,6 +64,8 @@ def run_test(a):
                 lineage = {int(d) + 1: int(m) + 1 for d, m in parent.items()}
                 (destination / 'lineage.json').write_text(json.dumps(lineage), encoding='utf-8')
             df.to_csv(destination / 'instance_tracks.csv', index=False)
+            if recorder is not None:
+                recorder.save(destination / 'edges.npz')
         else:
             frames, rows, gt = detections(a.data_root, well)
             if a.model == 'trackastra':

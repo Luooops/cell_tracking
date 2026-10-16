@@ -109,6 +109,20 @@ python -m models.motion_tracking.train --help
 python -m utils.prepare_data --help
 ```
 
+### GNN 开发阶段（development/）
+
+GNN 校准/分裂改进的分阶段结果放在 `development/<阶段目的>/<运行名>/`（不进 git；不同于 `outputs/` 的正式运行），日志写到 `development/<阶段目的>/logs/`。测试孔 `r16c02 r01c20 r07c07` 固定留出，开发阶段只用 12 个开发孔（3 折）。
+
+- 谱系解析 `utils/lineage.py`：`man_track.txt` + mask 中实际出现的检测 → GT 连接。同标签（含中间缺帧）与“母轨迹恰好 1 个子轨迹”都算延续；恰好 2 个子轨迹为母子；≥3 个子轨迹标为未知；标签 >=50000 不参与连接。g 按实际观测帧计算。
+- 门控召回检查（阶段 0.4，不需要权重；默认开发孔，拒绝测试孔）：
+
+```powershell
+python -m models.gnn_tracking.audit_gating --dataset scripta_data --output-root development/stage0_evaluation/gating_audit_scripta_data
+python -m models.gnn_tracking.audit_gating --dataset Fluo-N2DL-HeLa --output-root development/stage0_evaluation/gating_audit_Fluo-N2DL-HeLa
+```
+
+输出 `links.csv`（每条 GT 连接是否落在 r(t)·√g 内）、`radius.csv`（每帧 r 及其由 q99/下限/间距上限/回退值哪一项决定）、`anomalies.csv`、`summary.json`。门控半径的计算在 `models/gnn_tracking/gating.py`，`graph.Video.radius` 调用同一函数（数值与重构前逐位一致）。
+
 数据准备唯一主流程为 `utils/prepare_data.py`，来自原 labcelltracker，算法未修改。其默认参数也未修改；若需重建当前带未知身份检测的数据，必须明确给出 `--keep-unlabelled` 和实际 Cellpose 权重、阈值，不要仅凭默认值声称复现现有数据。
 
 ## 验证
@@ -118,4 +132,4 @@ $env:MKL_THREADING_LAYER='SEQUENTIAL'
 python -B -m unittest discover -s tests
 ```
 
-当前仅保留 motion 相关测试，包括 CTC 评价与 PNG 输出。其他模型测试及历史 AST 指纹校验已移除；历史验证记录见 `docs/REORGANIZATION_REVIEW.md`。
+当前保留 motion 相关测试（包括 CTC 评价与 PNG 输出），以及 `tests/gnn_tracking/` 下的 GNN 阶段工具测试（文件名 `test_<gnn|utils>_<模块>.py`，类名 `Test<被测对象>`，方法名 `test_<场景>_<预期>`；只用临时目录中的合成数据）。其他模型测试及历史 AST 指纹校验已移除；历史验证记录见 `docs/REORGANIZATION_REVIEW.md`。
