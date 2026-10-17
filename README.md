@@ -121,7 +121,10 @@ python -m models.gnn_tracking.audit_gating --dataset scripta_data --output-root 
 python -m models.gnn_tracking.audit_gating --dataset Fluo-N2DL-HeLa --output-root development/stage0_evaluation/gating_audit_Fluo-N2DL-HeLa
 ```
 
-输出 `links.csv`（每条 GT 连接是否落在 r(t)·√g 内）、`radius.csv`（每帧 r 及其由 q99/下限/间距上限/回退值哪一项决定）、`anomalies.csv`、`summary.json`。门控半径的计算在 `models/gnn_tracking/gating.py`，`graph.Video.radius` 调用同一函数（数值与重构前逐位一致）。
+- 答卷记录（阶段 0.5）：GNN 测试加 `--set record_edges=true`，每孔多写 `edges.npz`（每条候选边的轮次、帧、两端 mask 标签、距离、门控半径、各成员 logit、平均概率、是否进入求解器、是否被选中；不读 GT）。
+- 折外答卷：`python train.py --model gnn_tracking --version cv_v001 --dataset scripta_data --cv --output-root development/stage0_evaluation --gpus 0 1 --set cv_outputs=true` 额外保存 `checkpoints/fold{k}_seed{s}.pt`，并用各折模型对留出孔推断（`gnn_tracking` 与 `gnn_division`，按 config 的 test 参数）写到 `train/oof/<模型>/<孔>/`（`instance_tracks.csv`、`metrics.json`、`edges.npz`）。
+
+审计输出 `links.csv`（每条 GT 连接是否落在 r(t)·√g 内）、`radius.csv`（每帧 r 及其由 q99/下限/间距上限/回退值哪一项决定）、`anomalies.csv`、`summary.json`。门控半径的计算在 `models/gnn_tracking/gating.py`，`graph.Video.radius` 调用同一函数（数值与重构前逐位一致）。
 
 数据准备唯一主流程为 `utils/prepare_data.py`，来自原 labcelltracker，算法未修改。其默认参数也未修改；若需重建当前带未知身份检测的数据，必须明确给出 `--keep-unlabelled` 和实际 Cellpose 权重、阈值，不要仅凭默认值声称复现现有数据。
 

@@ -1,6 +1,6 @@
 """Dispatch to existing training routines. No training for fixed/pretrained trackers."""
 import os
-from utils.config import ctc_sequences, options, save_config
+from utils.config import ctc_sequences, options, read_config, save_config
 from utils.run_log import run_logged, tee_process
 
 
@@ -34,6 +34,8 @@ def train_model(a):
     # Well splits come from the selected dataset; the original GNN constants only describe scripta_data.
     dev_wells = ([w for fold in ds['folds'] for w in fold] or ds['train_wells'] + ds['val_wells']
                  or [w for w in ctc_sequences(a.data_root) if w not in ds['held_out']])
+    if a.params.get('cv_outputs') and not a.cv:
+        raise ValueError('cv_outputs=true only applies to --cv runs')
     if a.cv and not ds['folds']:
         raise ValueError(f'--cv requires "folds" for dataset {a.dataset} in the config')
     if not (a.wells or dev_wells):
@@ -41,6 +43,13 @@ def train_model(a):
     settings = dict(data_root=str(a.data_root), cache=str(a.destination / 'cache'), folds=ds['folds'],
                     dev_wells=dev_wells, epochs=a.params['epochs'], batch=a.params['batch'], lr=a.params['lr'],
                     log_path=str(a.log_path))
+    if a.cv and a.params.get('cv_outputs'):
+        # Keep the fold models and track every held-out well with them (both trackers, test settings of
+        # config.json, edges recorded): the out-of-fold answer sheets that calibration is fitted on.
+        cfg, _ = read_config(a.config)
+        settings.update(destination=str(a.destination), oof_params={
+            m: {k: v for k, v in cfg['models'][m].get('test', {}).items() if k != 'record_edges'}
+            for m in ('gnn_tracking', 'gnn_division')})
     seeds = list(a.params['seeds'])
     if a.cv:
         jobs = [('fold', k, seeds) for k in range(len(ds['folds']))]
@@ -103,13 +112,46 @@ def _run_gnn_jobs(settings, jobs):
     results = []
     for job in jobs:
         if job[0] == 'fold':
-            results.append(trainer.cross_validate(folds=(job[1],), seeds=tuple(job[2])))
+            save_dir = os.path.join(settings['destination'], 'checkpoints') if settings.get('destination') else None
+            results.append(trainer.cross_validate(folds=(job[1],), seeds=tuple(job[2]), save_dir=save_dir))
+            if save_dir:
+                _write_oof(settings, job[1], job[2], save_dir)
         else:
             _, seed, wells, path = job
             model, pos_weight = trainer.train(wells, seed, log=f'seed {seed}')
             trainer.save(model, pos_weight, path)
             results.append(None)
     return results
+
+
+def _write_oof(settings, k, seeds, save_dir):
+    """Track the held-out wells of fold k with that fold's saved models, as test.py would (gnn_tracking and
+    gnn_division, edges recorded) -> <destination>/oof/<tracker>/<well>/."""
+    import json
+    from pathlib import Path
+    from models.gnn_tracking.edge_record import EdgeRecorder
+    from models.gnn_tracking.graph import Video
+    from models.gnn_tracking.model import load_model
+    from models.gnn_tracking.track import track_video
+    from models.gnn_tracking.track_division import track_video_division
+    from utils.dataset import load_well
+    from utils.runners import export_gnn_well
+    models = [load_model(os.path.join(save_dir, f'fold{k}_seed{seed}.pt')) for seed in seeds]
+    for well in settings['folds'][k]:
+        video = Video(*load_well(well))
+        for name, params in settings['oof_params'].items():
+            recorder, parent = EdgeRecorder(video), None
+            if name == 'gnn_division':
+                assign, parent = track_video_division(models, video, recorder=recorder, **params)
+            else:
+                assign = track_video(models, video, gap_round=params['gap_round'], recorder=recorder)
+            folder = Path(settings['destination']) / 'oof' / name
+            folder.mkdir(parents=True, exist_ok=True)
+            report = export_gnn_well(folder / well, video, assign, parent, recorder)
+            (folder / well / 'metrics.json').write_text(json.dumps(dict(fold=k, seeds=list(seeds), **report), indent=2),
+                                                         encoding='utf-8')
+            print(f"fold {k} {well} out-of-fold {name}: perfect {report['perfect']:.1f}  "
+                  f"id switches {report['id_switches']}", flush=True)
 
 
 class _Prefixed:

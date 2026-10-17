@@ -6,6 +6,25 @@ from models import get_model
 from utils.config import save_config
 
 
+def export_gnn_well(destination, video, assign, parent=None, recorder=None):
+    """Write one GNN-tracked well into the new folder destination: instance_tracks.csv, lineage.json (divisions)
+    and edges.npz (when a recorder ran). Returns the identity metrics; metrics.json is left to the caller."""
+    from utils.metrics import gt_lookup, score
+    report = score(assign, gt_lookup(video))
+    df = video.df.copy()
+    df = df.rename(columns={'track_id': 'instance_id', 'frame': 'frame_index'})
+    # GNN track ids start at 0; exported ids are shifted by 1 because 0 is background in CTC (evaluate.py).
+    df['track_id'] = [assign[(fi, i)] + 1 for fi, t in enumerate(video.frames) for i in range(len(video.rows[t]))]
+    destination.mkdir()
+    if parent is not None:
+        lineage = {int(d) + 1: int(m) + 1 for d, m in parent.items()}
+        (destination / 'lineage.json').write_text(json.dumps(lineage), encoding='utf-8')
+    df.to_csv(destination / 'instance_tracks.csv', index=False)
+    if recorder is not None:
+        recorder.save(destination / 'edges.npz')
+    return report
+
+
 def run_test(a):
     if a.model == 'motion_tracking':
         from models.motion_tracking.inference import run
@@ -42,7 +61,6 @@ def run_test(a):
         if a.model in {'gnn_tracking', 'gnn_division'}:
             from utils.dataset import load_well
             from models.gnn_tracking.graph import Video
-            from utils.metrics import gt_lookup
             video = Video(*load_well(well))
             parent = None
             params = dict(a.params)
@@ -54,18 +72,7 @@ def run_test(a):
                 assign, parent = module.track_video_division(model, video, recorder=recorder, **params)
             else:
                 assign = module.track_video(model, video, gap_round=params['gap_round'], recorder=recorder)
-            reports[well] = score(assign, gt_lookup(video))
-            df = video.df.copy()
-            df = df.rename(columns={'track_id': 'instance_id', 'frame': 'frame_index'})
-            # GNN track ids start at 0; exported ids are shifted by 1 because 0 is background in CTC (evaluate.py).
-            df['track_id'] = [assign[(fi, i)] + 1 for fi, t in enumerate(video.frames) for i in range(len(video.rows[t]))]
-            destination.mkdir()
-            if parent is not None:
-                lineage = {int(d) + 1: int(m) + 1 for d, m in parent.items()}
-                (destination / 'lineage.json').write_text(json.dumps(lineage), encoding='utf-8')
-            df.to_csv(destination / 'instance_tracks.csv', index=False)
-            if recorder is not None:
-                recorder.save(destination / 'edges.npz')
+            reports[well] = export_gnn_well(destination, video, assign, parent, recorder)
         else:
             frames, rows, gt = detections(a.data_root, well)
             if a.model == 'trackastra':
