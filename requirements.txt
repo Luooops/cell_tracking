@@ -18,7 +18,9 @@ Pillow==11.1.0
 matplotlib==3.10.9
 opencv-python-headless==5.0.0.93
 openpyxl==3.1.5
+py-ctcmetrics==1.3.3
 
+# py-ctcmetrics: official CTC measures for models/gnn_tracking/evaluate_ctc.py (stage 0.3b).
 # Do not additionally install opencv-python: both packages provide cv2.
 # Cellpose's transitive dependencies are installed automatically by pip.
 # Local model weights are not included; configure --model if moved.
