@@ -1,6 +1,6 @@
-"""models/gnn_tracking/evaluate_ctc.py end to end with py-ctcmetrics: a perfect run scores 1, a broken link lowers LNK.
-
-Needs py-ctcmetrics (skipped where it is not installed)."""
+"""models/gnn_tracking/evaluate_ctc.py: GT selection and the division check (always run), and end to end with
+py-ctcmetrics -- a perfect run scores 1, a broken link lowers LNK (skipped where py-ctcmetrics is not installed)."""
+import argparse
 import importlib.util
 import json
 from pathlib import Path
@@ -36,6 +36,60 @@ def write_run(root, name, tracks):
     pd.DataFrame(rows, columns=['frame_index', 'instance_id', 'track_id']).to_csv(folder / 'instance_tracks.csv',
                                                                                   index=False)
     return root / name
+
+
+class TestHasDivision(unittest.TestCase):
+    def check(self, text):
+        from models.gnn_tracking.evaluate_ctc import has_division
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'man_track.txt'
+            path.write_text(text, encoding='utf-8')
+            return has_division(path)
+
+    def test_two_children_is_division(self):
+        self.assertTrue(self.check('1 0 2 0\n2 3 4 1\n3 3 4 1\n'))
+
+    def test_single_child_or_no_parent_is_not(self):
+        self.assertFalse(self.check('1 0 2 0\n2 4 5 1\n'))
+        self.assertFalse(self.check('1 0 4 0\n2 0 4 0\n'))
+
+
+class TestGtFolder(unittest.TestCase):
+    def args(self, root, gt='auto'):
+        return argparse.Namespace(data_root=root / 'data', gt=gt, gt_cache=root / 'ctc_gt')
+
+    def test_canonical_gt_built_once_then_reused(self):
+        from models.gnn_tracking.evaluate_ctc import gt_folder
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            write_dataset(root)
+            folder_1, kind = gt_folder(self.args(root), 's01')
+            self.assertEqual((kind, folder_1), ('canonical', root / 'ctc_gt' / 's01_GT'))
+            rows = (folder_1 / 'TRA' / 'man_track.txt').read_text().splitlines()
+            self.assertEqual(len(rows), 3)                                   # cell 2 split at its gap
+            self.assertEqual(gt_folder(self.args(root), 's01'), (folder_1, 'canonical'))
+
+    def test_changed_source_refuses_stale_cache(self):
+        from models.gnn_tracking.evaluate_ctc import gt_folder
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            write_dataset(root)
+            gt_folder(self.args(root), 's01')
+            (root / 'data' / 's01_GT' / 'TRA' / 'man_track.txt').write_text('1 0 4 0\n2 0 4 0\n\n', encoding='utf-8')
+            with self.assertRaises(ValueError):
+                gt_folder(self.args(root), 's01')
+
+    def test_official_gt_preferred_when_present(self):
+        from models.gnn_tracking.evaluate_ctc import gt_folder
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            write_dataset(root)
+            official = root / 'data' / 'source' / 's01_GT' / 'TRA'
+            official.mkdir(parents=True)
+            (official / 'man_track.txt').write_text('1 0 4 0\n', encoding='utf-8')
+            self.assertEqual(gt_folder(self.args(root), 's01'), (official.parent, 'official'))
+            with self.assertRaises(FileNotFoundError):
+                gt_folder(argparse.Namespace(data_root=root / 'nowhere', gt='official', gt_cache=root), 's01')
 
 
 @unittest.skipUnless(HAS_CTC, 'py-ctcmetrics is not installed')

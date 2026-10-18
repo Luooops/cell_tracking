@@ -64,6 +64,12 @@ def number(value):
     return None if np.isnan(value) else value
 
 
+def has_division(track_table):
+    """True if some parent in man_track.txt has two or more children (a CTC division)."""
+    parents = [parent for _, _, parent in read_track_table(track_table).values() if parent]
+    return any(parents.count(p) >= 2 for p in set(parents))
+
+
 def gt_folder(args, well):
     """-> (GT folder with TRA/, 'official' | 'canonical'); a canonical GT is built once and then reused."""
     official = Path(args.data_root) / 'source' / f'{well}_GT'
@@ -77,7 +83,8 @@ def gt_folder(args, well):
                  drop_unknown=True)
     stamp_path = folder / 'canonical.json'
     if folder.exists():
-        if not stamp_path.is_file() or json.loads(stamp_path.read_text(encoding='utf-8')) != stamp:
+        saved = json.loads(stamp_path.read_text(encoding='utf-8')) if stamp_path.is_file() else {}
+        if {k: saved.get(k) for k in stamp} != stamp:
             raise ValueError(f'{folder} exists but was not built from the current {source}; remove it or use '
                              f'another --gt-cache')
         return folder, 'canonical'
@@ -98,8 +105,7 @@ def evaluate_well(args, well, evaluate_sequence, validate_sequence):
     if not validate_sequence(str(res), threads=args.threads)['Valid']:
         raise ValueError(f'{well}: exported RES failed the CTC format check ({res}); kept for inspection')
     gt, kind = gt_folder(args, well)
-    parents = [p for _, _, _, p in read_track_table(gt / 'TRA' / 'man_track.txt').values() if p]
-    divides = any(parents.count(p) >= 2 for p in set(parents))
+    divides = has_division(gt / 'TRA' / 'man_track.txt')
     metrics = [m for m in METRICS if divides or not m.startswith('BC')]   # BC is undefined without GT divisions
     raw = evaluate_sequence(str(res), str(gt), metrics=metrics, threads=args.threads)
     if not args.keep_res:
