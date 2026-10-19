@@ -128,6 +128,8 @@ python -m models.gnn_tracking.audit_gating --dataset Fluo-N2DL-HeLa --output-roo
 
 - CTC 指标（阶段 0.3b，需 `py-ctcmetrics`）：`python -m models.gnn_tracking.evaluate_ctc --dataset <数据集> --run <含 <孔>/instance_tracks.csv 的目录> --output-root development/stage0_evaluation/ctc_<...>`。结果导出为 CTC RES（`utils/ctc_export.py`：缺帧处切成单子延续，分裂写父子，未知身份 >=50000 从 RES 与 GT 中都去掉），先过官方格式检查再算 DET、TRA、LNK、BC(1)、CT。GT：HeLa 用 `source/<序列>_GT` 的 CTC 官方标记；scripta 用规范化后的项目 GT（只建一次，缓存在 `development/stage0_evaluation/ctc_gt/<数据集>/`）。是 CTC 定义的指标，但检测固定、且 scripta 为项目 GT，不能与 CTC 排行榜比较。RES 评估后默认删除（`--keep-res` 保留）。
 
+- 标注换号审阅（阶段 0 补充，不需要模型）：`python -m models.gnn_tracking.audit_handover prepare --dataset scripta_data --output-root development/stage0_evaluation/handover_review_scripta_data` 按与模型无关的规则（GT 轨迹在 t 结束、另一条在 t+1/t+2 于门控半径内开始）找候选，每个终点一张前后帧对比图，生成本地 `review.html`（盲审：不显示任何模型输出，随机顺序；键盘 1–9/0/u 作答，可回改，进度存在浏览器，导出 `decisions.json`）。`... audit_handover apply --dataset scripta_data --review <审阅目录> --decisions decisions.json` 生成新数据集 `data/scripta_data_refine/`：原图与掩膜硬链接（不可链接时复制），只改 `man_track.txt`——确认为同一细胞的起点 B 的父轨迹设为终点 A（CTC 单子延续）；附 `refine_log.json` 与决定文件。原数据集不变；`config.json` 已登记 `scripta_data_refine`（与 scripta_data 相同的折与测试孔）。旧 `evaluate.py` 与 motion `prepare_npz` 不接受非零父轨迹，不能用于该数据集。
+
 审计输出 `links.csv`（每条 GT 连接是否落在 r(t)·√g 内）、`radius.csv`（每帧 r 及其由 q99/下限/间距上限/回退值哪一项决定）、`anomalies.csv`、`summary.json`。门控半径的计算在 `models/gnn_tracking/gating.py`，`graph.Video.radius` 调用同一函数（数值与重构前逐位一致）。
 
 数据准备唯一主流程为 `utils/prepare_data.py`，来自原 labcelltracker，算法未修改。其默认参数也未修改；若需重建当前带未知身份检测的数据，必须明确给出 `--keep-unlabelled` 和实际 Cellpose 权重、阈值，不要仅凭默认值声称复现现有数据。
