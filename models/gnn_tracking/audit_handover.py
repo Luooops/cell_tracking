@@ -3,14 +3,18 @@ audit_handover.py
 =================
 Stage 0 addendum: human review of suspected identity hand-overs in the annotation, then a refined dataset.
 
-prepare   candidates by the fixed, model-free rule of utils/gt_refine.py (a GT track ends, another starts within
-          1-2 frames inside the tracker's gate), one image strip per track end (frames t-1 .. last start + 1; the
-          ending track A in red, the candidate starts 1, 2, ... in other colours, other cells grey) and a local
-          review page. The review is blind: no model output is shown, and the items are in random order.
-apply     the exported decisions -> a new dataset <data_dir>/<dataset>_refine: every sequence reproduced with
-          images and masks hard-linked (copied where links are impossible), man_track.txt rewritten where a start
-          was confirmed as the same cell as the end (its parent becomes that end: a CTC single-child continuation).
-          The source dataset is never modified. refine_log.json + the decisions file record every change.
+prepare   candidates by the fixed, model-free rules of utils/gt_refine.py (a GT track ends, another starts within
+          1-2 frames inside the tracker's gate; or a track lies entirely in a gap of a nearby track), one image strip
+          per item; for a track end from A's first frame to one frame
+          after its last candidate (centred on A while it exists; A red, new starts 1, 2, ... in colours, nearby
+          existing tracks grey with their GT label) and a local review page. The review is blind: no model output
+          is shown, and the items are in random order. --reuse-review-id keeps the id (and saved progress) of an
+          earlier review of the same candidates.
+apply     the exported decisions -> a new dataset <data_dir>/<dataset>_refine (utils/gt_refine.py): hand-overs as
+          parent links in man_track.txt; swaps (A's cell given an existing track's identity) by relabelling that
+          track's masks from the swap frame. Every other file is hard-linked (copied where links are impossible);
+          the source dataset is never modified. refine_log.json (with the relabels) + the decisions file record
+          every change.
 
     python -m models.gnn_tracking.audit_handover prepare --dataset scripta_data \
         --output-root development/stage0_evaluation/handover_review_scripta_data
@@ -31,16 +35,17 @@ import tifffile
 from models.gnn_tracking.audit_gating import development_wells
 from utils.config import ctc_sequences, read_config, resolve_dataset
 from utils.ctc import sequence
-from utils.gt_refine import (apply_merges, build_refined_dataset, check_decisions, handover_candidates, sha256,
-                             write_track_table)
+from utils.gt_refine import (build_refined_dataset, check_decisions, gap_candidates, handover_candidates, refine_well,
+                             sha256)
 from utils.lineage import read_track_table
 from utils.run_log import log_path, log_root, run_logged
 
 TEMPLATE = Path(__file__).with_name('handover_review.html')
-TILE, GAP, HEADER = 220, 6, 22
+TILE, GAP, HEADER = 200, 6, 22
 A_COLOR = (229, 57, 53)
 B_COLORS = [(30, 136, 229), (67, 160, 71), (251, 140, 0), (142, 36, 170), (0, 172, 193), (216, 27, 96)]
 OTHER = (150, 150, 150)
+NEIGHBOUR_TEXT = (90, 90, 90)
 UNKNOWN_OFFSET = 50000
 
 
@@ -64,48 +69,92 @@ def _crop(image, cx, cy, half):
     return padded[y - half:y + half, x - half:x + half]
 
 
-def render_panel(item, frames, raws, masks, path):
-    """One image strip: a tile per frame from a_frame - 1 to the last start + 1, outlines drawn at tile resolution."""
+def _strip(path, show, centres, radius, raws, masks, colors, names, numbered, header):
+    """Draw one image strip: a tile per frame of `show`, cropped around centres[f]; labels in `colors` outlined in
+    their colour with names[label] above, labels in `numbered` written in grey, other cells outlined grey."""
     from PIL import Image, ImageDraw, ImageFont
     from scipy.ndimage import binary_dilation
     from skimage.segmentation import find_boundaries
-    last_start = max(s['b_frame'] for s in item['starts'])
-    show = [f for f in range(item['a_frame'] - 1, last_start + 2) if f in raws]
-    cx, cy = item['a_xy']
-    half = int(np.clip(item['radius'] * 1.4, 48, 240))
-    crops = [_crop(raws[f].astype(np.float32), cx, cy, half) for f in show]
+    half = int(np.clip(radius * 1.4, 48, 240))
+    crops = [_crop(raws[f].astype(np.float32), *centres[f], half) for f in show]
     lo, hi = np.percentile(np.concatenate([c.ravel() for c in crops]), [1, 99.7])
-    colors = {item['a_label']: A_COLOR}
-    colors.update({s['b_label']: B_COLORS[k % len(B_COLORS)] for k, s in enumerate(item['starts'])})
-    names = {item['a_label']: 'A'}
-    names.update({s['b_label']: str(k + 1) for k, s in enumerate(item['starts'])})
-    font = ImageFont.load_default(size=14)
+    font, small = ImageFont.load_default(size=14), ImageFont.load_default(size=11)
     canvas = Image.new('RGB', (len(show) * (TILE + GAP) - GAP, TILE + HEADER), (255, 255, 255))
     draw = ImageDraw.Draw(canvas)
     for col, (f, crop) in enumerate(zip(show, crops)):
         gray = np.clip((crop - lo) / max(hi - lo, 1e-6) * 255, 0, 255).astype(np.uint8)
         tile = np.array(Image.fromarray(gray).resize((TILE, TILE), Image.BILINEAR).convert('RGB'))
-        labels = np.array(Image.fromarray(_crop(masks[f], cx, cy, half).astype(np.int32)).resize((TILE, TILE),
-                                                                                                   Image.NEAREST))
+        labels = np.array(Image.fromarray(_crop(masks[f], *centres[f], half).astype(np.int32)).resize(
+            (TILE, TILE), Image.NEAREST))
         edge = find_boundaries(labels, mode='inner')
         tile[edge & ~np.isin(labels, list(colors))] = OTHER
         marks = []
-        for label, color in colors.items():
-            region = labels == label
-            if region.any():
-                tile[binary_dilation(edge & region)] = color
+        for label in np.unique(labels):
+            label = int(label)
+            if label in colors or label in numbered:
+                region = labels == label
                 ys, xs = np.nonzero(region)
-                marks.append((names[label], color, xs.mean(), ys.min()))
+                if label in colors:
+                    tile[binary_dilation(edge & region)] = colors[label]
+                    marks.append((names[label], colors[label], font, xs.mean() - 4, ys.min() - 17))
+                else:
+                    marks.append((str(label), NEIGHBOUR_TEXT, small, xs.mean() - 8, ys.mean() - 6))
         x0 = col * (TILE + GAP)
         canvas.paste(Image.fromarray(tile), (x0, HEADER))
-        rel = f - item['a_frame']
-        draw.text((x0 + 4, 3), f'frame {f}  (t{rel:+d})' if rel else f'frame {f}  (t: A ends)', fill=(40, 40, 40),
-                  font=font)
-        for text, color, x, y in marks:
-            draw.text((x0 + x - 4, HEADER + max(y - 17, 0)), text, fill=color, font=font, stroke_width=2,
+        draw.text((x0 + 4, 3), header(f), fill=(40, 40, 40), font=font)
+        for text, color, fnt, x, y in marks:
+            draw.text((x0 + x, HEADER + max(y, 0)), text, fill=color, font=fnt, stroke_width=2,
                       stroke_fill=(255, 255, 255))
     canvas.save(path)
     return [int(f) for f in show]
+
+
+def _position(objects, f, label):
+    labels, pos = objects[f]
+    hit = np.nonzero(labels == label)[0]
+    return pos[hit[0]] if len(hit) else None
+
+
+def render_panel(item, frames, raws, masks, objects, path):
+    """End item: a tile per frame from A's first frame to one frame after its last candidate, following A while it
+    exists and staying at its last position afterwards. A red, new starts numbered, neighbours with their GT id."""
+    last = max([s['b_frame'] for s in item['starts']] + [n['frame'] for n in item.get('neighbours', [])])
+    show = [f for f in range(item['a_first'], last + 2) if f in raws]
+    centres = {}
+    for f in show:
+        here = _position(objects, f, item['a_label']) if f <= item['a_frame'] else None
+        centres[f] = here if here is not None else item['a_xy']
+    colors = {item['a_label']: A_COLOR}
+    colors.update({s['b_label']: B_COLORS[k % len(B_COLORS)] for k, s in enumerate(item['starts'])})
+    names = {item['a_label']: 'A'}
+    names.update({s['b_label']: str(k + 1) for k, s in enumerate(item['starts'])})
+
+    def header(f):
+        rel = f - item['a_frame']
+        return f'frame {f}  (t{rel:+d})' if rel else f'frame {f}  (t: A ends)'
+    return _strip(path, show, centres, item['radius'], raws, masks, colors, names,
+                  {n['label'] for n in item.get('neighbours', [])}, header)
+
+
+def render_gap_panel(item, frames, raws, masks, objects, path):
+    """Gap item: from 3 frames before the earliest candidate track's last frame before X to 3 frames after X;
+    X red, the candidate tracks numbered, centred on X where it exists and on track 1 otherwise."""
+    first = min(t['before_frame'] for t in item['targets']) - 3
+    last = max(t['after_frame'] for t in item['targets']) + 3
+    show = [f for f in range(first, last + 1) if f in raws]
+    centres = {}
+    for f in show:
+        here = _position(objects, f, item['x_label'])
+        if here is None:
+            here = _position(objects, f, item['targets'][0]['label'])
+        centres[f] = here if here is not None else item['x_xy']
+    colors = {item['x_label']: A_COLOR}
+    colors.update({t['label']: B_COLORS[k % len(B_COLORS)] for k, t in enumerate(item['targets'])})
+    names = {item['x_label']: 'X'}
+    names.update({t['label']: str(k + 1) for k, t in enumerate(item['targets'])})
+    span = (item['x_frames'][0], item['x_frames'][-1])
+    return _strip(path, show, centres, item['radius'], raws, masks, colors, names, set(),
+                  lambda f: f'frame {f}' + ('  (X)' if span[0] <= f <= span[1] else ''))
 
 
 def prepare(args, wells):
@@ -118,22 +167,35 @@ def prepare(args, wells):
         found = handover_candidates(well, frames, objects, table)
         for item in found:
             item['panel'] = f'panels/{well}_{item["a_label"]}.png'
-            item['frames_shown'] = render_panel(item, frames, raws, masks, out / item['panel'])
-        items += found
+            item['frames_shown'] = render_panel(item, frames, raws, masks, objects, out / item['panel'])
+        gaps = gap_candidates(well, frames, objects, table)
+        for item in gaps:
+            item['panel'] = f'panels/{well}_gap_{item["x_label"]}.png'
+            item['frames_shown'] = render_gap_panel(item, frames, raws, masks, objects, out / item['panel'])
+        items += found + gaps
         print(f'{well}: {len(found)} track ends with candidate starts '
-              f'({sum(len(i["starts"]) for i in found)} pairs)', flush=True)
+              f'({sum(len(i["starts"]) for i in found)} pairs), {len(gaps)} tracks inside a gap', flush=True)
     random.Random(args.seed).shuffle(items)                 # review order carries no information
-    review = dict(review_id=uuid.uuid4().hex, dataset=args.dataset_name, data_root=str(Path(args.data_root).resolve()),
+    review_id = uuid.uuid4().hex
+    if args.reuse_review_id:
+        old = json.loads(args.reuse_review_id.read_text(encoding='utf-8'))
+        if not {i['id'] for i in old['items']} <= {i['id'] for i in items}:
+            raise ValueError('--reuse-review-id: some items of the earlier review are no longer candidates')
+        review_id = old['review_id']
+    review = dict(review_id=review_id, dataset=args.dataset_name, data_root=str(Path(args.data_root).resolve()),
                   wells=wells, created=datetime.datetime.now().isoformat(timespec='seconds'), seed=args.seed,
                   rule='A known GT track ends at t (not the last frame, no children); a known GT track without parent '
                        'starts at t+1 or t+2 closer than the gating radius r(t) x sqrt(g) of '
-                       'models.gnn_tracking.gating (positions only). No model output is used or shown.',
+                       'models.gnn_tracking.gating (positions only); existing tracks inside the same gate at t+1/t+2 '
+                       'are offered as swap targets. Gap items: a known track lying entirely in a gap of a known '
+                       'track, both junctions inside the gate. No model output is used or shown.',
                   items=items)
     (out / 'candidates.json').write_text(json.dumps(review, indent=1), encoding='utf-8')
     page = TEMPLATE.read_text(encoding='utf-8').replace(
         '/*__REVIEW_DATA__*/', json.dumps(review, separators=(',', ':')).replace('</', '<\\/'))
     (out / 'review.html').write_text(page, encoding='utf-8')
-    print(f'\n{len(items)} review items ({sum(len(i["starts"]) for i in items)} pairs); open {out / "review.html"}')
+    n_gap = sum(i.get('kind') == 'gap' for i in items)
+    print(f'\n{len(items)} review items ({len(items) - n_gap} track ends, {n_gap} gap items); open {out / "review.html"}')
     return 0
 
 
@@ -144,31 +206,51 @@ def apply(args):
         raise ValueError('decisions were exported from a different review (review_id mismatch)')
     if review['dataset'] != args.dataset_name:
         raise ValueError(f"review was made on {review['dataset']}, not {args.dataset_name}")
-    result = check_decisions(review['items'], exported['decisions'])
+    result = check_decisions(review['items'], exported['decisions'], exported.get('manual', []))
+    sequences = ctc_sequences(args.data_root)
+    result['problems'] += [f'{src}: well {w} is not in {args.dataset_name}' for w, *_, src in result['moves']
+                           if w not in sequences]
     if result['problems']:
         raise ValueError('fix these decisions in the review page first:\n  ' + '\n  '.join(result['problems']))
     if result['undecided'] and not args.allow_incomplete:
         raise ValueError(f"{len(result['undecided'])} of {len(review['items'])} items are undecided; finish the "
                          f"review or pass --allow-incomplete (a partial review is a biased correction)")
-    by_well = {}
-    for well, a, b in result['merges']:
-        by_well.setdefault(well, []).append((a, b))
-    tables = {w: apply_merges(read_track_table(Path(args.data_root) / f'{w}_GT' / 'TRA' / 'man_track.txt'), m)
-              for w, m in by_well.items()}
-    modes = build_refined_dataset(args.data_root, args.target, ctc_sequences(args.data_root), tables)
+    wells = sorted({m[0] for m in result['merges']} | {s[0] for s in result['swaps']} | {m[0] for m in result['moves']})
+    tables, relabels = {}, {}
+    for well in wells:
+        observed = {}
+        for f, _, mask_path in sequence(args.data_root, well):
+            for label in np.unique(tifffile.imread(mask_path)):
+                observed.setdefault(int(label), []).append(f)
+        tables[well], relabels[well] = refine_well(
+            read_track_table(Path(args.data_root) / f'{well}_GT' / 'TRA' / 'man_track.txt'), observed,
+            [m[1:] for m in result['merges'] if m[0] == well], [s[1:] for s in result['swaps'] if s[0] == well],
+            [m[1:] for m in result['moves'] if m[0] == well])
+    modes = build_refined_dataset(args.data_root, args.target, sequences, tables, relabels)
     (args.target / 'refine_decisions.json').write_text(args.decisions.read_text(encoding='utf-8'), encoding='utf-8')
     log = dict(source=str(Path(args.data_root).resolve()), target=str(args.target.resolve()),
                created=datetime.datetime.now().isoformat(timespec='seconds'), review=str(args.review.resolve()),
                review_id=review['review_id'], candidates_sha256=sha256(args.review / 'candidates.json'),
                decisions_sha256=sha256(args.decisions), rule=review['rule'], reviewed_wells=review['wells'],
                items=len(review['items']), counts=result['counts'], undecided=len(result['undecided']),
-               change='man_track.txt only: parent(B) = A for every confirmed pair (CTC single-child continuation); '
-                      'images and masks identical to the source',
-               files=modes, merges=[dict(well=w, end=a, start=b) for w, a, b in result['merges']])
+               change="hand-over: parent(B) = A in man_track.txt (CTC single-child continuation); swap: the existing "
+                      "track X is relabelled X' in its masks from frame s, parent(X') = A, X ends at s - 1, parent of "
+                      "the chosen start = X; gap item / manual edit: X's masks in the given frames get label Y (or a "
+                      "new label). Images and all other masks are identical to the source.",
+               files=modes,
+               merges=[dict(well=w, end=a, end_frame=af, start=b, start_frame=bf) for w, a, af, b, bf in result['merges']],
+               swaps=[dict(well=w, end=a, end_frame=af, track=x, from_frame=s, rest=r, rest_frame=rf)
+                      for w, a, af, x, s, r, rf in result['swaps']],
+               moves=[dict(well=w, track=x, from_frame=f1, to_frame=f2, target=t, source=src)
+                      for w, x, f1, f2, t, src in result['moves']],
+               manual=exported.get('manual', []),
+               relabels=[dict(well=w, label=x, from_frame=f1, to_frame=f2, new_label=n) for w in sorted(relabels)
+                         for x, f1, f2, n in relabels[w]])
     (args.target / 'refine_log.json').write_text(json.dumps(log, indent=2), encoding='utf-8')
-    print(f"same cell {result['counts']['same']}, different {result['counts']['none']}, unsure "
-          f"{result['counts']['unsure']}, undecided {len(result['undecided'])}; man_track.txt rewritten in "
-          f"{len(tables)} wells; files {modes}")
+    c = result['counts']
+    print(f"same cell {c['same']}, swap {c['swap']}, gap {c['gap']}, manual {c['manual']}, different {c['none']}, "
+          f"unsure {c['unsure']}, undecided {len(result['undecided'])}; man_track.txt rewritten in {len(tables)} "
+          f"wells; files {modes}")
     if modes['hardlink']:
         print('note: images and masks are hard links to the source files; never write into them')
     print('saved', args.target)
@@ -188,6 +270,8 @@ def main(argv=None):
             p.add_argument('--allow-held-out', action='store_true', help='Allow declared test wells')
             p.add_argument('--output-root', type=Path, required=True, help='New directory for the review')
             p.add_argument('--seed', type=int, default=0, help='Shuffle seed of the review order')
+            p.add_argument('--reuse-review-id', type=Path, metavar='CANDIDATES_JSON',
+                           help='Keep the review id of an earlier review of the same candidates (saved progress stays)')
         else:
             p.add_argument('--review', type=Path, required=True, help='The prepare output folder')
             p.add_argument('--decisions', type=Path, required=True, help='decisions.json exported from the page')

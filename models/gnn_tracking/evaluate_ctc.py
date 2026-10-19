@@ -39,6 +39,7 @@ import pandas as pd
 from utils.config import read_config, resolve_dataset
 from utils.ctc import sequence
 from utils.ctc_export import canonical_gt, export_res
+from utils.gt_refine import relabel_lookup, translate
 from utils.lineage import read_track_table
 from utils.run_log import log_path, log_root, run_logged
 
@@ -97,6 +98,9 @@ def gt_folder(args, well):
 def evaluate_well(args, well, evaluate_sequence, validate_sequence):
     run = Path(args.run) / well
     tracks = pd.read_csv(run / 'instance_tracks.csv')
+    entries = relabel_lookup(args.data_root).get(well)
+    if entries:                      # outputs made on the source data, scored on a refined dataset
+        tracks['instance_id'] = [translate(entries, f, l) for f, l in zip(tracks.frame_index, tracks.instance_id)]
     lineage_path = run / 'lineage.json'
     lineage = json.loads(lineage_path.read_text(encoding='utf-8')) if lineage_path.is_file() else {}
     res = args.output_root / 'res' / f'{well}_RES'

@@ -39,6 +39,7 @@ from utils.calibration import (COVERAGE_POINTS, calibration_report, coverage_are
                                reliability, sigmoid)
 from utils.config import read_config, resolve_dataset
 from utils.division_metrics import division_scores, pooled, predicted_divisions
+from utils.gt_refine import relabel_lookup, translate
 from utils.lineage import MOTHER_DAUGHTER, SAME_CELL, UNRELATED, Lineage, read_track_table
 from utils.run_log import log_path, log_root, run_logged
 
@@ -52,6 +53,12 @@ def load_well(run, root, well):
     """-> dict(edges, relation [E] str, lineage, tracks DataFrame, divisions)."""
     edges = load_edges(Path(run) / well / 'edges.npz')
     tracks = pd.read_csv(Path(run) / well / 'instance_tracks.csv')
+    entries = relabel_lookup(root).get(well)
+    if entries:                      # outputs made on the source data, scored on a refined dataset
+        edges['src_label'] = np.array([translate(entries, t, l) for t, l in zip(edges['src_frame'], edges['src_label'])])
+        edges['dst_label'] = np.array([translate(entries, t + g, l) for t, g, l in
+                                       zip(edges['src_frame'], edges['g'], edges['dst_label'])])
+        tracks['instance_id'] = [translate(entries, f, l) for f, l in zip(tracks.frame_index, tracks.instance_id)]
     lineage = Lineage(read_track_table(Path(root) / f'{well}_GT' / 'TRA' / 'man_track.txt'),
                       zip(tracks.frame_index, tracks.instance_id))
     relation = np.array([lineage.relation((t, a), (t + g, b)) for t, g, a, b in

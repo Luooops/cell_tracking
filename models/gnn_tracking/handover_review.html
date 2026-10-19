@@ -6,46 +6,57 @@
 <title>Handover Review</title>
 <style>
   :root { --ink:#222; --muted:#666; --line:#ddd; --bg:#fafafa; --card:#fff; --accent:#1e88e5;
-          --same:#43a047; --none:#9e9e9e; --unsure:#fb8c00; --conflict:#e53935; }
+          --same:#43a047; --swap:#8e24aa; --gap:#00897b; --none:#9e9e9e; --unsure:#fb8c00; --conflict:#e53935; }
   * { box-sizing: border-box; }
   body { margin:0; font:14px/1.45 -apple-system, "Segoe UI", "Microsoft YaHei", Arial, sans-serif; color:var(--ink); background:var(--bg); }
   header { position:sticky; top:0; z-index:2; background:var(--card); border-bottom:1px solid var(--line); padding:8px 16px;
            display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
   header h1 { font-size:15px; margin:0 8px 0 0; }
-  .bar { flex:1 1 200px; height:8px; background:#eee; border-radius:4px; overflow:hidden; min-width:120px; }
+  .bar { flex:1 1 160px; height:8px; background:#eee; border-radius:4px; overflow:hidden; min-width:100px; }
   .bar > div { height:100%; background:var(--accent); width:0; }
   button, select, input { font:inherit; }
+  input[type=number], input[type=text] { border:1px solid var(--line); border-radius:6px; padding:4px 6px; }
   button { border:1px solid var(--line); background:var(--card); border-radius:6px; padding:5px 10px; cursor:pointer; }
   button:hover { border-color:var(--accent); }
   button.on { outline:2px solid var(--accent); }
-  main { padding:12px 16px; max-width:1500px; margin:0 auto; }
+  button:disabled { color:#aaa; cursor:default; }
+  main { padding:12px 16px; max-width:1600px; margin:0 auto; display:grid; gap:12px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px; }
+  .card h2 { font-size:14px; margin:0 0 8px; }
   .meta { color:var(--muted); margin-bottom:8px; }
-  .panel { overflow-x:auto; margin:8px 0; }
-  .panel img { display:block; max-width:none; image-rendering:auto; }
+  .kind { display:inline-block; font-size:12px; padding:1px 6px; border-radius:4px; color:#fff; margin-right:6px; }
+  .kind.end { background:var(--accent); } .kind.gap { background:var(--gap); }
+  .panel { overflow-x:auto; margin:8px 0; border:1px solid var(--line); border-radius:6px; }
+  .panel img { display:block; max-width:none; }
   .choices { display:flex; flex-wrap:wrap; gap:8px; margin:10px 0; }
   .choices button { padding:8px 12px; }
-  .choices .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px; vertical-align:middle; }
+  .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px; vertical-align:middle; }
+  .step { background:#f3e5f5; border:1px solid #e1bee7; border-radius:6px; padding:8px 10px; margin:6px 0; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
   .status { font-weight:600; }
   textarea { width:100%; min-height:44px; font:inherit; border:1px solid var(--line); border-radius:6px; padding:6px; }
-  .nav { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:10px; }
+  .nav, .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:10px; }
   .help { color:var(--muted); font-size:12px; margin-top:8px; }
   .chips { display:flex; flex-wrap:wrap; gap:3px; margin-top:12px; }
   .chip { width:12px; height:12px; border-radius:2px; background:#e0e0e0; cursor:pointer; border:1px solid transparent; }
-  .chip.same { background:var(--same); } .chip.none { background:var(--none); } .chip.unsure { background:var(--unsure); }
-  .chip.conflict { background:var(--conflict); } .chip.cur { border-color:#000; }
+  .chip.same { background:var(--same); } .chip.swap { background:var(--swap); } .chip.gap { background:var(--gap); }
+  .chip.none { background:var(--none); } .chip.unsure { background:var(--unsure); } .chip.conflict { background:var(--conflict); }
+  .chip.cur { border-color:#000; }
   .warn { color:var(--conflict); font-weight:600; }
+  #results { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+  table { border-collapse:collapse; width:100%; margin-top:8px; }
+  td, th { border-bottom:1px solid var(--line); padding:4px 6px; text-align:left; font-size:13px; }
   @media (max-width:700px) { header { padding:8px; } main { padding:8px; } }
 </style>
 </head>
 <body>
 <header>
-  <h1>标注换号审阅</h1>
+  <h1>标注审阅</h1>
   <span id="count"></span>
   <div class="bar"><div id="progress"></div></div>
   <label>显示 <select id="filter">
     <option value="all">全部</option><option value="undecided">未审</option><option value="same">同一细胞</option>
-    <option value="none">都不是</option><option value="unsure">不确定</option><option value="conflict">冲突</option>
+    <option value="swap">ID 交换</option><option value="gap">填补缺口</option><option value="none">都不是</option>
+    <option value="unsure">不确定</option><option value="conflict">冲突</option>
   </select></label>
   <label><input type="checkbox" id="auto" checked> 作答后自动下一个</label>
   <button id="export">导出 decisions.json</button>
@@ -55,8 +66,9 @@
   <div class="card">
     <div class="meta" id="meta"></div>
     <div class="panel"><img id="panel" alt="panel"></div>
-    <div>红色 <b>A</b> = 在 t 帧结束的轨迹；彩色 <b>1, 2, …</b> = 在附近开始的轨迹。A 和哪一个是同一个细胞？</div>
+    <div id="legend"></div>
     <div class="choices" id="choices"></div>
+    <div id="swapStep"></div>
     <div>当前判断：<span class="status" id="status"></span> <span class="warn" id="conflict"></span></div>
     <div style="margin-top:8px"><textarea id="note" placeholder="备注（可选）"></textarea></div>
     <div class="nav">
@@ -64,28 +76,60 @@
       <span>跳到 <input id="jump" type="number" min="1" style="width:80px"></span>
       <span id="pos"></span>
     </div>
-    <div class="help">键盘：1–9 选对应起点（同一细胞）· 0 都不是 · u 不确定 · Backspace 清除 · ←/→ 翻页。进度自动保存在本浏览器中；换浏览器或电脑请先导出再导入。</div>
+    <div class="help">键盘：1–9 选对应编号 · 0 都不是 · u 不确定 · s ID 交换（仅终点项：再按数字选已有轨迹，然后选它原来细胞的去向，0 = 没有）· Esc 取消 · Backspace 清除 · ←/→ 翻页。进度自动保存在本浏览器中；换浏览器或电脑请先导出再导入。</div>
     <div class="chips" id="chips"></div>
+  </div>
+  <div class="card">
+    <h2>搜索轨迹</h2>
+    <div class="row" style="margin-top:0">
+      孔板 <input id="sWell" type="text" placeholder="如 r13c12" style="width:110px">
+      轨迹 <input id="sLabel" type="number" placeholder="如 353" style="width:100px">
+      <button id="search">搜索</button> <span id="sInfo" class="help" style="margin:0"></span>
+    </div>
+    <div id="results"></div>
+  </div>
+  <div class="card">
+    <h2>手动修正（审阅中顺带发现、不属于任何审阅项的错误）</h2>
+    <div class="row" style="margin-top:0">
+      孔板 <input id="mWell" type="text" style="width:110px">
+      把轨迹 <input id="mLabel" type="number" style="width:90px">
+      在第 <input id="mFrom" type="number" style="width:70px"> 到第 <input id="mTo" type="number" style="width:70px"> 帧
+      改成 轨迹 <input id="mTarget" type="number" style="width:90px">
+      <label><input type="checkbox" id="mNew"> 新标签</label>
+      <input id="mNote" type="text" placeholder="备注" style="width:180px">
+      <button id="mAdd">添加</button>
+    </div>
+    <div class="help">例：第 8 帧里 353 被标成了 140 → 孔板 r13c12，把轨迹 140 在第 8 到第 8 帧改成轨迹 353。目标轨迹在这些帧里不能已经存在；被手动修正的轨迹不能同时出现在审阅项的判断里。</div>
+    <table><thead><tr><th>#</th><th>孔板</th><th>轨迹</th><th>帧</th><th>改成</th><th>备注</th><th></th></tr></thead><tbody id="mList"></tbody></table>
   </div>
 </main>
 <script id="review-data" type="application/json">/*__REVIEW_DATA__*/</script>
 <script>
 (function () {
   const review = JSON.parse(document.getElementById('review-data').textContent);
-  const items = review.items, KEY = 'handover-review-' + review.review_id;
+  const items = review.items, KEY = 'handover-review-' + review.review_id, MKEY = KEY + '-manual';
   const COLORS = ['#1e88e5', '#43a047', '#fb8c00', '#8e24aa', '#00acc1', '#d81b60'];
-  let decisions = {};
-  try { decisions = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { decisions = {}; }
-  let idx = 0;
+  const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k) || d); } catch (e) { return JSON.parse(d); } };
+  let decisions = load(KEY, '{}'), manual = load(MKEY, '[]');
+  let idx = 0, mode = null, pending = null;          // mode: null | 'track' | 'rest'
   const $ = id => document.getElementById(id);
-  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(decisions)); } catch (e) {} };
-  const choiceOf = it => (decisions[it.id] || {}).choice;
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(decisions)); localStorage.setItem(MKEY, JSON.stringify(manual)); } catch (e) {} };
+  const dec = it => decisions[it.id] || {};
+  const choiceOf = it => dec(it).choice;
+  const isGap = it => it.kind === 'gap';
+  const options = it => isGap(it) ? it.targets.map(t => t.label) : it.starts.map(s => s.b_label);
 
-  function conflicts() {           // one start claimed by two ends
+  function conflicts() {           // a start or a track claimed twice
     const claimed = {}, bad = new Set();
+    const add = (k, id) => (claimed[k] = claimed[k] || []).push(id);
     for (const it of items) {
-      const c = choiceOf(it);
-      if (typeof c === 'number') { const k = it.well + ':' + c; (claimed[k] = claimed[k] || []).push(it.id); }
+      const d = dec(it);
+      if (isGap(it)) { if (typeof d.choice === 'number') add(it.well + ':track:' + it.x_label, it.id); continue; }
+      if (typeof d.choice === 'number') add(it.well + ':start:' + d.choice, it.id);
+      if (d.choice === 'swap') {
+        add(it.well + ':track:' + d.swap_track, it.id);
+        if (d.swap_rest !== null && d.swap_rest !== undefined) add(it.well + ':start:' + d.swap_rest, it.id);
+      }
     }
     for (const ids of Object.values(claimed)) if (ids.length > 1) ids.forEach(i => bad.add(i));
     return bad;
@@ -94,22 +138,25 @@
     const c = choiceOf(it);
     if (bad.has(it.id)) return 'conflict';
     if (c === undefined || c === null) return 'undecided';
-    return typeof c === 'number' ? 'same' : c;
+    if (typeof c === 'number') return isGap(it) ? 'gap' : 'same';
+    return c;
   }
   function visible() {
     const f = $('filter').value, bad = conflicts();
     return items.map((it, i) => i).filter(i => f === 'all' || statusOf(items[i], bad) === f);
   }
-  function setChoice(choice) {
-    const it = items[idx], d = decisions[it.id] || {};
-    if (choice === null) delete d.choice; else d.choice = choice;
-    d.time = new Date().toISOString();
-    decisions[it.id] = d; save(); render();
-    if (choice !== null && $('auto').checked) step(1);
+  function setDecision(fields) {
+    const it = items[idx], d = Object.assign({}, dec(it));
+    for (const k of ['choice', 'swap_track', 'swap_frame', 'swap_rest']) delete d[k];
+    Object.assign(d, fields || {}, { time: new Date().toISOString() });
+    decisions[it.id] = d; mode = null; pending = null; save(); render();
+    if (fields && $('auto').checked) step(1);
   }
+  function go(i) { idx = i; mode = null; pending = null; render(); window.scrollTo(0, 0); }
   function step(dir) {
+    mode = null; pending = null;
     const vis = visible();
-    if (!vis.length) return;
+    if (!vis.length) { render(); return; }
     let p = vis.indexOf(idx);
     p = p < 0 ? vis.findIndex(i => i > idx) : p + dir;
     if (p < 0) p = 0;
@@ -117,47 +164,134 @@
     idx = vis[p] === undefined ? vis[0] : vis[p];
     render();
   }
+  function button(html, on, click, disabled) {
+    const b = document.createElement('button'); b.innerHTML = html;
+    if (on) b.classList.add('on'); if (disabled) b.disabled = true;
+    b.onclick = click; return b;
+  }
+  const sw = k => `<span class="sw" style="background:${COLORS[k % COLORS.length]}"></span>`;
+  function optionText(it, k) {
+    if (isGap(it)) { const t = it.targets[k];
+      return `${sw(k)}${k + 1}：轨迹 ${t.label}（之前见于第 ${t.before_frame} 帧，之后见于第 ${t.after_frame} 帧）`; }
+    const s = it.starts[k];
+    return `${sw(k)}${k + 1}：轨迹 ${s.b_label}（第 ${s.b_frame} 帧开始，隔 ${s.g} 帧，距离 ${s.distance} px）`;
+  }
+  function describe(it) {
+    const d = dec(it), c = d.choice;
+    if (c === undefined || c === null) return '未审';
+    if (typeof c === 'number') return isGap(it) ? `X（轨迹 ${it.x_label}）就是轨迹 ${c}` : `A 与轨迹 ${c} 是同一细胞`;
+    if (c === 'swap') return `ID 交换：A 从第 ${d.swap_frame} 帧起被标成了轨迹 ${d.swap_track}；轨迹 ${d.swap_track} 原来的细胞 → ` +
+                             (d.swap_rest === null || d.swap_rest === undefined ? '没有' : `轨迹 ${d.swap_rest}`);
+    return { none: '都不是', unsure: '不确定' }[c];
+  }
   function render() {
-    const it = items[idx], bad = conflicts(), c = choiceOf(it);
-    $('meta').textContent = `孔板 ${it.well} · 轨迹 A = ${it.a_label} 在第 ${it.a_frame} 帧结束 · 门控半径 ${it.radius} px`;
+    const it = items[idx], bad = conflicts(), d = dec(it), c = d.choice;
+    if (isGap(it)) {
+      const fr = it.x_frames;
+      $('meta').innerHTML = `<span class="kind gap">填补缺口</span>孔板 ${it.well} · 轨迹 X = ${it.x_label} 只在第 ${fr[0]}${fr.length > 1 ? '–' + fr[fr.length - 1] : ''} 帧出现，正好落在附近轨迹的缺口里`;
+      $('legend').innerHTML = '红色 <b>X</b> = 只在缺口里出现的短轨迹；彩色 <b>1, 2, …</b> = 在缺口前后都出现的轨迹。X 其实是哪一条？';
+    } else {
+      $('meta').innerHTML = `<span class="kind end">终点</span>孔板 ${it.well} · 轨迹 A = ${it.a_label}，第 ${it.a_first} 帧出现，第 ${it.a_frame} 帧结束 · 门控半径 ${it.radius} px`;
+      $('legend').innerHTML = '红色 <b>A</b> = 在 t 帧结束的轨迹（图从 A 第一次出现开始）；彩色 <b>1, 2, …</b> = 在附近新开始的轨迹；灰色数字 = 附近已有轨迹的 GT 编号。';
+    }
     $('panel').src = it.panel;
     const box = $('choices'); box.innerHTML = '';
-    it.starts.forEach((s, k) => {
-      const b = document.createElement('button');
-      b.innerHTML = `<span class="sw" style="background:${COLORS[k % COLORS.length]}"></span>${k + 1}：轨迹 ${s.b_label}（第 ${s.b_frame} 帧开始，隔 ${s.g} 帧，距离 ${s.distance} px）`;
-      if (c === s.b_label) b.classList.add('on');
-      b.onclick = () => setChoice(s.b_label); box.appendChild(b);
-    });
-    for (const [label, val] of [['0：都不是', 'none'], ['u：不确定', 'unsure']]) {
-      const b = document.createElement('button'); b.textContent = label;
-      if (c === val) b.classList.add('on');
-      b.onclick = () => setChoice(val); box.appendChild(b);
+    options(it).forEach((label, k) => box.appendChild(button(optionText(it, k), c === label, () => setDecision({ choice: label }))));
+    box.appendChild(button('0：都不是', c === 'none', () => setDecision({ choice: 'none' })));
+    box.appendChild(button('u：不确定', c === 'unsure', () => setDecision({ choice: 'unsure' })));
+    const nb = isGap(it) ? [] : (it.neighbours || []);
+    if (!isGap(it)) box.appendChild(button('s：A 之后被标成了已有轨迹（ID 交换）', c === 'swap' || mode, () => { mode = 'track'; render(); }, !nb.length));
+    const st = $('swapStep'); st.innerHTML = '';
+    if (mode === 'track') {
+      const div = document.createElement('div'); div.className = 'step';
+      div.innerHTML = '<b>第 1 步</b>：A 的细胞之后被标成了哪条已有轨迹？（Esc 取消）';
+      nb.forEach((n, k) => div.appendChild(button(`${k + 1}：轨迹 ${n.label}（第 ${n.frame} 帧，距离 ${n.distance} px）`, false,
+        () => { pending = n; mode = 'rest'; render(); })));
+      st.appendChild(div);
+    } else if (mode === 'rest') {
+      const div = document.createElement('div'); div.className = 'step';
+      div.innerHTML = `<b>第 2 步</b>：轨迹 ${pending.label} 原来的那个细胞，第 ${pending.frame} 帧之后变成了哪条新轨迹？（Esc 取消）`;
+      it.starts.forEach((s, k) => div.appendChild(button(optionText(it, k), false,
+        () => setDecision({ choice: 'swap', swap_track: pending.label, swap_frame: pending.frame, swap_rest: s.b_label }))));
+      div.appendChild(button('0：没有 / 看不到', false,
+        () => setDecision({ choice: 'swap', swap_track: pending.label, swap_frame: pending.frame, swap_rest: null })));
+      st.appendChild(div);
     }
-    const names = { none: '都不是', unsure: '不确定' };
-    $('status').textContent = c === undefined ? '未审' : (typeof c === 'number' ? `A 与轨迹 ${c} 是同一细胞` : names[c]);
-    $('conflict').textContent = bad.has(it.id) ? '冲突：这个起点也被另一个终点选中了' : '';
-    $('note').value = (decisions[it.id] || {}).note || '';
+    $('status').textContent = describe(it);
+    $('conflict').textContent = bad.has(it.id) ? '冲突：这里选的轨迹也被另一个审阅项选中了' : '';
+    $('note').value = d.note || '';
     $('pos').textContent = `第 ${idx + 1} / ${items.length} 个`;
-    const done = items.filter(x => choiceOf(x) !== undefined).length;
-    $('count').textContent = `已审 ${done} / ${items.length}` + (bad.size ? ` · 冲突 ${bad.size}` : '');
+    const done = items.filter(x => choiceOf(x) !== undefined && choiceOf(x) !== null).length;
+    $('count').textContent = `已审 ${done} / ${items.length}` + (bad.size ? ` · 冲突 ${bad.size}` : '') + (manual.length ? ` · 手动修正 ${manual.length}` : '');
     $('progress').style.width = (100 * done / items.length) + '%';
     const chips = $('chips'); chips.innerHTML = '';
     items.forEach((x, i) => {
       const ch = document.createElement('div');
       ch.className = 'chip ' + statusOf(x, bad) + (i === idx ? ' cur' : '');
-      ch.title = `${i + 1}: ${x.id}`; ch.onclick = () => { idx = i; render(); };
+      ch.title = `${i + 1}: ${x.id}`; ch.onclick = () => go(i);
       chips.appendChild(ch);
     });
+    if (!$('mWell').value) $('mWell').value = it.well;
+    renderManual();
   }
+  // ---- search ----
+  const normWell = s => s.toLowerCase().replace(/[\s_-]/g, '');
+  function search() {
+    const well = normWell($('sWell').value), label = parseInt($('sLabel').value, 10);
+    const res = $('results'); res.innerHTML = '';
+    if (!well || isNaN(label)) { $('sInfo').textContent = '请输入孔板和轨迹编号'; return; }
+    const hits = [];
+    items.forEach((it, i) => {
+      if (normWell(it.well) !== well) return;
+      const roles = [];
+      if (isGap(it)) {
+        if (it.x_label === label) roles.push('缺口里的短轨迹 X');
+        if (it.targets.some(t => t.label === label)) roles.push('缺口所在的轨迹');
+      } else {
+        if (it.a_label === label) roles.push('结束的轨迹 A');
+        if (it.starts.some(s => s.b_label === label)) roles.push('新起点');
+        if ((it.neighbours || []).some(n => n.label === label)) roles.push('附近已有轨迹');
+      }
+      if (roles.length) hits.push([i, it, roles]);
+    });
+    $('sInfo').textContent = hits.length ? `${hits.length} 个审阅项涉及这条轨迹` : '没有审阅项涉及这条轨迹；如有错误，请在下面的手动修正里登记';
+    hits.forEach(([i, it, roles]) => res.appendChild(button(`第 ${i + 1} 个 · ${it.id} · ${roles.join('、')} · ${describe(it)}`, i === idx, () => go(i))));
+  }
+  $('search').onclick = search;
+  for (const id of ['sWell', 'sLabel']) $(id).addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
+  // ---- manual edits ----
+  function renderManual() {
+    const body = $('mList'); body.innerHTML = '';
+    manual.forEach((m, k) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${k + 1}</td><td>${m.well}</td><td>${m.label}</td><td>${m.from_frame}–${m.to_frame}</td>` +
+                     `<td>${m.target === 'new' ? '新标签' : '轨迹 ' + m.target}</td><td></td><td></td>`;
+      tr.children[5].textContent = m.note || '';
+      tr.children[6].appendChild(button('删除', false, () => { manual.splice(k, 1); save(); render(); }));
+      body.appendChild(tr);
+    });
+  }
+  $('mAdd').onclick = () => {
+    const well = $('mWell').value.trim(), label = parseInt($('mLabel').value, 10);
+    const f1 = parseInt($('mFrom').value, 10), f2 = parseInt($('mTo').value, 10);
+    const isNew = $('mNew').checked, target = isNew ? 'new' : parseInt($('mTarget').value, 10);
+    if (!items.some(it => it.well === well)) { alert('孔板名称不在本次审阅中：' + well); return; }
+    if (isNaN(label) || isNaN(f1) || isNaN(f2) || f1 > f2 || (!isNew && (isNaN(target) || target === label))) {
+      alert('请填写完整：轨迹、起止帧（起 ≤ 止），以及目标轨迹或勾选新标签。'); return; }
+    manual.push({ well, label, from_frame: f1, to_frame: f2, target, note: $('mNote').value, time: new Date().toISOString() });
+    for (const id of ['mLabel', 'mFrom', 'mTo', 'mTarget', 'mNote']) $(id).value = '';
+    $('mNew').checked = false; save(); render();
+  };
+  // ---- navigation, export, import, keys ----
   $('note').addEventListener('input', e => {
-    const it = items[idx]; decisions[it.id] = Object.assign(decisions[it.id] || {}, { note: e.target.value }); save();
+    const it = items[idx]; decisions[it.id] = Object.assign(dec(it), { note: e.target.value }); save();
   });
   $('prev').onclick = () => step(-1);
   $('next').onclick = () => step(1);
   $('filter').onchange = () => step(0);
-  $('jump').onchange = e => { const n = parseInt(e.target.value, 10); if (n >= 1 && n <= items.length) { idx = n - 1; render(); } };
+  $('jump').onchange = e => { const n = parseInt(e.target.value, 10); if (n >= 1 && n <= items.length) go(n - 1); };
   $('export').onclick = () => {
-    const out = { review_id: review.review_id, dataset: review.dataset, exported: new Date().toISOString(), decisions };
+    const out = { review_id: review.review_id, dataset: review.dataset, exported: new Date().toISOString(), decisions, manual };
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify(out, null, 1)], { type: 'application/json' }));
     a.download = 'decisions.json'; a.click(); URL.revokeObjectURL(a.href);
@@ -168,20 +302,37 @@
     f.text().then(t => {
       const data = JSON.parse(t);
       if (data.review_id !== review.review_id) { alert('这个文件来自另一次审阅（review_id 不一致），未导入。'); return; }
-      decisions = Object.assign(decisions, data.decisions || {}); save(); render();
+      decisions = Object.assign(decisions, data.decisions || {});
+      if (Array.isArray(data.manual)) {
+        const seen = new Set(manual.map(m => JSON.stringify([m.well, m.label, m.from_frame, m.to_frame, m.target])));
+        for (const m of data.manual) if (!seen.has(JSON.stringify([m.well, m.label, m.from_frame, m.to_frame, m.target]))) manual.push(m);
+      }
+      save(); render();
     });
   };
   document.addEventListener('keydown', e => {
     if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
-    const it = items[idx];
-    if (/^[1-9]$/.test(e.key) && it.starts[+e.key - 1]) setChoice(it.starts[+e.key - 1].b_label);
-    else if (e.key === '0') setChoice('none');
-    else if (e.key === 'u' || e.key === 'U') setChoice('unsure');
-    else if (e.key === 'Backspace') { e.preventDefault(); setChoice(null); }
+    const it = items[idx], nb = isGap(it) ? [] : (it.neighbours || []), opts = options(it);
+    if (e.key === 'Escape') { mode = null; pending = null; render(); return; }
+    if (mode === 'track') {
+      if (/^[1-9]$/.test(e.key) && nb[+e.key - 1]) { pending = nb[+e.key - 1]; mode = 'rest'; render(); }
+      return;
+    }
+    if (mode === 'rest') {
+      if (/^[1-9]$/.test(e.key) && it.starts[+e.key - 1])
+        setDecision({ choice: 'swap', swap_track: pending.label, swap_frame: pending.frame, swap_rest: it.starts[+e.key - 1].b_label });
+      else if (e.key === '0') setDecision({ choice: 'swap', swap_track: pending.label, swap_frame: pending.frame, swap_rest: null });
+      return;
+    }
+    if (/^[1-9]$/.test(e.key) && opts[+e.key - 1] !== undefined) setDecision({ choice: opts[+e.key - 1] });
+    else if (e.key === '0') setDecision({ choice: 'none' });
+    else if (e.key === 'u' || e.key === 'U') setDecision({ choice: 'unsure' });
+    else if ((e.key === 's' || e.key === 'S') && nb.length) { mode = 'track'; render(); }
+    else if (e.key === 'Backspace') { e.preventDefault(); setDecision(null); }
     else if (e.key === 'ArrowRight') step(1);
     else if (e.key === 'ArrowLeft') step(-1);
   });
-  const firstOpen = items.findIndex(it => choiceOf(it) === undefined);
+  const firstOpen = items.findIndex(it => choiceOf(it) === undefined || choiceOf(it) === null);
   idx = firstOpen < 0 ? 0 : firstOpen;
   render();
 })();
