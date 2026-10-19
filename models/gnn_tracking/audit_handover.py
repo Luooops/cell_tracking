@@ -69,9 +69,10 @@ def _crop(image, cx, cy, half):
     return padded[y - half:y + half, x - half:x + half]
 
 
-def _strip(path, show, centres, radius, raws, masks, colors, names, numbered, header):
+def _strip(path, show, centres, radius, raws, masks, colors, names, numbered, header, chain=()):
     """Draw one image strip: a tile per frame of `show`, cropped around centres[f]; labels in `colors` outlined in
-    their colour with names[label] above, labels in `numbered` written in grey, other cells outlined grey."""
+    their colour with names[label] above, labels in `numbered` written in grey, unlabelled detections in `chain`
+    outlined thin red as 'A?', other unlabelled detections marked '?', other cells outlined grey."""
     from PIL import Image, ImageDraw, ImageFont
     from scipy.ndimage import binary_dilation
     from skimage.segmentation import find_boundaries
@@ -91,14 +92,20 @@ def _strip(path, show, centres, radius, raws, masks, colors, names, numbered, he
         marks = []
         for label in np.unique(labels):
             label = int(label)
-            if label in colors or label in numbered:
-                region = labels == label
-                ys, xs = np.nonzero(region)
-                if label in colors:
-                    tile[binary_dilation(edge & region)] = colors[label]
-                    marks.append((names[label], colors[label], font, xs.mean() - 4, ys.min() - 17))
-                else:
-                    marks.append((str(label), NEIGHBOUR_TEXT, small, xs.mean() - 8, ys.mean() - 6))
+            if not label:
+                continue
+            region = labels == label
+            ys, xs = np.nonzero(region)
+            if label in colors:
+                tile[binary_dilation(edge & region)] = colors[label]
+                marks.append((names[label], colors[label], font, xs.mean() - 4, ys.min() - 17))
+            elif label in chain:
+                tile[edge & region] = A_COLOR
+                marks.append(('A?', A_COLOR, small, xs.mean() - 8, ys.min() - 14))
+            elif label in numbered:
+                marks.append((str(label), NEIGHBOUR_TEXT, small, xs.mean() - 8, ys.mean() - 6))
+            elif label >= UNKNOWN_OFFSET:
+                marks.append(('?', NEIGHBOUR_TEXT, small, xs.mean() - 3, ys.mean() - 6))
         x0 = col * (TILE + GAP)
         canvas.paste(Image.fromarray(tile), (x0, HEADER))
         draw.text((x0 + 4, 3), header(f), fill=(40, 40, 40), font=font)
@@ -118,7 +125,9 @@ def _position(objects, f, label):
 def render_panel(item, frames, raws, masks, objects, path):
     """End item: a tile per frame from A's first frame to one frame after its last candidate, following A while it
     exists and staying at its last position afterwards. A red, new starts numbered, neighbours with their GT id."""
-    last = max([s['b_frame'] for s in item['starts']] + [n['frame'] for n in item.get('neighbours', [])])
+    chain, meets = item.get('chain') or [], item.get('chain_meets')
+    last = max([s['b_frame'] for s in item['starts']] + [n['frame'] for n in item.get('neighbours', [])]
+               + [c['frame'] for c in chain] + ([meets['frame']] if meets else []))
     show = [f for f in range(item['a_first'], last + 2) if f in raws]
     centres = {}
     for f in show:
@@ -128,12 +137,14 @@ def render_panel(item, frames, raws, masks, objects, path):
     colors.update({s['b_label']: B_COLORS[k % len(B_COLORS)] for k, s in enumerate(item['starts'])})
     names = {item['a_label']: 'A'}
     names.update({s['b_label']: str(k + 1) for k, s in enumerate(item['starts'])})
+    if meets and meets['label'] not in colors:
+        colors[meets['label']], names[meets['label']] = B_COLORS[len(item['starts']) % len(B_COLORS)], 'B'
 
     def header(f):
         rel = f - item['a_frame']
         return f'frame {f}  (t{rel:+d})' if rel else f'frame {f}  (t: A ends)'
     return _strip(path, show, centres, item['radius'], raws, masks, colors, names,
-                  {n['label'] for n in item.get('neighbours', [])}, header)
+                  {n['label'] for n in item.get('neighbours', [])}, header, {c['label'] for c in chain})
 
 
 def render_gap_panel(item, frames, raws, masks, objects, path):
@@ -173,8 +184,9 @@ def prepare(args, wells):
             item['panel'] = f'panels/{well}_gap_{item["x_label"]}.png'
             item['frames_shown'] = render_gap_panel(item, frames, raws, masks, objects, out / item['panel'])
         items += found + gaps
-        print(f'{well}: {len(found)} track ends with candidate starts '
-              f'({sum(len(i["starts"]) for i in found)} pairs), {len(gaps)} tracks inside a gap', flush=True)
+        print(f'{well}: {len(found)} track ends ({sum(bool(i["starts"]) for i in found)} with new starts, '
+              f'{sum(bool(i["chain"]) for i in found)} with an unlabelled continuation), {len(gaps)} tracks inside a gap',
+              flush=True)
     random.Random(args.seed).shuffle(items)                 # review order carries no information
     review_id = uuid.uuid4().hex
     if args.reuse_review_id:
@@ -187,7 +199,8 @@ def prepare(args, wells):
                   rule='A known GT track ends at t (not the last frame, no children); a known GT track without parent '
                        'starts at t+1 or t+2 closer than the gating radius r(t) x sqrt(g) of '
                        'models.gnn_tracking.gating (positions only); existing tracks inside the same gate at t+1/t+2 '
-                       'are offered as swap targets. Gap items: a known track lying entirely in a gap of a known '
+                       'are offered as swap targets; ends followed by unlabelled detections carry a continuation '
+                       'chain (nearest detection within half the gate, frame by frame). Gap items: a known track lying entirely in a gap of a known '
                        'track, both junctions inside the gate. No model output is used or shown.',
                   items=items)
     (out / 'candidates.json').write_text(json.dumps(review, indent=1), encoding='utf-8')

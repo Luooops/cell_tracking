@@ -7,7 +7,8 @@ import unittest
 import numpy as np
 import tifffile
 
-from utils.gt_refine import (build_refined_dataset, check_decisions, gap_candidates, handover_candidates, refine_well,
+from utils.gt_refine import (build_refined_dataset, check_decisions, continuation_chain, gap_candidates,
+                             handover_candidates, refine_well,
                              relabel_lookup, translate, validate_table, write_track_table)
 from utils.lineage import Lineage, read_track_table
 
@@ -146,6 +147,54 @@ class TestBuildRefinedDataset(unittest.TestCase):
             self.assertEqual(read_track_table(dst / 'b_GT' / 'TRA' / 'man_track.txt')[6], (0, 1, 0))
             with self.assertRaises(FileExistsError):
                 build_refined_dataset(src, dst, ['a'], {})
+
+
+class TestContinuationChain(unittest.TestCase):
+    def tracks(self):
+        # 1 ends at frame 1 (x=50); unlabelled detections continue it (50001 at 2, frame 3 missed, 50002 at 4), then
+        # the known track 2 starts at frame 5 at the same place; 50009 is an unlabelled cell far away
+        return {1: {0: (50.0, 50.0), 1: (50.0, 50.0)}, 50001: {2: (51.0, 50.0)}, 50002: {4: (52.0, 50.0)},
+                2: {5: (52.0, 51.0)}, 50009: {2: (200.0, 50.0)}}
+
+    def test_chain_follows_unlabelled_detections_to_a_start(self):
+        frames, objects = objects_for(self.tracks())
+        radius = {f: 10.0 for f in frames}
+        first = {2: (5, None), 1: (0, None)}
+        chain, meets = continuation_chain(frames, objects, radius, 1, (50.0, 50.0), first)
+        self.assertEqual([(c['label'], c['frame']) for c in chain], [(50001, 2), (50002, 4)])
+        self.assertEqual(meets, dict(label=2, frame=5))
+
+    def test_end_item_with_chain_but_no_start(self):
+        frames, objects = objects_for(self.tracks())
+        table = {1: (0, 1, 0), 2: (5, 5, 0), **{100 + k: (0, 5, 0) for k in range(6)}}
+        items = handover_candidates('w', frames, objects, table)
+        item = [i for i in items if i['a_label'] == 1][0]
+        self.assertEqual((item['starts'], [c['frame'] for c in item['chain']], item['chain_meets']),
+                         ([], [2, 4], dict(label=2, frame=5)))
+
+
+class TestChainDecisions(unittest.TestCase):
+    item = dict(id='w:1', kind='end', well='w', a_label=1, a_frame=1, starts=[], neighbours=[],
+                chain=[dict(label=50001, frame=2), dict(label=50002, frame=4)], chain_meets=dict(label=2, frame=5))
+
+    def test_full_chain_with_link(self):
+        r = check_decisions([self.item], {'w:1': dict(choice='chain', chain_until=4, chain_link=True)})
+        self.assertEqual((r['problems'], r['merges']), ([], [('w', 1, 1, 2, 5)]))
+        self.assertEqual([m[1:5] for m in r['moves']], [(50001, 2, 2, 1), (50002, 4, 4, 1)])
+        table, relabels = refine_well({1: (0, 1, 0), 2: (5, 5, 0)}, {1: [0, 1], 50001: [2], 50002: [4], 2: [5]},
+                                      [m[1:] for m in r['merges']], [], [m[1:] for m in r['moves']])
+        self.assertEqual((table[1], table[2], 50001 in table), ((0, 4, 0), (5, 5, 1), False))
+        self.assertEqual(relabels, [(50001, 2, 2, 1), (50002, 4, 4, 1)])
+
+    def test_truncated_chain_cannot_link(self):
+        r = check_decisions([self.item], {'w:1': dict(choice='chain', chain_until=2, chain_link=False)})
+        self.assertEqual(([m[1] for m in r['moves']], r['merges'], r['problems']), ([50001], [], []))
+        r = check_decisions([self.item], {'w:1': dict(choice='chain', chain_until=2, chain_link=True)})
+        self.assertEqual(len(r['problems']), 1)
+
+    def test_chain_frame_must_exist(self):
+        r = check_decisions([self.item], {'w:1': dict(choice='chain', chain_until=3)})
+        self.assertEqual(len(r['problems']), 1)
 
 
 class TestGapCandidates(unittest.TestCase):

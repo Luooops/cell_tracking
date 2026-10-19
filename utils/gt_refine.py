@@ -11,6 +11,10 @@ r(t) x sqrt(g) (models.gnn_tracking.gating: estimated from detection positions a
 end items   a known GT track A is last seen in frame t (not the last frame of the video, no children), and a known
             GT track B (no parent) is first seen in frame t + g, g in {1, 2}, inside the gate. Listed per A with every
             such new start, plus the EXISTING tracks inside the same gate in frame t + 1 / t + 2 (neighbours).
+            Every end item also carries a continuation chain: from A's last position, frame by frame, the nearest
+            detection within half the gate if it has no identity (label >= 50000), allowing 1-2 missed frames;
+            the chain stops at a known track (recorded when that track starts there) or when nothing is near.
+            Ends with such a chain but no new start are end items too.
 gap items   a known GT track X lies entirely in a gap of a known track Y: Y is absent over X's whole span and seen
             within 2 frames before and after it, both junctions inside the gate. Listed per X with every such Y.
 
@@ -20,6 +24,8 @@ Decisions:
               swap           from frame s, A's cell carries existing track X's identity; optionally X's own cell
                              continues as start R      -> X's masks from s get a new label X' with parent A;
                                                           X ends at s - 1; R's parent = X
+              chain          A continues as the unlabelled detections of its chain up to a frame -> those masks
+                             get label A; optionally the track the chain meets becomes A's continuation (parent A)
     gap item  <Y label>      X is Y                     -> X's masks get label Y (Y's gap is filled; X disappears)
     any item  none / unsure                             -> nothing changes
     manual    (well, X, from, to, Y | 'new')            -> X's masks in frames from..to get label Y (absent there)
@@ -42,7 +48,8 @@ from models.gnn_tracking.gating import gating_radius
 UNKNOWN_OFFSET = 50000
 MAX_GAP = 2
 MAX_NEIGHBOURS = 6
-SAME, SWAP, GAP, MANUAL, NONE, UNSURE = 'same', 'swap', 'gap', 'manual', 'none', 'unsure'
+SAME, SWAP, CHAIN, GAP, MANUAL, NONE, UNSURE = 'same', 'swap', 'chain', 'gap', 'manual', 'none', 'unsure'
+CHAIN_REACH = 0.5          # a chain step goes to the nearest detection within this fraction of the gate
 
 
 def _round(xy):
@@ -53,11 +60,39 @@ def _known(label):
     return 0 < label < UNKNOWN_OFFSET
 
 
+def continuation_chain(frames, objects, radius, t, xy, first):
+    """Unlabelled detections that continue a track ending at frame t at position xy: frame by frame the nearest
+    detection within CHAIN_REACH x the gate; unknown identities extend the chain, a known track stops it.
+    -> (chain [dict(label, frame, distance)], meets: dict(label, frame) if it stopped at a track starting there)."""
+    chain, meets, here, last = [], None, np.asarray(xy, dtype=float), t
+    for f in range(t + 1, frames[-1] + 1):
+        g = f - last
+        if g > MAX_GAP or f not in objects:
+            break
+        labels, pos = objects[f]
+        if not len(labels):
+            continue
+        d = np.hypot(*(pos - here).T)
+        k = int(np.argmin(d))
+        if d[k] >= CHAIN_REACH * radius[last] * np.sqrt(g):
+            continue
+        label = int(labels[k])
+        if _known(label):
+            if chain and first.get(label, (None,))[0] == f:
+                meets = dict(label=label, frame=f)
+            break
+        chain.append(dict(label=label, frame=f, distance=round(float(d[k]), 1)))
+        here, last = pos[k], f
+    return chain, meets
+
+
 def handover_candidates(well, frames, objects, table):
     """frames: sorted frame numbers; objects[f] = (labels [n], positions [n, 2] as (x, y)); table: {label: (begin,
     end, parent)}. -> list of end items dict(id, kind='end', well, a_label, a_first, a_frame, a_xy, radius,
-    starts=[dict(b_label, b_frame, g, distance, b_xy)], neighbours=[dict(label, frame, g, distance)])."""
+    starts=[dict(b_label, b_frame, g, distance, b_xy)], neighbours=[dict(label, frame, g, distance)],
+    chain=[dict(label, frame, distance)], chain_meets=dict(label, frame) | None)."""
     pos = {f: objects[f][1] for f in frames}
+    radius = {f: gating_radius(frames, pos, f)[0] for f in frames[:-1]}
     first, last = {}, {}
     for f in frames:
         for label, xy in zip(*objects[f]):
@@ -70,14 +105,15 @@ def handover_candidates(well, frames, objects, table):
     for a, (ta, xa) in sorted(last.items()):
         if ta == frames[-1] or a in has_child:
             continue
-        r = gating_radius(frames, pos, ta)[0]
+        r = radius[ta]
         starts, neighbours = [], []
         for b, (tb, xb) in first.items():
             g = tb - ta
             d = float(np.hypot(*(np.asarray(xb) - np.asarray(xa))))
             if b != a and 1 <= g <= MAX_GAP and not table.get(b, (0, 0, 0))[2] and d < r * np.sqrt(g):
                 starts.append(dict(b_label=b, b_frame=tb, g=g, distance=round(d, 1), b_xy=_round(xb)))
-        if not starts:
+        chain, meets = continuation_chain(frames, objects, radius, ta, xa, first)
+        if not starts and not chain:
             continue
         seen = {s['b_label'] for s in starts}            # tracks that begin after A ended are starts, not swap targets
         seen |= {b for b, (tb, _) in first.items() if tb > ta}
@@ -93,7 +129,8 @@ def handover_candidates(well, frames, objects, table):
                     neighbours.append(dict(label=label, frame=s, g=g, distance=round(d, 1)))
         items.append(dict(id=f'{well}:{a}', kind='end', well=well, a_label=a, a_first=first[a][0], a_frame=ta,
                           a_xy=_round(xa), radius=round(r, 1), starts=sorted(starts, key=lambda s: s['distance']),
-                          neighbours=sorted(neighbours, key=lambda n: n['distance'])[:MAX_NEIGHBOURS]))
+                          neighbours=sorted(neighbours, key=lambda n: n['distance'])[:MAX_NEIGHBOURS],
+                          chain=chain, chain_meets=meets))
     return items
 
 
@@ -140,7 +177,7 @@ def check_decisions(candidates, decisions, manual=()):
     undecided [ids], problems [str])."""
     by_id = {c['id']: c for c in candidates}
     merges, swaps, moves, problems = [], [], [], []
-    counts = {SAME: 0, SWAP: 0, GAP: 0, MANUAL: 0, NONE: 0, UNSURE: 0}
+    counts = {SAME: 0, SWAP: 0, CHAIN: 0, GAP: 0, MANUAL: 0, NONE: 0, UNSURE: 0}
     claimed_start, claimed_track = {}, {}
 
     def claim(store, well, label, owner, what):
@@ -168,7 +205,24 @@ def check_decisions(candidates, decisions, manual=()):
             moves.append((item['well'], item['x_label'], frames[0], frames[-1], choice, item_id))
             continue
         starts = {s['b_label']: s['b_frame'] for s in item['starts']}
-        if choice == SWAP:
+        if choice == CHAIN:
+            chain, until = item.get('chain') or [], decision.get('chain_until')
+            if not chain or until not in [c['frame'] for c in chain]:
+                problems.append(f'{item_id}: chain end frame {until!r} is not a frame of its chain')
+                continue
+            taken = [c for c in chain if c['frame'] <= until]
+            counts[CHAIN] += 1
+            for c in taken:
+                claim(claimed_track, item['well'], c['label'], item_id, 'unlabelled detection')
+                moves.append((item['well'], c['label'], c['frame'], c['frame'], item['a_label'], item_id))
+            meets = item.get('chain_meets')
+            if decision.get('chain_link'):
+                if not meets or until != chain[-1]['frame']:
+                    problems.append(f'{item_id}: the chain can only be linked to the track it meets at its end')
+                    continue
+                claim(claimed_start, item['well'], meets['label'], item_id, 'start')
+                merges.append((item['well'], item['a_label'], item['a_frame'], meets['label'], meets['frame']))
+        elif choice == SWAP:
             x, s, rest = decision.get('swap_track'), decision.get('swap_frame'), decision.get('swap_rest')
             if not any(n['label'] == x and n['frame'] == s for n in item.get('neighbours', [])):
                 problems.append(f'{item_id}: swap track {x!r} at frame {s!r} is not one of its neighbours')
@@ -228,11 +282,11 @@ def refine_well(table, observed, merges, swaps, moves=()):
             raise ValueError(f'{source}: track {x} has children; edit it by hand')
         observed[x] = [f for f in observed[x] if f not in moving]
         observed[target] = sorted(observed.get(target, []) + moving)
-        parent_x = out[x][2]
+        parent_x = out.get(x, (0, 0, 0))[2]           # an unlabelled detection may have no row
         if observed[x]:
             out[x] = (observed[x][0], observed[x][-1], parent_x)
         else:
-            del out[x]
+            out.pop(x, None)
         parent_t = out.get(target, (0, 0, 0))[2]
         out[target] = (observed[target][0], observed[target][-1], parent_t)
         relabels.append((x, f1, f2, target))

@@ -108,6 +108,33 @@ class TestAuditHandover(unittest.TestCase):
             self.assertEqual((log['counts']['manual'], log['relabels']),
                              (1, [dict(well='s01', label=5, from_frame=4, to_frame=4, new_label=2)]))
 
+    def test_chain_through_unlabelled_detections(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            write_swap_dataset(root / 'data')
+            # track 1 ends at frame 2; its nucleus continues unlabelled in frames 3 and 4 (the pixels of 3 there
+            # become 50001 / 50002), and track 3 is cut back to frames 0-2
+            tra = root / 'data' / 's01_GT' / 'TRA'
+            for f, new in ((3, 50001), (4, 50002)):
+                m = tifffile.imread(tra / f'man_track{f:03d}.tif'); m[m == 3] = new
+                tifffile.imwrite(tra / f'man_track{f:03d}.tif', m)
+            rows = ['1 0 2 0', '2 3 4 0', '3 0 2 0', '50001 3 3 0', '50002 4 4 0'] + [f'{10 + k} 0 4 0' for k in range(6)]
+            (tra / 'man_track.txt').write_text('\n'.join(rows) + '\n', encoding='utf-8')
+            review = root / 'review'
+            main(['prepare', '--data-root', str(root / 'data'), '--output-root', str(review)])
+            cands = json.loads((review / 'candidates.json').read_text(encoding='utf-8'))
+            item = [i for i in cands['items'] if i['id'] == 's01:1'][0]
+            self.assertEqual([(c['label'], c['frame']) for c in item['chain']], [(50001, 3), (50002, 4)])
+            decisions = root / 'decisions.json'
+            decisions.write_text(json.dumps(dict(review_id=cands['review_id'], decisions={
+                's01:1': dict(choice='chain', chain_until=4, chain_link=False)})))
+            target = root / 'data_refine'
+            self.assertEqual(main(['apply', '--data-root', str(root / 'data'), '--review', str(review),
+                                   '--decisions', str(decisions), '--target', str(target), '--allow-incomplete']), 0)
+            table = read_track_table(target / 's01_GT' / 'TRA' / 'man_track.txt')
+            self.assertEqual((table[1], 50001 in table, 50002 in table), ((0, 4, 0), False, False))
+            self.assertEqual(int(tifffile.imread(target / 's01_GT' / 'TRA' / 'man_track004.tif')[20, 41]), 1)
+
     def test_reuse_review_id_keeps_progress_key(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
