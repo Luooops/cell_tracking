@@ -249,6 +249,18 @@ class TestMoves(unittest.TestCase):
         self.assertEqual((table[354], table[353], 140 in table), ((3, 5, 0), (0, 2, 0), False))
         self.assertEqual(relabels, [(353, 4, 5, 354), (140, 3, 3, 354)])
 
+    def test_same_frame_swap_through_a_temporary_new_id(self):
+        # 353 and 9 exchange identities in frames 4-5: 353 -> X1, 9 -> 353, X1 -> 9
+        edits = [dict(well='w', label=353, from_frame=4, to_frame=5, target='X1'),
+                 dict(well='w', label=9, from_frame=4, to_frame=5, target=353),
+                 dict(well='w', label='X1', from_frame=4, to_frame=5, target=9)]
+        r = check_decisions([], {}, edits)
+        table, relabels = refine_well(self.table, self.observed, [], [], [m[1:] for m in r['moves']])
+        self.assertEqual((r['problems'], relabels), ([], [(353, 4, 5, 354), (9, 4, 5, 353), (354, 4, 5, 9)]))
+        self.assertEqual((table[353], table[9], 354 in table), ((0, 5, 0), (0, 5, 0), False))
+        with self.assertRaises(ValueError):                              # X1 used as a source before it exists
+            refine_well(self.table, self.observed, [], [], [m[1:] for m in r['moves']][1:])
+
     def test_invalid_manual_edit_is_a_problem(self):
         r = check_decisions([], {}, [dict(well='w', label=9, from_frame=5, to_frame=4, target=3),
                                      dict(well='w', label=9, from_frame=1, to_frame=2, target='Y1')])

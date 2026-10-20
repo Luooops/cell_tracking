@@ -28,7 +28,8 @@ Decisions:
                              get label A; optionally the track the chain meets becomes A's continuation (parent A)
     gap item  <Y label>      X is Y                     -> X's masks get label Y (Y's gap is filled; X disappears)
     any item  none / unsure                             -> nothing changes
-    manual    (well, X, from, to, Y | 'X<n>' | 'new')   -> X's masks in frames from..to get label Y (absent there)
+    manual    (well, X | 'X<n>', from, to, Y | 'X<n>' | 'new')
+                                                        -> X's masks in frames from..to get label Y (absent there)
                                                            or a new label; for errors no rule lists. 'X1', 'X2', ...
                                                            name new identities per well (one integer label each,
                                                            reusable across edits); 'new' is an anonymous one
@@ -255,7 +256,8 @@ def check_decisions(candidates, decisions, manual=()):
             merges.append((item['well'], item['a_label'], item['a_frame'], choice, starts[choice]))
     for k, edit in enumerate(manual):
         well, label, f1, f2, target = (edit.get(k2) for k2 in ('well', 'label', 'from_frame', 'to_frame', 'target'))
-        if not (isinstance(well, str) and isinstance(label, int) and isinstance(f1, int) and isinstance(f2, int)
+        if not (isinstance(well, str) and (isinstance(label, int) or is_new_id(label)) and isinstance(f1, int)
+                and isinstance(f2, int)
                 and f1 <= f2 and (target == 'new' or isinstance(target, int) or is_new_id(target))
                 and target != label):
             problems.append(f'manual edit {k + 1}: invalid {edit}')
@@ -286,6 +288,10 @@ def refine_well(table, observed, merges, swaps, moves=(), new_ids=None):
     used = {l for m in merges for l in (m[0], m[2])} | {l for s in swaps for l in (s[0], s[2], s[4]) if l is not None}
 
     for x, f1, f2, target, source in moves:
+        if is_new_id(x):                              # a named new identity as source (e.g. a temporary X1 in a swap)
+            if x not in named:
+                raise ValueError(f'{source}: new id {x} is used before an edit creates it')
+            x = named[x]
         if x in used:
             raise ValueError(f'{source}: track {x} is also part of a hand-over or swap; decide it in one place')
         moving = [f for f in observed.get(x, []) if f1 <= f <= f2]
