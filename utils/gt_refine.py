@@ -28,8 +28,10 @@ Decisions:
                              get label A; optionally the track the chain meets becomes A's continuation (parent A)
     gap item  <Y label>      X is Y                     -> X's masks get label Y (Y's gap is filled; X disappears)
     any item  none / unsure                             -> nothing changes
-    manual    (well, X, from, to, Y | 'new')            -> X's masks in frames from..to get label Y (absent there)
-                                                           or a new label; for errors no rule lists
+    manual    (well, X, from, to, Y | 'X<n>' | 'new')   -> X's masks in frames from..to get label Y (absent there)
+                                                           or a new label; for errors no rule lists. 'X1', 'X2', ...
+                                                           name new identities per well (one integer label each,
+                                                           reusable across edits); 'new' is an anonymous one
 
 Parent links are CTC single-child continuations (utils/lineage.py). Only masks touched by a relabel are rewritten;
 every other file of the refined dataset is a hard link (or copy) of the source. refine_log.json lists the relabels
@@ -38,6 +40,7 @@ in the order they are applied, so outputs made on the source data can be transla
 import hashlib
 import json
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -215,13 +218,21 @@ def check_decisions(candidates, decisions, manual=()):
             for c in taken:
                 claim(claimed_track, item['well'], c['label'], item_id, 'unlabelled detection')
                 moves.append((item['well'], c['label'], c['frame'], c['frame'], item['a_label'], item_id))
-            meets = item.get('chain_meets')
-            if decision.get('chain_link'):
-                if not meets or until != chain[-1]['frame']:
-                    problems.append(f'{item_id}: the chain can only be linked to the track it meets at its end')
+            # chain_link: a later start (or the track the chain meets) that continues A after the chain;
+            # True = the met track (older exports)
+            meets, link = item.get('chain_meets'), decision.get('chain_link')
+            if link is True:
+                link = meets['label'] if meets and until == chain[-1]['frame'] else 'invalid'
+            if link not in (None, False):
+                later = {b: f for b, f in starts.items() if f > until}
+                if meets and until == chain[-1]['frame']:
+                    later[meets['label']] = meets['frame']
+                if link not in later:
+                    problems.append(f'{item_id}: after the chain (to frame {until}) A can only continue as a start '
+                                    f'that begins later: {sorted(later)}')
                     continue
-                claim(claimed_start, item['well'], meets['label'], item_id, 'start')
-                merges.append((item['well'], item['a_label'], item['a_frame'], meets['label'], meets['frame']))
+                claim(claimed_start, item['well'], link, item_id, 'start')
+                merges.append((item['well'], item['a_label'], item['a_frame'], link, later[link]))
         elif choice == SWAP:
             x, s, rest = decision.get('swap_track'), decision.get('swap_frame'), decision.get('swap_rest')
             if not any(n['label'] == x and n['frame'] == s for n in item.get('neighbours', [])):
@@ -245,7 +256,8 @@ def check_decisions(candidates, decisions, manual=()):
     for k, edit in enumerate(manual):
         well, label, f1, f2, target = (edit.get(k2) for k2 in ('well', 'label', 'from_frame', 'to_frame', 'target'))
         if not (isinstance(well, str) and isinstance(label, int) and isinstance(f1, int) and isinstance(f2, int)
-                and f1 <= f2 and (target == 'new' or isinstance(target, int)) and target != label):
+                and f1 <= f2 and (target == 'new' or isinstance(target, int) or is_new_id(target))
+                and target != label):
             problems.append(f'manual edit {k + 1}: invalid {edit}')
             continue
         counts[MANUAL] += 1
@@ -255,14 +267,21 @@ def check_decisions(candidates, decisions, manual=()):
                 undecided=undecided, problems=problems)
 
 
-def refine_well(table, observed, merges, swaps, moves=()):
+def is_new_id(target):
+    """'X1', 'X2', ...: a named new identity of a manual edit."""
+    return isinstance(target, str) and re.fullmatch(r'X[1-9][0-9]*', target) is not None
+
+
+def refine_well(table, observed, merges, swaps, moves=(), new_ids=None):
     """Apply one well's decisions. table: {label: (begin, end, parent)}; observed: {label: sorted frames present in
     the masks}; merges: [(a, a_frame, b, b_frame)]; swaps: [(a, a_frame, x, s, r, r_frame)]; moves: [(x, from, to,
     target | 'new', source)]. Moves (gap items, manual edits) are applied first, then swaps, then hand-overs.
-    -> (new table, relabels [(x, from, to | None, new label)] in order). Raises ValueError on any inconsistency."""
+    -> (new table, relabels [(x, from, to | None, new label)] in order). new_ids, if a dict, receives the integer
+    label given to every named new identity ('X1' -> 431). Raises ValueError on any inconsistency."""
     out = {l: tuple(v) for l, v in table.items()}
     observed = {l: sorted(fs) for l, fs in observed.items()}
     relabels, split = [], {}                          # split[x] = (s, x')
+    named = {}                                        # 'X1' -> integer label
     next_label = max([l for l in table if l < UNKNOWN_OFFSET] + [0]) + 1
     used = {l for m in merges for l in (m[0], m[2])} | {l for s in swaps for l in (s[0], s[2], s[4]) if l is not None}
 
@@ -274,6 +293,10 @@ def refine_well(table, observed, merges, swaps, moves=()):
             raise ValueError(f'{source}: track {x} is not present in frames {f1}-{f2}')
         if target == 'new':
             target, next_label = next_label, next_label + 1
+        elif is_new_id(target):
+            if target not in named:
+                named[target], next_label = next_label, next_label + 1
+            target = named[target]
         elif target not in out:
             raise ValueError(f'{source}: target track {target} does not exist')
         if set(moving) & set(observed.get(target, [])):
@@ -322,6 +345,8 @@ def refine_well(table, observed, merges, swaps, moves=()):
             raise ValueError(f'track {b2} already has parent {out[b2][2]}')
         out[b2] = (*out[b2][:2], a2)
     validate_table(out)
+    if new_ids is not None:
+        new_ids.update(named)
     return out, relabels
 
 

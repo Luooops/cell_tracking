@@ -43,6 +43,10 @@
   .chainbox { background:#ffebee; border:1px solid #ffcdd2; border-radius:6px; padding:8px 10px; margin:6px 0; display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
   .chip.none { background:var(--none); } .chip.unsure { background:var(--unsure); } .chip.conflict { background:var(--conflict); }
   .chip.cur { border-color:#000; }
+  .chip.bad { box-shadow:0 0 0 2px #d50000; }
+  .issues { background:#ffebee; border:2px solid #d50000; border-radius:6px; padding:8px 10px; margin:8px 0; color:#b71c1c; }
+  .issues b { color:#d50000; }
+  tr.bad td { background:#ffebee; } tr.bad td.msg { color:#b71c1c; font-weight:600; }
   .warn { color:var(--conflict); font-weight:600; }
   #results { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
   table { border-collapse:collapse; width:100%; margin-top:8px; }
@@ -58,7 +62,7 @@
   <label>显示 <select id="filter">
     <option value="all">全部</option><option value="undecided">未审</option><option value="same">同一细胞</option>
     <option value="swap">ID 交换</option><option value="chain">延续为未标注</option><option value="gap">填补缺口</option><option value="none">都不是</option>
-    <option value="unsure">不确定</option><option value="conflict">冲突</option>
+    <option value="unsure">不确定</option><option value="conflict">冲突</option><option value="issue">有问题（红框）</option>
   </select></label>
   <label><input type="checkbox" id="auto" checked> 作答后自动下一个</label>
   <button id="export">导出 decisions.json</button>
@@ -73,13 +77,21 @@
     <div id="chainBox"></div>
     <div id="swapStep"></div>
     <div>当前判断：<span class="status" id="status"></span> <span class="warn" id="conflict"></span></div>
+    <div id="issueBox"></div>
     <div style="margin-top:8px"><textarea id="note" placeholder="备注（可选）"></textarea></div>
+    <div class="row editrow">
+      <b>修改 ID</b>：把轨迹 <select id="eLabel"></select>
+      在第 <select id="eFrom"></select> 到第 <select id="eTo"></select> 帧
+      改成 <select id="eTargetSel"></select> <input id="eTargetNum" type="number" placeholder="轨迹编号" style="width:90px">
+      <input id="eNote" type="text" placeholder="备注" style="width:160px"> <button id="eAdd">添加</button>
+    </div>
+    <div id="eList" class="help"></div>
     <div class="nav">
       <button id="prev">← 上一个</button><button id="next">下一个 →</button>
       <span>跳到 <input id="jump" type="number" min="1" style="width:80px"></span>
       <span id="pos"></span>
     </div>
-    <div class="help">键盘：1–9 选对应编号 · 0 都不是 · u 不确定 · s ID 交换（仅终点项：再按数字选已有轨迹，然后选它原来细胞的去向，0 = 没有）· a A 延续为未标注的细胞（红色细线 A?，可选到第几帧为止）· Esc 取消 · Backspace 清除 · ←/→ 翻页。进度自动保存在本浏览器中；换浏览器或电脑请先导出再导入。</div>
+    <div class="help">键盘：1–9 选对应编号 · 0 都不是 · u 不确定 · s ID 交换（仅终点项：再按数字选已有轨迹，然后选它原来细胞的去向，0 = 没有）· a A 延续为未标注的细胞（红色细线 A?，可选到第几帧为止、之后接上哪条新轨迹）· Esc 取消 · Backspace 清除 · ←/→ 翻页。进度自动保存在本浏览器中；换浏览器或电脑请先导出再导入。</div>
     <div class="chips" id="chips"></div>
   </div>
   <div class="card">
@@ -97,13 +109,12 @@
       孔板 <input id="mWell" type="text" style="width:110px">
       把轨迹 <input id="mLabel" type="number" style="width:90px">
       在第 <input id="mFrom" type="number" style="width:70px"> 到第 <input id="mTo" type="number" style="width:70px"> 帧
-      改成 轨迹 <input id="mTarget" type="number" style="width:90px">
-      <label><input type="checkbox" id="mNew"> 新标签</label>
+      改成 <select id="mTargetSel"></select> <input id="mTargetNum" type="number" placeholder="轨迹编号" style="width:90px">
       <input id="mNote" type="text" placeholder="备注" style="width:180px">
       <button id="mAdd">添加</button>
     </div>
-    <div class="help">例：第 8 帧里 353 被标成了 140 → 孔板 r13c12，把轨迹 140 在第 8 到第 8 帧改成轨迹 353。目标轨迹在这些帧里不能已经存在；被手动修正的轨迹不能同时出现在审阅项的判断里。</div>
-    <table><thead><tr><th>#</th><th>孔板</th><th>轨迹</th><th>帧</th><th>改成</th><th>备注</th><th></th></tr></thead><tbody id="mList"></tbody></table>
+    <div class="help">例：第 8 帧里 353 被标成了 140 → 孔板 r13c12，把轨迹 140 在第 8 到第 8 帧改成轨迹 353。需要一个原来没有的身份时选“新建 X1”：X1、X2… 按孔板编号，可在多条修改里重复使用，生成数据时换成新的整数标签（CTC 格式不变，对应关系记在 refine_log.json）。目标轨迹在这些帧里不能已经存在；被修改的轨迹不能同时出现在审阅项的判断里。</div>
+    <table><thead><tr><th>#</th><th>孔板</th><th>轨迹</th><th>帧</th><th>改成</th><th>审阅项</th><th>备注</th><th>检查</th><th></th></tr></thead><tbody id="mList"></tbody></table>
   </div>
 </main>
 <script id="review-data" type="application/json">/*__REVIEW_DATA__*/</script>
@@ -135,7 +146,8 @@
       }
       if (d.choice === 'chain') {
         (it.chain || []).filter(c => c.frame <= d.chain_until).forEach(c => add(it.well + ':track:' + c.label, it.id));
-        if (d.chain_link && it.chain_meets) add(it.well + ':start:' + it.chain_meets.label, it.id);
+        const link = chainLinkLabel(it, d);
+        if (link !== null) add(it.well + ':start:' + link, it.id);
       }
     }
     for (const ids of Object.values(claimed)) if (ids.length > 1) ids.forEach(i => bad.add(i));
@@ -150,7 +162,80 @@
   }
   function visible() {
     const f = $('filter').value, bad = conflicts();
-    return items.map((it, i) => i).filter(i => f === 'all' || statusOf(items[i], bad) === f);
+    return items.map((it, i) => i).filter(i => f === 'all' || (f === 'issue' ? hasIssue(items[i]) : statusOf(items[i], bad) === f));
+  }
+  // ---- consistency check of every decision and edit, mirroring utils/gt_refine.check_decisions + refine_well
+  //      (the order of operations is the same: decisions in the order they were made, then the manual edits in list
+  //      order; moves first, then swaps, then hand-overs; apply remains the final authority) ----
+  let issues = { items: {}, manual: {} };
+  const hasIssue = it => !!issues.items[it.id] || manual.some((m, k) => m.item === it.id && issues.manual[k]);
+  function validateAll() {
+    const res = { items: {}, manual: {} };
+    const note = (src, msg) => ((res[src[0]][src[1]] = res[src[0]][src[1]] || []).push(msg));
+    const byId = Object.fromEntries(items.map(it => [it.id, it]));
+    for (const well of [...new Set(items.map(it => it.well))]) {
+      const base = (review.observed || {})[well];
+      if (!base) continue;
+      const mod = {}, par = {}, parSrc = {};
+      const get = l => (l in mod ? mod[l] : (base[l] || []));
+      const set = (l, fs) => { mod[l] = fs; };
+      let next = Math.max(0, ...Object.keys(base).map(Number).filter(l => l < 50000)) + 1;
+      const named = {}, merges = [], swaps = [], moves = [];
+      const startFrame = (it, b) => { const s = it.starts.find(x => x.b_label === b); return s ? s.b_frame : (it.chain_meets && it.chain_meets.label === b ? it.chain_meets.frame : null); };
+      for (const id of Object.keys(decisions)) {
+        const it = byId[id]; if (!it || it.well !== well) continue;
+        const d = decisions[id], c = d.choice, src = ['items', id];
+        if (c === undefined || c === null || c === 'none' || c === 'unsure') continue;
+        if (isGap(it)) { if (typeof c === 'number') moves.push({ x: it.x_label, f1: it.x_frames[0], f2: it.x_frames[it.x_frames.length - 1], t: c, src }); continue; }
+        if (c === 'chain') {
+          (it.chain || []).filter(x => x.frame <= d.chain_until).forEach(x => moves.push({ x: x.label, f1: x.frame, f2: x.frame, t: it.a_label, src }));
+          const link = chainLinkLabel(it, d);
+          if (link !== null) merges.push({ a: it.a_label, af: it.a_frame, b: link, bf: startFrame(it, link), src });
+        } else if (c === 'swap') {
+          const r = d.swap_rest === undefined ? null : d.swap_rest;
+          swaps.push({ a: it.a_label, af: it.a_frame, x: d.swap_track, s: d.swap_frame, r, rf: r === null ? null : startFrame(it, r), src });
+        } else if (typeof c === 'number') merges.push({ a: it.a_label, af: it.a_frame, b: c, bf: startFrame(it, c), src });
+      }
+      manual.forEach((m, k) => { if (m.well === well) moves.push({ x: m.label, f1: m.from_frame, f2: m.to_frame, t: m.target, src: ['manual', k] }); });
+      const used = new Set([...merges.flatMap(m => [m.a, m.b]), ...swaps.flatMap(s => [s.a, s.x, s.r])].filter(v => v !== null).map(String));
+      for (const mv of moves) {
+        const x = String(mv.x);
+        if (used.has(x)) { note(mv.src, `轨迹 ${x} 同时出现在某一项的换号 / 交换 / 接上判断里，只能在一处决定`); continue; }
+        const moving = get(x).filter(f => f >= mv.f1 && f <= mv.f2);
+        if (!moving.length) { note(mv.src, `轨迹 ${x} 在第 ${mv.f1}–${mv.f2} 帧不存在（可能已被前面的修改改走，或帧号写错）`); continue; }
+        let t = mv.t;
+        if (t === 'new') t = String(next++);
+        else if (isX(t)) { if (!(t in named)) named[t] = String(next++); t = named[t]; }
+        else { t = String(t); if (!get(t).length) { note(mv.src, `目标轨迹 ${t} 不存在`); continue; } }
+        const clash = moving.filter(f => get(t).includes(f));
+        if (clash.length) { note(mv.src, `目标${isX(mv.t) ? ' ' + mv.t : '轨迹 ' + t} 在第 ${clash.join('、')} 帧已经存在（同一帧不能有两个）`); continue; }
+        set(x, get(x).filter(f => !moving.includes(f)));
+        set(t, get(t).concat(moving).sort((a, b) => a - b));
+      }
+      const split = {};
+      for (const sw of swaps.slice().sort((p, q) => p.af - q.af)) {
+        const x = String(sw.x);
+        if (split[x]) { note(sw.src, `轨迹 ${x} 被两处交换`); continue; }
+        const fs = get(x), before = fs.filter(f => f < sw.s);
+        if (!before.length || !fs.includes(sw.s)) { note(sw.src, `轨迹 ${x} 在第 ${sw.s} 帧之前或当帧不存在`); continue; }
+        const nl = String(next++);
+        set(nl, fs.filter(f => f >= sw.s)); set(x, before); split[x] = [sw.s, nl];
+      }
+      const at = (l, f) => { const sp = split[String(l)]; return sp && f >= sp[0] ? sp[1] : String(l); };
+      const link = (child, parent, src) => {
+        if (par[child]) { note(src, `轨迹 ${child} 已经接在轨迹 ${par[child]} 后面`); return; }
+        par[child] = parent; parSrc[child] = src;
+      };
+      for (const sw of swaps) { const sp = split[String(sw.x)]; if (!sp) continue;
+        link(sp[1], at(sw.a, sw.af), sw.src); if (sw.r !== null) link(at(sw.r, sw.rf), String(sw.x), sw.src); }
+      for (const m of merges) link(at(m.b, m.bf), at(m.a, m.af), m.src);
+      for (const [child, parent] of Object.entries(par)) {
+        const fc = get(child), fp = get(parent);
+        if (!fc.length || !fp.length) { note(parSrc[child], `轨迹 ${!fc.length ? child : parent} 已不存在（被其他修改改走了）`); continue; }
+        if (fp[fp.length - 1] >= fc[0]) note(parSrc[child], `轨迹 ${child}（第 ${fc[0]} 帧开始）不能接在轨迹 ${parent} 后面：${parent} 到第 ${fp[fp.length - 1]} 帧才结束`);
+      }
+    }
+    return res;
   }
   function setDecision(fields) {
     const it = items[idx], d = Object.assign({}, dec(it));
@@ -189,23 +274,40 @@
     if (typeof c === 'number') return isGap(it) ? `X（轨迹 ${it.x_label}）就是轨迹 ${c}` : `A 与轨迹 ${c} 是同一细胞`;
     if (c === 'swap') return `ID 交换：A 从第 ${d.swap_frame} 帧起被标成了轨迹 ${d.swap_track}；轨迹 ${d.swap_track} 原来的细胞 → ` +
                              (d.swap_rest === null || d.swap_rest === undefined ? '没有' : `轨迹 ${d.swap_rest}`);
-    if (c === 'chain') return `A 延续为未标注的细胞，到第 ${d.chain_until} 帧` + (d.chain_link && it.chain_meets ? `，并接上轨迹 ${it.chain_meets.label}` : '');
+    if (c === 'chain') { const link = chainLinkLabel(it, d);
+      return `A 延续为未标注的细胞，到第 ${d.chain_until} 帧` + (link !== null ? `，然后接上轨迹 ${link}` : ''); }
     return { none: '都不是', unsure: '不确定' }[c];
   }
+  function chainLinkLabel(it, d) {          // the track that continues A after its chain, or null
+    if (d.chain_link === true) return it.chain_meets ? it.chain_meets.label : null;   // older exports
+    return typeof d.chain_link === 'number' ? d.chain_link : null;
+  }
+  function linkOptions(it, until) {         // new starts beginning after the chain end, and the met track
+    const out = it.starts.map((s, k) => ({ label: s.b_label, frame: s.b_frame, name: `${k + 1}：轨迹 ${s.b_label}` }))
+                         .filter(o => o.frame > until);
+    const last = it.chain[it.chain.length - 1].frame;
+    if (it.chain_meets && until === last && !out.some(o => o.label === it.chain_meets.label))
+      out.push({ label: it.chain_meets.label, frame: it.chain_meets.frame, name: `B：轨迹 ${it.chain_meets.label}` });
+    return out;
+  }
+  function fillLinks(it, until, chosen) {
+    const opts = linkOptions(it, until);
+    $('chainLink').innerHTML = '<option value="">不接</option>' + opts.map(o =>
+      `<option value="${o.label}" ${o.label === chosen ? 'selected' : ''}>${o.name}（第 ${o.frame} 帧开始）</option>`).join('');
+  }
   function chainDecision(it) {
-    const until = parseInt($('chainUntil').value, 10), last = it.chain[it.chain.length - 1].frame;
-    const link = !!($('chainLink') && $('chainLink').checked && until === last);
-    setDecision({ choice: 'chain', chain_until: until, chain_link: link });
+    const until = parseInt($('chainUntil').value, 10), v = $('chainLink').value;
+    setDecision({ choice: 'chain', chain_until: until, chain_link: v === '' ? null : parseInt(v, 10) });
   }
   function render() {
     const it = items[idx], bad = conflicts(), d = dec(it), c = d.choice;
     if (isGap(it)) {
       const fr = it.x_frames;
       $('meta').innerHTML = `<span class="kind gap">填补缺口</span>孔板 ${it.well} · 轨迹 X = ${it.x_label} 只在第 ${fr[0]}${fr.length > 1 ? '–' + fr[fr.length - 1] : ''} 帧出现，正好落在附近轨迹的缺口里`;
-      $('legend').innerHTML = '红色 <b>X</b> = 只在缺口里出现的短轨迹；彩色 <b>1, 2, …</b> = 在缺口前后都出现的轨迹。X 其实是哪一条？';
+      $('legend').innerHTML = '红色 <b>X</b> = 只在缺口里出现的短轨迹；彩色 <b>1, 2, …</b> = 在缺口前后都出现的轨迹；灰色数字 = 其他已有轨迹的 GT 编号；灰色 <b>?1, ?2, …</b> = 身份未知的检测。X 其实是哪一条？';
     } else {
       $('meta').innerHTML = `<span class="kind end">终点</span>孔板 ${it.well} · 轨迹 A = ${it.a_label}，第 ${it.a_first} 帧出现，第 ${it.a_frame} 帧结束 · 门控半径 ${it.radius} px`;
-      $('legend').innerHTML = '红色 <b>A</b> = 在 t 帧结束的轨迹（图从 A 第一次出现开始）；彩色 <b>1, 2, …</b> = 在附近新开始的轨迹；灰色数字 = 附近已有轨迹的 GT 编号。';
+      $('legend').innerHTML = '红色 <b>A</b> = 在 t 帧结束的轨迹（图从 A 第一次出现开始）；彩色 <b>1, 2, …</b> = 在附近新开始的轨迹；灰色数字 = 已有轨迹的 GT 编号；灰色 <b>?1, ?2, …</b> = 身份未知的检测（与“修改 ID”下拉框中的名字对应）。';
     }
     $('panel').src = it.panel;
     const box = $('choices'); box.innerHTML = '';
@@ -220,23 +322,32 @@
       const sel = ch.map(x => `<option value="${x.frame}" ${(d.choice === 'chain' ? d.chain_until : last) === x.frame ? 'selected' : ''}>${x.frame}</option>`).join('');
       div.innerHTML = `<span>候选延续链（图中红色细线 <b>A?</b>）：第 ${ch[0].frame} 帧 → 第 ${last} 帧，共 ${ch.length} 个未标注检测</span>` +
         `<span>到第 <select id="chainUntil">${sel}</select> 帧为止</span>` +
-        (it.chain_meets ? `<label><input type="checkbox" id="chainLink" ${d.choice === 'chain' && d.chain_link ? 'checked' : ''}> 并接上轨迹 ${it.chain_meets.label}（第 ${it.chain_meets.frame} 帧开始，图中 <b>B</b>）</label>` : '');
+        `<span>然后接上 <select id="chainLink"></select></span>`;
       div.appendChild(button('a：A 延续为未标注的细胞', c === 'chain', () => chainDecision(it)));
       cb.appendChild(div);
+      const until0 = d.choice === 'chain' ? d.chain_until : last;
+      fillLinks(it, until0, d.choice === 'chain' ? chainLinkLabel(it, d) : null);
+      $('chainUntil').onchange = () => fillLinks(it, parseInt($('chainUntil').value, 10), null);
     }
     const st = $('swapStep'); st.innerHTML = '';
     if (mode === 'track') {
       const div = document.createElement('div'); div.className = 'step';
       div.innerHTML = '<b>第 1 步</b>：A 的细胞之后被标成了哪条已有轨迹？（Esc 取消）';
-      nb.forEach((n, k) => div.appendChild(button(`${k + 1}：轨迹 ${n.label}（第 ${n.frame} 帧，距离 ${n.distance} px）`, false,
-        () => { pending = n; mode = 'rest'; render(); })));
+      nb.forEach((n, k) => div.appendChild(button(`${k + 1}：轨迹 ${n.label}（第 ${n.frame} 帧，距离 ${n.distance} px）`,
+        c === 'swap' && d.swap_track === n.label, () => { pending = n; mode = 'rest'; render(); })));
       st.appendChild(div);
     } else if (mode === 'rest') {
+      const k1 = nb.indexOf(pending);
+      const done = document.createElement('div'); done.className = 'step';
+      done.innerHTML = `<b>第 1 步</b>：已选 <b>${k1 + 1}：轨迹 ${pending.label}</b>（第 ${pending.frame} 帧，距离 ${pending.distance} px）——A 从第 ${pending.frame} 帧起被标成了轨迹 ${pending.label}`;
+      done.appendChild(button('← 重选', false, () => { mode = 'track'; pending = null; render(); }));
+      st.appendChild(done);
       const div = document.createElement('div'); div.className = 'step';
-      div.innerHTML = `<b>第 2 步</b>：轨迹 ${pending.label} 原来的那个细胞，第 ${pending.frame} 帧之后变成了哪条新轨迹？（Esc 取消）`;
-      it.starts.forEach((s, k) => div.appendChild(button(optionText(it, k), false,
+      div.innerHTML = `<b>第 2 步</b>：轨迹 ${pending.label} 原来的那个细胞，第 ${pending.frame} 帧之后变成了哪条新轨迹？（Esc 取消，Backspace 回到第 1 步）`;
+      const same = c === 'swap' && d.swap_track === pending.label;
+      it.starts.forEach((s, k) => div.appendChild(button(optionText(it, k), same && d.swap_rest === s.b_label,
         () => setDecision({ choice: 'swap', swap_track: pending.label, swap_frame: pending.frame, swap_rest: s.b_label }))));
-      div.appendChild(button('0：没有 / 看不到', false,
+      div.appendChild(button('0：没有 / 看不到', same && (d.swap_rest === null || d.swap_rest === undefined),
         () => setDecision({ choice: 'swap', swap_track: pending.label, swap_frame: pending.frame, swap_rest: null })));
       st.appendChild(div);
     }
@@ -244,17 +355,39 @@
     $('conflict').textContent = bad.has(it.id) ? '冲突：这里选的轨迹也被另一个审阅项选中了' : '';
     $('note').value = d.note || '';
     $('pos').textContent = `第 ${idx + 1} / ${items.length} 个`;
+    issues = validateAll();
+    const nIssues = Object.keys(issues.items).length + Object.keys(issues.manual).length;
+    const mineBad = manual.map((m, k) => [m, k]).filter(([m, k]) => m.item === it.id && issues.manual[k]);
+    $('issueBox').innerHTML = '';
+    if (issues.items[it.id] || mineBad.length) {
+      const box = document.createElement('div'); box.className = 'issues';
+      box.innerHTML = '<b>⚠ 这一项有问题，apply 时会报错：</b>';
+      const ul = document.createElement('ul'); ul.style.margin = '4px 0 0 18px';
+      (issues.items[it.id] || []).forEach(t => { const li = document.createElement('li'); li.textContent = '判断：' + t; ul.appendChild(li); });
+      mineBad.forEach(([m, k]) => issues.manual[k].forEach(t => { const li = document.createElement('li'); li.textContent = `修改 [${k + 1}]：${t}`; ul.appendChild(li); }));
+      box.appendChild(ul); $('issueBox').appendChild(box);
+    }
     const done = items.filter(x => choiceOf(x) !== undefined && choiceOf(x) !== null).length;
-    $('count').textContent = `已审 ${done} / ${items.length}` + (bad.size ? ` · 冲突 ${bad.size}` : '') + (manual.length ? ` · 手动修正 ${manual.length}` : '');
+    $('count').textContent = `已审 ${done} / ${items.length}` + (bad.size ? ` · 冲突 ${bad.size}` : '') + (manual.length ? ` · 手动修正 ${manual.length}` : '') + (nIssues ? ` · ⚠ 问题 ${nIssues}` : '');
+    $('count').style.color = nIssues ? '#d50000' : '';
     $('progress').style.width = (100 * done / items.length) + '%';
     const chips = $('chips'); chips.innerHTML = '';
     items.forEach((x, i) => {
       const ch = document.createElement('div');
-      ch.className = 'chip ' + statusOf(x, bad) + (i === idx ? ' cur' : '');
+      ch.className = 'chip ' + statusOf(x, bad) + (i === idx ? ' cur' : '') + (hasIssue(x) ? ' bad' : '');
       ch.title = `${i + 1}: ${x.id}`; ch.onclick = () => go(i);
       chips.appendChild(ch);
     });
     if (!$('mWell').value) $('mWell').value = it.well;
+    if (lastIdx !== idx) { $('eTargetNum').value = ''; $('eNote').value = ''; fillEditRow(it); lastIdx = idx; }
+    else fillEditTargets(it);
+    fillTargets('mTargetSel', $('mWell').value.trim() || it.well);
+    const mine = manual.map((m, k) => [m, k]).filter(([m]) => m.item === it.id);
+    $('eList').innerHTML = mine.length ? '本项的修改：' : '';
+    mine.forEach(([m, k]) => { const span = document.createElement('span');
+      span.textContent = ` [${k + 1}] 轨迹 ${m.label} 第 ${m.from_frame}–${m.to_frame} 帧 → ${targetText(m.target)}${issues.manual[k] ? ' ⚠' : ''} `;
+      if (issues.manual[k]) { span.style.color = '#d50000'; span.style.fontWeight = '600'; }
+      $('eList').appendChild(span); $('eList').appendChild(button('删除', false, () => { manual.splice(k, 1); save(); render(); })); });
     renderManual();
   }
   // ---- search ----
@@ -282,28 +415,101 @@
   }
   $('search').onclick = search;
   for (const id of ['sWell', 'sLabel']) $(id).addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
-  // ---- manual edits ----
+  // ---- ID edits (per item and global): target = existing track, a named new identity X1, X2, ... or 'new' ----
+  let lastIdx = -1;
+  const isX = t => typeof t === 'string' && /^X[1-9][0-9]*$/.test(t);
+  const xNames = well => [...new Set(manual.filter(m => m.well === well && isX(m.target)).map(m => m.target))]
+                           .sort((a, b) => +a.slice(1) - +b.slice(1));
+  const nextX = well => 'X' + (Math.max(0, ...xNames(well).map(x => +x.slice(1))) + 1);
+  const targetText = t => t === 'new' ? '新标签' : (isX(t) ? `${t}（新 ID）` : '轨迹 ' + t);
+  function xSource(well, x) {      // where a named new identity was first created
+    const m = manual.find(e => e.well === well && e.target === x);
+    return m ? `已建：${m.item || '手动修正'}，轨迹 ${m.label} 第 ${m.from_frame}–${m.to_frame} 帧` : '已建的新 ID';
+  }
+  function fillTargets(selId, well) {
+    const sel = $(selId), keep = sel.value;
+    sel.innerHTML = '<option value="existing">已有轨迹 →</option>' +
+      xNames(well).map(x => `<option value="${x}">${x}（${xSource(well, x)}）</option>`).join('') +
+      `<option value="__new">新建 ${nextX(well)}</option>`;
+    if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
+    $(selId.replace('Sel', 'Num')).style.display = sel.value === 'existing' ? '' : 'none';
+  }
+  for (const id of ['eTargetSel', 'mTargetSel']) $(id).onchange = () => $(id.replace('Sel', 'Num')).style.display = $(id).value === 'existing' ? '' : 'none';
+  // edit row of the current item: tracks, frames and targets come from the IDs visible in its image strip
+  function labelName(it, l) {
+    if (isGap(it) ? l === it.x_label : l === it.a_label) return `${isGap(it) ? 'X' : 'A'}（${l}）`;
+    const k = options(it).indexOf(l);
+    if (k >= 0) return `${k + 1}（${l}）`;
+    if (!isGap(it) && it.chain_meets && it.chain_meets.label === l) return `B（${l}）`;
+    if (!isGap(it) && (it.chain || []).some(c => c.label === l)) return `A?（${l}）`;
+    return l >= 50000 ? `${(it.tags || {})[l] || '?'}（${l}）` : String(l);
+  }
+  function rank(it, l) {
+    const n = labelName(it, l);
+    return /^[AX]（/.test(n) ? 0 : /^\d+（/.test(n) ? 1 : /^B（/.test(n) ? 2 : /^A\?/.test(n) ? 3 : l >= 50000 ? 5 : 4;
+  }
+  const tagNo = (it, l) => parseInt(((it.tags || {})[l] || '?0').slice(1), 10);
+  const visibleLabels = it => Object.keys(it.visible || {}).map(Number)
+    .sort((a, b) => rank(it, a) - rank(it, b) || (a >= 50000 && b >= 50000 ? tagNo(it, a) - tagNo(it, b) : a - b));
+  function fillEditFrames(it) {
+    const fs = (it.visible || {})[$('eLabel').value] || [];
+    const opts = fs.map(f => `<option value="${f}">${f}</option>`).join('');
+    $('eFrom').innerHTML = opts; $('eTo').innerHTML = opts;
+    if (fs.length) { $('eFrom').value = String(fs[0]); $('eTo').value = String(fs[fs.length - 1]); }
+  }
+  function fillEditTargets(it) {
+    const sel = $('eTargetSel'), keep = sel.value, src = parseInt($('eLabel').value, 10);
+    sel.innerHTML = visibleLabels(it).filter(l => l < 50000 && l !== src)
+        .map(l => `<option value="id:${l}">${labelName(it, l)}</option>`).join('') +
+      xNames(it.well).map(x => `<option value="${x}">${x}（${xSource(it.well, x)}）</option>`).join('') +
+      `<option value="__new">新建 ${nextX(it.well)}</option><option value="existing">其他编号（手动输入）</option>`;
+    if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
+    $('eTargetNum').style.display = sel.value === 'existing' ? '' : 'none';
+  }
+  function fillEditRow(it) {
+    $('eLabel').innerHTML = visibleLabels(it).map(l => `<option value="${l}">${labelName(it, l)}</option>`).join('');
+    fillEditFrames(it); fillEditTargets(it);
+  }
+  $('eLabel').onchange = () => { fillEditFrames(items[idx]); fillEditTargets(items[idx]); };
+  $('mWell').addEventListener('input', () => fillTargets('mTargetSel', $('mWell').value.trim()));
+  function addEdit(well, labelStr, f1s, f2s, sel, numStr, note, item) {
+    const label = parseInt(labelStr, 10), f1 = parseInt(f1s, 10), f2 = parseInt(f2s, 10);
+    const target = sel === 'existing' ? parseInt(numStr, 10) : (sel === '__new' ? nextX(well) :
+                   (sel.startsWith('id:') ? parseInt(sel.slice(3), 10) : sel));
+    if (!items.some(it => it.well === well)) { alert('孔板名称不在本次审阅中：' + well); return false; }
+    if (isNaN(label) || isNaN(f1) || isNaN(f2) || f1 > f2 || (typeof target === 'number' && (isNaN(target) || target === label))) {
+      alert('请填写完整：轨迹、起止帧（起 ≤ 止），以及目标（已有轨迹编号，或新建 / 已建的新 ID）。'); return false; }
+    manual.push({ well, label, from_frame: f1, to_frame: f2, target, note, item, time: new Date().toISOString() });
+    save(); render();
+    const k = manual.length - 1;
+    if (issues.manual[k]) alert(`这条修改 [${k + 1}] 现在无法执行：\n- ${issues.manual[k].join('\n- ')}\n\n可以调整它在“手动修正”表里的顺序（↑ ↓），或删除后重填。`);
+    return true;
+  }
+  $('eAdd').onclick = () => {
+    const it = items[idx];
+    if (addEdit(it.well, $('eLabel').value, $('eFrom').value, $('eTo').value, $('eTargetSel').value, $('eTargetNum').value, $('eNote').value, it.id))
+      for (const id of ['eTargetNum', 'eNote']) $(id).value = '';
+  };
   function renderManual() {
     const body = $('mList'); body.innerHTML = '';
     manual.forEach((m, k) => {
       const tr = document.createElement('tr');
       tr.innerHTML = `<td>${k + 1}</td><td>${m.well}</td><td>${m.label}</td><td>${m.from_frame}–${m.to_frame}</td>` +
-                     `<td>${m.target === 'new' ? '新标签' : '轨迹 ' + m.target}</td><td></td><td></td>`;
-      tr.children[5].textContent = m.note || '';
-      tr.children[6].appendChild(button('删除', false, () => { manual.splice(k, 1); save(); render(); }));
+                     `<td>${targetText(m.target)}</td><td></td><td></td><td class="msg"></td><td></td>`;
+      if (m.item) { const i = items.findIndex(x => x.id === m.item); tr.children[5].appendChild(button(m.item, i === idx, () => go(i))); }
+      tr.children[6].textContent = m.note || '';
+      if (issues.manual[k]) { tr.className = 'bad'; tr.children[7].textContent = '⚠ ' + issues.manual[k].join('；'); }
+      else tr.children[7].textContent = '✓';
+      const swapRows = (a, b) => { [manual[a], manual[b]] = [manual[b], manual[a]]; save(); render(); };
+      tr.children[8].appendChild(button('↑', false, () => swapRows(k, k - 1), k === 0));
+      tr.children[8].appendChild(button('↓', false, () => swapRows(k, k + 1), k === manual.length - 1));
+      tr.children[8].appendChild(button('删除', false, () => { manual.splice(k, 1); save(); render(); }));
       body.appendChild(tr);
     });
   }
   $('mAdd').onclick = () => {
-    const well = $('mWell').value.trim(), label = parseInt($('mLabel').value, 10);
-    const f1 = parseInt($('mFrom').value, 10), f2 = parseInt($('mTo').value, 10);
-    const isNew = $('mNew').checked, target = isNew ? 'new' : parseInt($('mTarget').value, 10);
-    if (!items.some(it => it.well === well)) { alert('孔板名称不在本次审阅中：' + well); return; }
-    if (isNaN(label) || isNaN(f1) || isNaN(f2) || f1 > f2 || (!isNew && (isNaN(target) || target === label))) {
-      alert('请填写完整：轨迹、起止帧（起 ≤ 止），以及目标轨迹或勾选新标签。'); return; }
-    manual.push({ well, label, from_frame: f1, to_frame: f2, target, note: $('mNote').value, time: new Date().toISOString() });
-    for (const id of ['mLabel', 'mFrom', 'mTo', 'mTarget', 'mNote']) $(id).value = '';
-    $('mNew').checked = false; save(); render();
+    if (addEdit($('mWell').value.trim(), $('mLabel').value, $('mFrom').value, $('mTo').value, $('mTargetSel').value, $('mTargetNum').value, $('mNote').value, null))
+      for (const id of ['mLabel', 'mFrom', 'mTo', 'mTargetNum', 'mNote']) $(id).value = '';
   };
   // ---- navigation, export, import, keys ----
   $('note').addEventListener('input', e => {
@@ -345,6 +551,7 @@
       if (/^[1-9]$/.test(e.key) && it.starts[+e.key - 1])
         setDecision({ choice: 'swap', swap_track: pending.label, swap_frame: pending.frame, swap_rest: it.starts[+e.key - 1].b_label });
       else if (e.key === '0') setDecision({ choice: 'swap', swap_track: pending.label, swap_frame: pending.frame, swap_rest: null });
+      else if (e.key === 'Backspace') { e.preventDefault(); mode = 'track'; pending = null; render(); }
       return;
     }
     if (/^[1-9]$/.test(e.key) && opts[+e.key - 1] !== undefined) setDecision({ choice: opts[+e.key - 1] });

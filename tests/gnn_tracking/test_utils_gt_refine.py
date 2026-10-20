@@ -192,6 +192,15 @@ class TestChainDecisions(unittest.TestCase):
         r = check_decisions([self.item], {'w:1': dict(choice='chain', chain_until=2, chain_link=True)})
         self.assertEqual(len(r['problems']), 1)
 
+    def test_chain_then_any_later_start(self):
+        item = dict(self.item, starts=[dict(b_label=7, b_frame=3), dict(b_label=8, b_frame=5)], chain_meets=None)
+        r = check_decisions([item], {'w:1': dict(choice='chain', chain_until=2, chain_link=7)})
+        self.assertEqual((r['problems'], r['merges']), ([], [('w', 1, 1, 7, 3)]))
+        r = check_decisions([item], {'w:1': dict(choice='chain', chain_until=4, chain_link=7)})
+        self.assertEqual(len(r['problems']), 1)                          # 7 begins before the chain ends
+        r = check_decisions([item], {'w:1': dict(choice='chain', chain_until=4, chain_link=8)})
+        self.assertEqual(r['merges'], [('w', 1, 1, 8, 5)])
+
     def test_chain_frame_must_exist(self):
         r = check_decisions([self.item], {'w:1': dict(choice='chain', chain_until=3)})
         self.assertEqual(len(r['problems']), 1)
@@ -231,9 +240,19 @@ class TestMoves(unittest.TestCase):
         with self.assertRaises(ValueError):
             refine_well(self.table, self.observed, [(140, 3, 353, 4)], [], [(140, 3, 3, 353, 'manual 1')])
 
+    def test_named_new_identity_shared_by_two_edits(self):
+        r = check_decisions([], {}, [dict(well='w', label=353, from_frame=4, to_frame=5, target='X1'),
+                                     dict(well='w', label=140, from_frame=3, to_frame=3, target='X1')])
+        new_ids = {}
+        table, relabels = refine_well(self.table, self.observed, [], [], [m[1:] for m in r['moves']], new_ids=new_ids)
+        self.assertEqual((r['problems'], new_ids), ([], {'X1': 354}))
+        self.assertEqual((table[354], table[353], 140 in table), ((3, 5, 0), (0, 2, 0), False))
+        self.assertEqual(relabels, [(353, 4, 5, 354), (140, 3, 3, 354)])
+
     def test_invalid_manual_edit_is_a_problem(self):
-        r = check_decisions([], {}, [dict(well='w', label=9, from_frame=5, to_frame=4, target=3)])
-        self.assertEqual(len(r['problems']), 1)
+        r = check_decisions([], {}, [dict(well='w', label=9, from_frame=5, to_frame=4, target=3),
+                                     dict(well='w', label=9, from_frame=1, to_frame=2, target='Y1')])
+        self.assertEqual(len(r['problems']), 2)
 
 
 class TestTranslate(unittest.TestCase):

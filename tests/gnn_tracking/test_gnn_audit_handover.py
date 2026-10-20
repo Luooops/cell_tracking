@@ -105,8 +105,30 @@ class TestAuditHandover(unittest.TestCase):
             self.assertEqual((5 in table, table[2]), (False, (3, 4, 0)))
             self.assertEqual(int(tifffile.imread(target / 's01_GT' / 'TRA' / 'man_track004.tif')[20, 53]), 2)
             log = json.loads((target / 'refine_log.json').read_text(encoding='utf-8'))
-            self.assertEqual((log['counts']['manual'], log['relabels']),
-                             (1, [dict(well='s01', label=5, from_frame=4, to_frame=4, new_label=2)]))
+            self.assertEqual((log['counts']['manual'], log['relabels'], log['new_ids']),
+                             (1, [dict(well='s01', label=5, from_frame=4, to_frame=4, new_label=2)], {}))
+
+    def test_named_new_identity_in_ctc_format(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            write_swap_dataset(root / 'data')
+            review = root / 'review'
+            main(['prepare', '--data-root', str(root / 'data'), '--output-root', str(review)])
+            cands = json.loads((review / 'candidates.json').read_text(encoding='utf-8'))
+            decisions = root / 'decisions.json'
+            decisions.write_text(json.dumps(dict(review_id=cands['review_id'], decisions={}, manual=[
+                dict(well='s01', label=3, from_frame=3, to_frame=4, target='X1'),
+                dict(well='s01', label=2, from_frame=4, to_frame=4, target='X2')])))
+            target = root / 'data_refine'
+            main(['apply', '--data-root', str(root / 'data'), '--review', str(review), '--decisions', str(decisions),
+                  '--target', str(target), '--allow-incomplete'])
+            log = json.loads((target / 'refine_log.json').read_text(encoding='utf-8'))
+            self.assertEqual(log['new_ids'], {'s01': {'X1': 16, 'X2': 17}})    # max known label 15, then +1, +2
+            table = read_track_table(target / 's01_GT' / 'TRA' / 'man_track.txt')
+            self.assertEqual((table[16], table[17], table[3], table[2]), ((3, 4, 0), (4, 4, 0), (0, 2, 0), (3, 3, 0)))
+            m4 = tifffile.imread(target / 's01_GT' / 'TRA' / 'man_track004.tif')
+            self.assertEqual((int(m4[20, 41]), int(m4[20, 53])), (16, 17))
+            self.assertTrue(np.issubdtype(m4.dtype, np.integer))
 
     def test_chain_through_unlabelled_detections(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -154,6 +176,9 @@ class TestAuditHandover(unittest.TestCase):
             cands = json.loads((review / 'candidates.json').read_text(encoding='utf-8'))
             self.assertEqual([(i['a_label'], [s['b_label'] for s in i['starts']]) for i in cands['items']], [(1, [2])])
             self.assertTrue((review / cands['items'][0]['panel']).is_file())
+            visible = cands['items'][0]['visible']                         # ids in the strip, for the edit row
+            self.assertEqual((visible['1'], visible['2']), ([0, 1, 2], [3, 4]))
+            self.assertEqual(cands['observed']['s01']['2'], [3, 4])          # frames per label, for the page check
             page = (review / 'review.html').read_text(encoding='utf-8')
             self.assertIn(cands['review_id'], page)
             self.assertNotIn('/*__REVIEW_DATA__*/', page)

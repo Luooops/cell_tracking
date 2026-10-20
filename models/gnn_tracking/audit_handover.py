@@ -62,6 +62,15 @@ def load_well(root, well):
     return frames, raws, masks, objects
 
 
+def observed_frames(objects):
+    """{label (str): sorted frames in which it is present} -- lets the review page check edits as apply would."""
+    out = {}
+    for f in sorted(objects):
+        for label in objects[f][0]:
+            out.setdefault(str(int(label)), []).append(int(f))
+    return out
+
+
 def _crop(image, cx, cy, half):
     """Square crop centred at (cx, cy), zero-padded at the image border."""
     padded = np.pad(image, half, mode='constant')
@@ -69,19 +78,22 @@ def _crop(image, cx, cy, half):
     return padded[y - half:y + half, x - half:x + half]
 
 
-def _strip(path, show, centres, radius, raws, masks, colors, names, numbered, header, chain=()):
-    """Draw one image strip: a tile per frame of `show`, cropped around centres[f]; labels in `colors` outlined in
-    their colour with names[label] above, labels in `numbered` written in grey, unlabelled detections in `chain`
-    outlined thin red as 'A?', other unlabelled detections marked '?', other cells outlined grey."""
+def _strip(path, show, centres, radius, raws, masks, colors, names, numbered, header, chain=(), half=None):
+    """Draw one image strip: a tile per frame of `show`, cropped around centres[f]. Every cell carries a mark the edit
+    row can refer to: labels in `colors` outlined in their colour with names[label] above; unlabelled detections in
+    `chain` outlined thin red as 'A?'; other known tracks outlined grey with their GT id; other unlabelled detections
+    outlined grey and tagged ?1, ?2, ... in order of first appearance (`numbered` is kept for callers, all known
+    tracks are numbered). -> (frames shown, {label: frames visible}, {unlabelled label: tag})."""
     from PIL import Image, ImageDraw, ImageFont
     from scipy.ndimage import binary_dilation
     from skimage.segmentation import find_boundaries
-    half = int(np.clip(radius * 1.4, 48, 240))
+    half = half or int(np.clip(radius * 1.4, 48, 240))
     crops = [_crop(raws[f].astype(np.float32), *centres[f], half) for f in show]
     lo, hi = np.percentile(np.concatenate([c.ravel() for c in crops]), [1, 99.7])
     font, small = ImageFont.load_default(size=14), ImageFont.load_default(size=11)
     canvas = Image.new('RGB', (len(show) * (TILE + GAP) - GAP, TILE + HEADER), (255, 255, 255))
     draw = ImageDraw.Draw(canvas)
+    visible, tags = {}, {}                            # label -> frames it appears in; unlabelled label -> '?k'
     for col, (f, crop) in enumerate(zip(show, crops)):
         gray = np.clip((crop - lo) / max(hi - lo, 1e-6) * 255, 0, 255).astype(np.uint8)
         tile = np.array(Image.fromarray(gray).resize((TILE, TILE), Image.BILINEAR).convert('RGB'))
@@ -91,6 +103,8 @@ def _strip(path, show, centres, radius, raws, masks, colors, names, numbered, he
         tile[edge & ~np.isin(labels, list(colors))] = OTHER
         marks = []
         for label in np.unique(labels):
+            if label:
+                visible.setdefault(int(label), []).append(int(f))
             label = int(label)
             if not label:
                 continue
@@ -102,10 +116,11 @@ def _strip(path, show, centres, radius, raws, masks, colors, names, numbered, he
             elif label in chain:
                 tile[edge & region] = A_COLOR
                 marks.append(('A?', A_COLOR, small, xs.mean() - 8, ys.min() - 14))
-            elif label in numbered:
+            elif label < UNKNOWN_OFFSET:
                 marks.append((str(label), NEIGHBOUR_TEXT, small, xs.mean() - 8, ys.mean() - 6))
-            elif label >= UNKNOWN_OFFSET:
-                marks.append(('?', NEIGHBOUR_TEXT, small, xs.mean() - 3, ys.mean() - 6))
+            else:
+                tag = tags.setdefault(label, f'?{len(tags) + 1}')
+                marks.append((tag, NEIGHBOUR_TEXT, small, xs.mean() - 6, ys.mean() - 6))
         x0 = col * (TILE + GAP)
         canvas.paste(Image.fromarray(tile), (x0, HEADER))
         draw.text((x0 + 4, 3), header(f), fill=(40, 40, 40), font=font)
@@ -113,7 +128,7 @@ def _strip(path, show, centres, radius, raws, masks, colors, names, numbered, he
             draw.text((x0 + x, HEADER + max(y, 0)), text, fill=color, font=fnt, stroke_width=2,
                       stroke_fill=(255, 255, 255))
     canvas.save(path)
-    return [int(f) for f in show]
+    return [int(f) for f in show], {str(l): fs for l, fs in sorted(visible.items())}, {str(l): t for l, t in tags.items()}
 
 
 def _position(objects, f, label):
@@ -149,40 +164,45 @@ def render_panel(item, frames, raws, masks, objects, path):
 
 def render_gap_panel(item, frames, raws, masks, objects, path):
     """Gap item: from 3 frames before the earliest candidate track's last frame before X to 3 frames after X;
-    X red, the candidate tracks numbered, centred on X where it exists and on track 1 otherwise."""
+    X red, the candidate tracks numbered. One fixed crop for all tiles (the box around every position of X and of
+    the candidates in these frames), so movement between tiles is real movement."""
     first = min(t['before_frame'] for t in item['targets']) - 3
     last = max(t['after_frame'] for t in item['targets']) + 3
     show = [f for f in range(first, last + 1) if f in raws]
-    centres = {}
-    for f in show:
-        here = _position(objects, f, item['x_label'])
-        if here is None:
-            here = _position(objects, f, item['targets'][0]['label'])
-        centres[f] = here if here is not None else item['x_xy']
+    labels = [item['x_label']] + [t['label'] for t in item['targets']]
+    seen = np.array([p for f in show for l in labels if (p := _position(objects, f, l)) is not None])
+    lo, hi = seen.min(0), seen.max(0)
+    centre = (lo + hi) / 2
+    half = int(np.clip(max(item['radius'] * 1.4, (hi - lo).max() / 2 + 60), 48, 320))
+    centres = {f: centre for f in show}
     colors = {item['x_label']: A_COLOR}
     colors.update({t['label']: B_COLORS[k % len(B_COLORS)] for k, t in enumerate(item['targets'])})
     names = {item['x_label']: 'X'}
     names.update({t['label']: str(k + 1) for k, t in enumerate(item['targets'])})
     span = (item['x_frames'][0], item['x_frames'][-1])
     return _strip(path, show, centres, item['radius'], raws, masks, colors, names, set(),
-                  lambda f: f'frame {f}' + ('  (X)' if span[0] <= f <= span[1] else ''))
+                  lambda f: f'frame {f}' + ('  (X)' if span[0] <= f <= span[1] else ''), half=half)
 
 
 def prepare(args, wells):
     out = args.output_root
     (out / 'panels').mkdir(parents=True)
     items = []
+    observed = {}
     for well in wells:
         frames, raws, masks, objects = load_well(args.data_root, well)
+        observed[well] = observed_frames(objects)
         table = read_track_table(Path(args.data_root) / f'{well}_GT' / 'TRA' / 'man_track.txt')
         found = handover_candidates(well, frames, objects, table)
         for item in found:
             item['panel'] = f'panels/{well}_{item["a_label"]}.png'
-            item['frames_shown'] = render_panel(item, frames, raws, masks, objects, out / item['panel'])
+            item['frames_shown'], item['visible'], item['tags'] = render_panel(item, frames, raws, masks, objects,
+                                                                               out / item['panel'])
         gaps = gap_candidates(well, frames, objects, table)
         for item in gaps:
             item['panel'] = f'panels/{well}_gap_{item["x_label"]}.png'
-            item['frames_shown'] = render_gap_panel(item, frames, raws, masks, objects, out / item['panel'])
+            item['frames_shown'], item['visible'], item['tags'] = render_gap_panel(item, frames, raws, masks, objects,
+                                                                                   out / item['panel'])
         items += found + gaps
         print(f'{well}: {len(found)} track ends ({sum(bool(i["starts"]) for i in found)} with new starts, '
               f'{sum(bool(i["chain"]) for i in found)} with an unlabelled continuation), {len(gaps)} tracks inside a gap',
@@ -202,7 +222,7 @@ def prepare(args, wells):
                        'are offered as swap targets; ends followed by unlabelled detections carry a continuation '
                        'chain (nearest detection within half the gate, frame by frame). Gap items: a known track lying entirely in a gap of a known '
                        'track, both junctions inside the gate. No model output is used or shown.',
-                  items=items)
+                  items=items, observed=observed)
     (out / 'candidates.json').write_text(json.dumps(review, indent=1), encoding='utf-8')
     page = TEMPLATE.read_text(encoding='utf-8').replace(
         '/*__REVIEW_DATA__*/', json.dumps(review, separators=(',', ':')).replace('</', '<\\/'))
@@ -229,7 +249,7 @@ def apply(args):
         raise ValueError(f"{len(result['undecided'])} of {len(review['items'])} items are undecided; finish the "
                          f"review or pass --allow-incomplete (a partial review is a biased correction)")
     wells = sorted({m[0] for m in result['merges']} | {s[0] for s in result['swaps']} | {m[0] for m in result['moves']})
-    tables, relabels = {}, {}
+    tables, relabels, new_ids = {}, {}, {}
     for well in wells:
         observed = {}
         for f, _, mask_path in sequence(args.data_root, well):
@@ -238,7 +258,7 @@ def apply(args):
         tables[well], relabels[well] = refine_well(
             read_track_table(Path(args.data_root) / f'{well}_GT' / 'TRA' / 'man_track.txt'), observed,
             [m[1:] for m in result['merges'] if m[0] == well], [s[1:] for s in result['swaps'] if s[0] == well],
-            [m[1:] for m in result['moves'] if m[0] == well])
+            [m[1:] for m in result['moves'] if m[0] == well], new_ids=new_ids.setdefault(well, {}))
     modes = build_refined_dataset(args.data_root, args.target, sequences, tables, relabels)
     (args.target / 'refine_decisions.json').write_text(args.decisions.read_text(encoding='utf-8'), encoding='utf-8')
     log = dict(source=str(Path(args.data_root).resolve()), target=str(args.target.resolve()),
@@ -257,6 +277,7 @@ def apply(args):
                moves=[dict(well=w, track=x, from_frame=f1, to_frame=f2, target=t, source=src)
                       for w, x, f1, f2, t, src in result['moves']],
                manual=exported.get('manual', []),
+               new_ids={w: ids for w, ids in sorted(new_ids.items()) if ids},
                relabels=[dict(well=w, label=x, from_frame=f1, to_frame=f2, new_label=n) for w in sorted(relabels)
                          for x, f1, f2, n in relabels[w]])
     (args.target / 'refine_log.json').write_text(json.dumps(log, indent=2), encoding='utf-8')
@@ -264,6 +285,9 @@ def apply(args):
     print(f"same cell {c['same']}, swap {c['swap']}, gap {c['gap']}, manual {c['manual']}, different {c['none']}, "
           f"unsure {c['unsure']}, undecided {len(result['undecided'])}; man_track.txt rewritten in {len(tables)} "
           f"wells; files {modes}")
+    for w, ids in sorted(new_ids.items()):
+        if ids:
+            print(f'{w}: new identities ' + ', '.join(f'{k} -> {v}' for k, v in ids.items()))
     if modes['hardlink']:
         print('note: images and masks are hard links to the source files; never write into them')
     print('saved', args.target)
