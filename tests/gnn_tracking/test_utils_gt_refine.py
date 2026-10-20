@@ -240,6 +240,14 @@ class TestMoves(unittest.TestCase):
         with self.assertRaises(ValueError):
             refine_well(self.table, self.observed, [(140, 3, 353, 4)], [], [(140, 3, 3, 353, 'manual 1')])
 
+    def test_edit_of_hand_over_track_away_from_its_end_and_start_is_allowed(self):
+        table, observed, merge = {1: (0, 3, 0), 2: (5, 7, 0)}, {1: [0, 1, 2, 3], 2: [5, 6, 7]}, [(1, 3, 2, 5)]
+        out, relabels = refine_well(table, observed, merge, [], [(1, 0, 1, 'new', 'manual 1'), (2, 7, 7, 'new', 'manual 2')])
+        self.assertEqual((out[1], out[2], out[3], out[4]), ((2, 3, 0), (5, 6, 1), (0, 1, 0), (7, 7, 0)))
+        for edit in [(1, 2, 3, 'new', 'manual 1'), (2, 5, 6, 'new', 'manual 1')]:
+            with self.assertRaises(ValueError):
+                refine_well(table, observed, merge, [], [edit])
+
     def test_named_new_identity_shared_by_two_edits(self):
         r = check_decisions([], {}, [dict(well='w', label=353, from_frame=4, to_frame=5, target='X1'),
                                      dict(well='w', label=140, from_frame=3, to_frame=3, target='X1')])

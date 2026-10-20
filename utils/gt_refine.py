@@ -40,6 +40,7 @@ in the order they are applied, so outputs made on the source data can be transla
 """
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -285,15 +286,26 @@ def refine_well(table, observed, merges, swaps, moves=(), new_ids=None):
     relabels, split = [], {}                          # split[x] = (s, x')
     named = {}                                        # 'X1' -> integer label
     next_label = max([l for l in table if l < UNKNOWN_OFFSET] + [0]) + 1
-    used = {l for m in merges for l in (m[0], m[2])} | {l for s in swaps for l in (s[0], s[2], s[4]) if l is not None}
+    # an edit may take frames from a hand-over track only where the hand-over does not look: before A's end frame
+    # and after the start's first frame; swap tracks are not edited at all
+    free = {}                                         # label -> (first, last) frames an edit may take, or None
+    for a, a_frame, b, b_frame in merges:
+        for l, lo, hi in ((a, -math.inf, a_frame - 1), (b, b_frame + 1, math.inf)):
+            if l in free and free[l] is None:
+                continue
+            old = free.get(l, (-math.inf, math.inf))
+            free[l] = (max(old[0], lo), min(old[1], hi))
+    for l in {l for s in swaps for l in (s[0], s[2], s[4]) if l is not None}:
+        free[l] = None
 
     for x, f1, f2, target, source in moves:
         if is_new_id(x):                              # a named new identity as source (e.g. a temporary X1 in a swap)
             if x not in named:
                 raise ValueError(f'{source}: new id {x} is used before an edit creates it')
             x = named[x]
-        if x in used:
-            raise ValueError(f'{source}: track {x} is also part of a hand-over or swap; decide it in one place')
+        if x in free and (free[x] is None or f1 < free[x][0] or f2 > free[x][1]):
+            raise ValueError(f'{source}: track {x} is also part of a swap, or the edit takes the end / start frame '
+                             f'of its hand-over; decide it in one place')
         moving = [f for f in observed.get(x, []) if f1 <= f <= f2]
         if not moving:
             raise ValueError(f'{source}: track {x} is not present in frames {f1}-{f2}')
