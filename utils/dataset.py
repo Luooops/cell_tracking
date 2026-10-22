@@ -16,8 +16,13 @@ such a cell is a real detection, but nobody knows which track it belongs to.
 Output of load_well(well):
 
     df      one row per detected cell, sorted by (frame, track_id), index 0..n-1
-            columns: video, frame, track_id, x, y, area, mean_intensity
+            columns: video, frame, track_id, x, y, area, mean_intensity, cell_id
     crops   float16 [n, 64, 64], row i = the appearance crop of the cell in df row i
+
+track_id is the mask label (what an output's instance_id refers to). cell_id is the cell identity of the CTC lineage
+in man_track.txt, as utils/lineage.py reads it: a track continued by a single child (an interrupted track, e.g. a
+hand-over confirmed in the annotation review) is one cell with its parent; division daughters stay their own cells.
+Where the table has no single-child continuations (all of the original scripta_data), cell_id == track_id.
 
 How a crop is made:
     1. cut the bounding box of the cell out of the raw frame;
@@ -28,7 +33,7 @@ How a crop is made:
 Masking the crop and padding instead of stretching is also what CellTrack-GNN (Ben-Haim & Riklin-Raviv, ECCV 2022)
 and DeepCell's 'fixed' crop mode do.
 
-The only things the tracker reads are x, y, area, mean_intensity and the crop. track_id is used for the training
+The only things the tracker reads are x, y, area, mean_intensity and the crop. cell_id is used for the training
 labels and for scoring, never as a model input.
 
 Reading 2160 x 2160 frames is slow, so every well is cached in <CACHE>/<well>.pt on first use. The mirrored
@@ -93,9 +98,22 @@ def read_well(well, root=None):
     return raw.iloc[order].reset_index(drop=True), np.stack(crops)[order], mask.shape
 
 
+def cell_ids(well, track_ids, root=None):
+    """Lineage cell identity of each mask label (see the module docstring); labels without a row in man_track.txt
+    (detections without identity) and wells without a man_track.txt keep their own value."""
+    from utils.lineage import Lineage, read_track_table
+    path = os.path.join(LAB_ROOT if root is None else root, f"{well}_GT", "TRA", "man_track.txt")
+    track_ids = np.asarray(track_ids, dtype=np.int64)
+    if not os.path.exists(path):
+        return track_ids.copy()
+    cell = Lineage(read_track_table(path), ()).cell_of
+    return np.array([cell.get(int(t), int(t)) for t in track_ids], dtype=np.int64)
+
+
 def load_well(well, flip=None):
-    """Cached read_well. flip = None | 'h' | 'v' returns the well as if image and masks had been mirrored
-    left-right / up-down before anything was measured (training augmentation)."""
+    """Cached read_well (+ cell_id, computed from man_track.txt on every load, so the cache holds mask labels
+    only). flip = None | 'h' | 'v' returns the well as if image and masks had been mirrored left-right / up-down
+    before anything was measured (training augmentation)."""
     path = os.path.join(CACHE, f"{well}.pt")
     if os.path.exists(path):
         d = torch.load(path, weights_only=False)
@@ -105,6 +123,7 @@ def load_well(well, flip=None):
         df, crops, (height, width) = read_well(well)
         os.makedirs(CACHE, exist_ok=True)
         torch.save({"df": df, "crops": torch.from_numpy(crops), "shape": (height, width)}, path)
+    df = df.assign(cell_id=cell_ids(well, df.track_id.to_numpy()))
     if flip == "h":                                 # column c of the image becomes column width-1-c
         df = df.assign(x=width - 1 - df.x); crops = crops[:, :, ::-1]
     elif flip == "v":

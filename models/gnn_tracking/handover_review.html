@@ -36,6 +36,9 @@
   textarea { width:100%; min-height:44px; font:inherit; border:1px solid var(--line); border-radius:6px; padding:6px; }
   .nav, .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:10px; }
   .help { color:var(--muted); font-size:12px; margin-top:8px; }
+  /* keep the edit row on one line: closed selects are capped, their open lists still show the full text */
+  .editrow select { max-width:240px; text-overflow:ellipsis; }
+  .editrow #eFrom, .editrow #eTo { max-width:72px; }
   .chips { display:flex; flex-wrap:wrap; gap:3px; margin-top:12px; }
   .chip { width:12px; height:12px; border-radius:2px; background:#e0e0e0; cursor:pointer; border:1px solid transparent; }
   .chip.same { background:var(--same); } .chip.swap { background:var(--swap); } .chip.gap { background:var(--gap); }
@@ -43,11 +46,16 @@
   .chainbox { background:#ffebee; border:1px solid #ffcdd2; border-radius:6px; padding:8px 10px; margin:6px 0; display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
   .chip.none { background:var(--none); } .chip.unsure { background:var(--unsure); } .chip.conflict { background:var(--conflict); }
   .chip.cur { border-color:#000; }
+  .chip.hint { box-shadow:0 0 0 2px #ffb300; }
   .chip.bad { box-shadow:0 0 0 2px #d50000; }
   .issues { background:#ffebee; border:2px solid #d50000; border-radius:6px; padding:8px 10px; margin:8px 0; color:#b71c1c; }
   .issues b { color:#d50000; }
   .elsewhere { background:#e3f2fd; border:1px solid #90caf9; border-radius:6px; padding:8px 10px; margin:6px 0; color:#0d47a1; }
   .elsewhere li button { margin-left:6px; }
+  .resolved { background:#e8f5e9; border:1px solid #a5d6a7; border-radius:6px; padding:8px 10px; margin:6px 0; color:#1b5e20; }
+  .resolved li button { margin-left:6px; }
+  .hints { background:#fff8e1; border:1px solid #ffb300; border-radius:6px; padding:8px 10px; margin:8px 0; color:#e65100; }
+  .hints li button { margin-left:6px; }
   tr.bad td { background:#ffebee; } tr.bad td.msg { color:#b71c1c; font-weight:600; }
   #mList tr { cursor:grab; } #mList tr.dragover td { border-top:3px solid #1e88e5; } .grip { color:#999; margin-right:4px; }
   #toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:#323232; color:#fff; padding:8px 14px;
@@ -67,7 +75,7 @@
   <label>显示 <select id="filter">
     <option value="all">全部</option><option value="undecided">未审</option><option value="same">同一细胞</option>
     <option value="swap">ID 交换</option><option value="chain">延续为未标注</option><option value="gap">填补缺口</option><option value="none">都不是</option>
-    <option value="unsure">不确定</option><option value="conflict">冲突</option><option value="issue">有问题（红框）</option>
+    <option value="unsure">不确定</option><option value="conflict">冲突</option><option value="issue">有问题（红框）</option><option value="hint">有提醒（黄框）</option>
   </select></label>
   <label><input type="checkbox" id="auto" checked> 作答后自动下一个</label>
   <button id="export">导出 decisions.json</button>
@@ -89,7 +97,7 @@
       <b>修改 ID</b>：把轨迹 <select id="eLabel"></select>
       在第 <select id="eFrom"></select> 到第 <select id="eTo"></select> 帧
       改成 <select id="eTargetSel"></select> <input id="eTargetNum" type="number" placeholder="轨迹编号" style="width:90px">
-      <input id="eNote" type="text" placeholder="备注" style="width:160px"> <button id="eAdd">添加</button>
+      <input id="eNote" type="text" placeholder="备注" style="width:120px"> <button id="eAdd">添加</button>
     </div>
     <div id="eList" class="help"></div>
     <div class="nav">
@@ -127,6 +135,7 @@
   </div>
 </main>
 <script id="review-data" type="application/json">/*__REVIEW_DATA__*/</script>
+<script id="xy-data" type="application/json">/*__XY_DATA__*/</script>
 <script>
 (function () {
   const review = JSON.parse(document.getElementById('review-data').textContent);
@@ -136,7 +145,25 @@
   let decisions = load(KEY, '{}'), manual = load(MKEY, '[]');
   let idx = 0, mode = null, pending = null;          // mode: null | 'track' | 'rest'
   const $ = id => document.getElementById(id);
-  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(decisions)); localStorage.setItem(MKEY, JSON.stringify(manual)); } catch (e) {} };
+  // reminders the reviewer marked as "not the same cell": {reminder key: time}
+  const NKEY = KEY + '-dismissed';
+  let dismissed = load(NKEY, '{}');
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(decisions)); localStorage.setItem(MKEY, JSON.stringify(manual));
+                             localStorage.setItem(NKEY, JSON.stringify(dismissed)); } catch (e) {} };
+  // detection centroids {well: {label: [[frame, x, y], ...]}} (absent in pages built before they were added)
+  let XY = {};
+  try { XY = JSON.parse(document.getElementById('xy-data').textContent); } catch (e) {}
+  const itemIndex = Object.fromEntries(items.map(it => [it.id, it]));
+  const posOf = (well, l, f) => { const r = ((XY[well] || {})[String(l)] || []).find(p => p[0] === f); return r ? [r[1], r[2]] : null; };
+  // frame gap and distance between two detections, against the item's gate grown with the gap (r x sqrt(gap))
+  function gapInfo(well, la, fa, lb, fb, item) {
+    const p = posOf(well, la, fa), q = posOf(well, lb, fb), g = Math.abs(fb - fa);
+    if (!p || !q) return `第 ${fa} 帧 → 第 ${fb} 帧：相隔 ${g} 帧`;
+    const d = Math.hypot(p[0] - q[0], p[1] - q[1]), r = (itemIndex[item] || {}).radius;
+    const gate = r ? r * Math.sqrt(Math.max(g, 1)) : null;
+    return `第 ${fa} 帧 → 第 ${fb} 帧：相隔 ${g} 帧，相距 ${d.toFixed(0)} px` +
+           (gate ? `（门控 ${r} px × √${Math.max(g, 1)} = ${gate.toFixed(0)} px，${d <= gate ? '在门控内' : '超出门控'}）` : '');
+  }
   const dec = it => decisions[it.id] || {};
   const choiceOf = it => dec(it).choice;
   const isGap = it => it.kind === 'gap';
@@ -171,19 +198,22 @@
   }
   function visible() {
     const f = $('filter').value, bad = conflicts();
-    return items.map((it, i) => i).filter(i => f === 'all' || (f === 'issue' ? hasIssue(items[i]) : statusOf(items[i], bad) === f));
+    return items.map((it, i) => i).filter(i => f === 'all' || (f === 'issue' ? hasIssue(items[i]) : f === 'hint' ? hasHint(items[i]) : statusOf(items[i], bad) === f));
   }
   // ---- consistency check of every decision and edit, mirroring utils/gt_refine.check_decisions + refine_well
   //      (the order of operations is the same: decisions in the order they were made, then the manual edits in list
   //      order; moves first, then swaps, then hand-overs; apply remains the final authority) ----
   let issues = { items: {}, manual: {} };
   const hasIssue = it => !!issues.items[it.id] || manual.some((m, k) => m.item === it.id && issues.manual[k]);
+  // reminders (yellow) of an item: on its decision, or on its edits that have no error
+  const hasHint = it => !!(issues.hints || { items: {} }).items[it.id] ||
+    manual.some((m, k) => m.item === it.id && !issues.manual[k] && (issues.hints || { manual: {} }).manual[k]);
   // every issue says why it fails: 'order' (a later edit would make it run: reorder), 'dup' (another page already
   // handled this detection / track), 'self' (another decision or edit of this page did), 'data' (wrong in itself)
-  const KIND = { order: '顺序问题（点“自动排序”可解决）', dup: '与其他页面重复', self: '本页内重复', data: '数据冲突' };
+  const KIND = { swap: '同帧互换（点“自动修改”借新 ID 中转）', order: '顺序问题（点“自动排序”可解决）', dup: '与其他页面重复', self: '本页内重复', data: '数据冲突' };
   const fmt = i => `【${KIND[i.kind]}${i.otherName ? '：' + i.otherName : ''}】${i.msg}`;
   function validateAll(onlyWell = null, list = manual) {
-    const res = { items: {}, manual: {} };
+    const res = { items: {}, manual: {}, hints: { items: {}, manual: {} }, filled: {}, taken: {} };   // hints: apply still works
     const note = (src, kind, msg, other = null, fix = null) => {
       const otherItem = other ? itemOf(other) : null;
       const otherName = other ? (other[0] === 'items' ? other[1] : `修改 [${other[1] + 1}]${otherItem ? '（' + otherItem + '）' : ''}`) : null;
@@ -220,16 +250,13 @@
         } else if (typeof c === 'number') merges.push({ a: it.a_label, af: it.a_frame, b: c, bf: startFrame(it, c), src });
       }
       list.forEach((m, k) => { if (m.well === well) moves.push({ x: m.label, f1: m.from_frame, f2: m.to_frame, t: m.target, src: ['manual', k] }); });
-      // an edit may take frames of a hand-over track only before A's end frame / after the start's first frame
-      const lock = (l, lo, hi, src, why) => { const k = String(l), o = locked[k];
-        if (o && o.swap) return;
-        locked[k] = { lo: Math.max(o ? o.lo : -Infinity, lo), hi: Math.min(o ? o.hi : Infinity, hi), src: o ? o.src : src, why: o ? o.why : why }; };
-      merges.forEach(m => {
-        lock(m.a, -Infinity, m.af - 1, m.src, `第 ${m.af} 帧是轨迹 ${m.a} 在接上判断里的结束帧，修改不能包含它及之后的帧`);
-        lock(m.b, m.bf === null ? Infinity : m.bf + 1, Infinity, m.src, `第 ${m.bf} 帧是轨迹 ${m.b} 在接上判断里的起始帧，修改不能包含它及之前的帧`);
-      });
-      swaps.forEach(s => [s.a, s.x, s.r].filter(l => l !== null).forEach(l => { if (!(locked[String(l)] || {}).swap) locked[String(l)] = { swap: true, src: s.src }; }));
+      // swap tracks are not edited (a swap splits a track at a frame); hand-over tracks may be: a hand-over links
+      // the detections it was judged on, under whatever label the edits give them (see the links below)
+      swaps.forEach(s => [s.a, s.x, s.r].filter(l => l !== null).forEach(l => { if (!locked[String(l)]) locked[String(l)] = { swap: true, src: s.src }; }));
+      // A relabelled into its swap track (with no other continuation) says the same as the swap
+      const absorb = new Set(swaps.filter(w => w.r === null).map(w => `${w.a}>${w.x}`));
       const overlaps = (m, f1, f2) => m.f1 <= f2 && f1 <= m.f2;
+      const done = [];
       moves.forEach((mv, i) => {
         const later = moves.slice(i + 1);
         let x = String(mv.x);
@@ -243,18 +270,20 @@
           x = named[mv.x];
         }
         const lk = locked[x];
-        if (lk && lk.swap) { note(mv.src, relation(mv.src, lk.src), `轨迹 ${x} 已在一项的换号 / 交换判断里处理，只能在一处决定`, lk.src); return; }
-        if (lk && (mv.f1 < lk.lo || mv.f2 > lk.hi)) {
-          const ok = lk.lo > lk.hi ? '' : `（只能改第 ${lk.lo === -Infinity ? '…' : lk.lo}–${lk.hi === Infinity ? '…' : lk.hi} 帧）`;
-          note(mv.src, relation(mv.src, lk.src), lk.why + ok, lk.src); return;
-        }
+        if (lk && !absorb.has(`${x}>${mv.t}`)) { note(mv.src, relation(mv.src, lk.src), `轨迹 ${x} 已在一项的换号 / 交换判断里处理，只能在一处决定`, lk.src); return; }
         const moving = get(x).filter(f => f >= mv.f1 && f <= mv.f2);
         if (!moving.length) {
           const takers = [];
           for (let f = mv.f1; f <= mv.f2; f++) if (takenBy[`${x}@${f}`]) takers.push([f, takenBy[`${x}@${f}`]]);
+          // the same statement made twice (e.g. a chain and an edit both give a detection to A): nothing to do
+          if (takers.length && takers.every(t => String(t[1].toRaw) === String(mv.t))) return;
           if (takers.length) {
-            const [f, tk] = takers[0];
-            note(mv.src, relation(mv.src, tk.src), `轨迹 ${x} 第 ${takers.map(t => t[0]).join('、')} 帧已被改成了${tk.to}，这里不能再改一次（两处说的是同一个细胞就删掉其中一处）`, tk.src);
+            const [f, tk] = takers[0], tf = takers.map(t => t[0]);
+            // the detection now belongs to another track: edit that track's frames instead (same cell, one decision)
+            const same = tk.toRaw !== null && takers.every(t => String(t[1].toRaw) === String(tk.toRaw)) && String(tk.toRaw) !== String(mv.t);
+            const fix = same && mv.src[0] === 'manual' ? { type: 'resource', k: mv.src[1], label: tk.toRaw, f1: tf[0], f2: tf[tf.length - 1] } : null;
+            note(mv.src, relation(mv.src, tk.src), `轨迹 ${x} 第 ${tf.join('、')} 帧已被改成了${tk.to}，这里不能再改一次` +
+                 (same ? `；要改这个细胞，应改${tk.to.trim()}的第 ${tf.join('、')} 帧` : '（两处说的是同一个细胞就删掉其中一处）'), tk.src, fix);
           } else {
             const fix = later.find(m => String(m.t) === String(mv.x) && overlaps(m, mv.f1, mv.f2));
             if (fix) note(mv.src, 'order', `轨迹 ${x} 要等后面的修改把它放进第 ${mv.f1}–${mv.f2} 帧后才能改`, fix.src);
@@ -271,17 +300,87 @@
           const name = isX(mv.t) ? ' ' + mv.t : '轨迹 ' + t;
           const fix = later.find(m => String(m.x) === String(mv.t) && clash.some(f => f >= m.f1 && f <= m.f2));
           const filler = clash.map(f => filledBy[`${t}@${f}`]).find(Boolean);
+          // the clashing detections of x were put into x by an earlier edit: this edit meant x's own cells there
+          const intoX = clash.map(f => filledBy[`${x}@${f}`]).find(Boolean);
           if (fix) note(mv.src, 'order', `目标${name} 在第 ${clash.join('、')} 帧还占着，要等后面的修改把它移走`, fix.src);
+          else if (intoX) note(mv.src, 'order', `第 ${clash.join('、')} 帧的轨迹 ${x} 是另一条修改刚放进来的细胞，这条修改要排在它前面（改的是 ${x} 原来的细胞）`, intoX);
           else if (filler) note(mv.src, relation(mv.src, filler), `目标${name} 第 ${clash.join('、')} 帧已经被别的修改放了一个细胞进去`, filler);
-          else note(mv.src, 'data', `目标${name} 在原数据的第 ${clash.join('、')} 帧本来就存在（同一帧不能有两个）`);
+          else {
+            // the target's frames right next to the clash already went to another track (e.g. an edit made them X1):
+            // usually the clashing frames belong there too, so offer to extend that edit over them
+            const bt = base[t] || [], lo = Math.min(...clash), hi = Math.max(...clash);
+            const prev = bt.filter(f => f < lo).pop(), nxt = bt.find(f => f > hi);
+            const side = [[prev, 'to', hi], [nxt, 'from', lo]].map(([f, end, v]) => [f === undefined ? null : takenBy[`${t}@${f}`], end, v])
+              .find(([tk]) => tk && tk.src[0] === 'manual' && tk.toLabel && !clash.some(g => get(tk.toLabel).includes(g)));
+            const fix = side ? Object.assign({ type: 'extend', k: side[0].src[1] }, { [side[1]]: side[2] }) : null;
+            note(mv.src, 'data', `目标${name} 在原数据的第 ${clash.join('、')} 帧本来就存在（同一帧不能有两个）` +
+                 (side ? `；轨迹 ${t} 紧挨着的帧已被 修改 [${side[0].src[1] + 1}] 改成了${side[0].to}，如果第 ${clash.join('、')} 帧也是那个细胞，可把这条修改延长过来` : ''),
+                 side ? side[0].src : null, fix);
+          }
           return;
         }
         set(x, get(x).filter(f => !moving.includes(f)));
         set(t, get(t).concat(moving).sort((a, b) => a - b));
-        moving.forEach(f => { takenBy[`${x}@${f}`] = { src: mv.src, to: isX(mv.t) ? ' ' + mv.t : '轨迹 ' + t }; filledBy[`${t}@${f}`] = mv.src; });
+        moving.forEach(f => { takenBy[`${x}@${f}`] = { src: mv.src, to: isX(mv.t) ? ' ' + mv.t : '轨迹 ' + t,
+                                                       toRaw: isX(mv.t) ? mv.t : (mv.t === 'new' ? null : Number(t)), toLabel: t };
+                              filledBy[`${t}@${f}`] = mv.src; });
+        done.push({ src: mv.src, x, t, mvt: mv.t, f1: mv.f1, f2: mv.f2, moving });
       });
+      // reminder: an edit gives frames to a track whose neighbouring frame (the nearest one before or after, in the
+      // original data) another edit moved to a different track, and the track keeps no neighbour on the other side
+      // either: the frames then join nothing of the track that remains, so they probably follow the moved cell
+      const found = [];
+      for (const d of done) {
+        if (isX(d.mvt) || d.mvt === 'new') continue;
+        const fs = base[d.t] || [], prev = fs.filter(f => f < d.f1).pop(), nxt = fs.find(f => f > d.f2);
+        if ([prev, nxt].some(f => f !== undefined && get(d.t).includes(f))) continue;   // joins a kept part: fine
+        for (const f of [prev, nxt]) {
+          const tk = f === undefined ? null : takenBy[`${d.t}@${f}`];
+          if (!tk || tk.toRaw === null || String(tk.toRaw) === String(d.mvt) || get(d.t).includes(f)) continue;   // refilled: fine
+          if (d.moving.every(g => String((takenBy[`${d.t}@${g}`] || {}).toRaw) === String(tk.toRaw))) continue;   // followed along
+          // a decision's moves (e.g. each detection of a chain) are reported once, over all their frames
+          const same = d.src[0] === 'items' && found.find(h => h.d.src[1] === d.src[1] && h.d.t === d.t && String(h.tk.toRaw) === String(tk.toRaw));
+          const pairs = d.moving.map(g => [g, d.x]);            // moved frame -> its source label
+          if (same) { same.f1 = Math.min(same.f1, d.f1); same.f2 = Math.max(same.f2, d.f2); same.moving.push(...d.moving); same.pairs.push(...pairs); }
+          else found.push({ d, f, tk, f1: d.f1, f2: d.f2, moving: d.moving.slice(), pairs });
+          break;
+        }
+      }
+      for (const { d, f, tk, f1, f2, moving, pairs } of found) {
+        const oi = itemOf(tk.src), on = tk.src[0] === 'items' ? tk.src[1] : `修改 [${tk.src[1] + 1}]${oi ? '（' + oi + '）' : ''}`;
+        const [g, xg] = pairs.slice().sort((p, q) => Math.abs(p[0] - f) - Math.abs(q[0] - f))[0];
+        const info = f < g ? gapInfo(well, d.t, f, xg, g, itemOf(d.src)) : gapInfo(well, xg, g, d.t, f, itemOf(d.src));
+        const e = d.src[0] === 'manual' ? list[d.src[1]] : null;
+        const key = 'nb|' + (e ? [e.well, e.label, e.from_frame, e.to_frame, e.target].join('|') : d.src[1]) + `|${d.t}@${f}>${tk.toRaw}`;
+        const fr = moving.sort((a, b) => a - b), span = `第 ${fr[0]}${fr.length > 1 ? '–' + fr[fr.length - 1] : ''} 帧`;
+        // an edit is retargeted; a decision keeps its choice and gets an edit that carries the change along
+        const fix = d.src[0] === 'manual' ? { type: 'retarget', k: d.src[1], from: list[d.src[1]].from_frame, child: tk.toRaw }
+          : { type: 'add', well, label: Number(nameOf[d.t] ? NaN : d.t), f1: fr[0], f2: fr[fr.length - 1], target: tk.toRaw, item: d.src[1] };
+        if (fix.type === 'add' && isNaN(fix.label)) fix.type = null;
+        (res.hints[d.src[0]][d.src[1]] = res.hints[d.src[0]][d.src[1]] || []).push({ other: oi, fix: fix.type ? fix : null, key, info,
+          msg: `目标轨迹 ${d.t} 紧挨着的第 ${f} 帧已被 ${on} 改成了${tk.to}；如果是同一个细胞，${span}也应改成${tk.to}` });
+      }
+      // reminder: an edit relabels the part of a hand-over's A right before what is left of it; the rest still hands
+      // over under the old label, so the relabelled part is cut off from the continuation unless the edit takes it all
+      for (const d of done) {
+        if (d.src[0] !== 'manual' || d.mvt === 'new') continue;
+        const rem = get(d.x), m = merges.find(g => String(g.a) === d.x);
+        if (!m || !rem.length || rem[rem.length - 1] > m.af || Math.max(...d.moving) > rem[0]) continue;
+        const between = (base[d.x] || []).filter(f => f > Math.max(...d.moving) && f < rem[0]);
+        if (between.length) continue;
+        const k = d.src[1], fix = { type: 'extend', k, to: rem[rem.length - 1] }, e = list[k], fm = Math.max(...d.moving);
+        const info = gapInfo(well, d.x, fm, d.x, rem[0], itemOf(d.src));
+        const key = 'ext|' + [e.well, e.label, e.from_frame, e.to_frame, e.target].join('|') + `|${m.src[1]}`;
+        (res.hints.manual[k] = res.hints.manual[k] || []).push({ other: itemOf(m.src), fix, key, info,
+          msg: `轨迹 ${d.x} 剩下的第 ${rem.join('、')} 帧仍按 ${m.src[1]} 接到轨迹 ${m.b}，改走的第 ${d.moving.join('、')} 帧就和这个延续断开了；` +
+               `如果是同一个细胞，应一直改到第 ${rem[rem.length - 1]} 帧（接上会随之转给${isX(d.mvt) ? ' ' + d.mvt : '轨迹 ' + d.t}）` });
+      }
       const split = {}, splitSrc = {};
+      // a swap whose A the edits already relabelled entirely into its track (e.g. a gap item: X is that track) is done
+      const absorbed = sw => sw.r === null && !get(String(sw.a)).length && (base[String(sw.a)] || []).length &&
+        base[String(sw.a)].every(f => String((takenBy[`${sw.a}@${f}`] || {}).toRaw) === String(sw.x));
       for (const sw of swaps.slice().sort((p, q) => p.af - q.af)) {
+        if (absorbed(sw)) continue;
         const x = String(sw.x);
         if (split[x]) { note(sw.src, relation(sw.src, splitSrc[x]), `轨迹 ${x} 被两处交换`, splitSrc[x]); continue; }
         const fs = get(x), before = fs.filter(f => f < sw.s);
@@ -296,9 +395,16 @@
       };
       for (const sw of swaps) { const sp = split[String(sw.x)]; if (!sp) continue;
         link(sp[1], at(sw.a, sw.af), sw.src); if (sw.r !== null) link(at(sw.r, sw.rf), String(sw.x), sw.src); }
-      for (const m of merges) link(at(m.b, m.bf), at(m.a, m.af), m.src);
+      // a hand-over links A's detection at its end frame to the start's at its first frame, under the labels the
+      // edits gave them; if the edits already made them one track, nothing is left to link
+      const owner = (l, f) => { const seen = new Set(); l = String(l);
+        while (takenBy[`${l}@${f}`] && !seen.has(l)) { seen.add(l); l = takenBy[`${l}@${f}`].toLabel; }
+        return l; };
+      for (const m of merges) { const c = at(owner(m.b, m.bf), m.bf), p = at(owner(m.a, m.af), m.af); if (c !== p) link(c, p, m.src); }
       for (const [child, parent] of Object.entries(par)) {
         const fc = get(child), fp = get(parent), gone = !fc.length ? child : parent;
+        const bf = base[child] || [];
+        if (!fc.length && bf.length && bf.every(f => String((takenBy[`${child}@${f}`] || {}).toRaw) === String(parent))) continue;   // edits relabelled the start into A
         if (!fc.length || !fp.length) {
           const tk = Object.entries(takenBy).find(([k]) => k.startsWith(gone + '@'));
           note(parSrc[child], tk ? relation(parSrc[child], tk[1].src) : 'data', `轨迹 ${gone} 已不存在（被其他修改全部改走了）`, tk ? tk[1].src : null);
@@ -316,14 +422,37 @@
           } else note(parSrc[child], 'data', `轨迹 ${child}（第 ${fc[0]} 帧开始）不能接在轨迹 ${parent} 后面：${parent} 到第 ${fp[fp.length - 1]} 帧才结束`);
         }
       }
+      res.taken[well] = Object.fromEntries(Object.entries(takenBy).map(([k, v]) => [k, v.toRaw === null ? '新标签' : String(v.toRaw)]));
+      res.filled[well] = Object.fromEntries(Object.entries(filledBy).map(([k, src]) =>
+        [k, src[0] === 'items' ? src[1] : `修改 [${src[1] + 1}]`]));    // 'label@frame' -> who put a detection there
     }
     return res;
   }
+  const DKEYS = ['choice', 'swap_track', 'swap_frame', 'swap_rest', 'chain_until', 'chain_link'];
+  // edits added by "一键添加" for an item's decision (older ones carry only the note)
+  const autoOf = (m, id) => m.auto_from === id || (m.auto_from === undefined && m.item === id && (m.note || '').includes('[自动延续]'));
   function setDecision(fields) {
     const it = items[idx], d = Object.assign({}, dec(it));
-    for (const k of ['choice', 'swap_track', 'swap_frame', 'swap_rest', 'chain_until', 'chain_link']) delete d[k];
+    const before = JSON.stringify(DKEYS.map(k => d[k] === undefined ? null : d[k]));
+    for (const k of DKEYS) delete d[k];
     Object.assign(d, fields || {}, { time: new Date().toISOString() });
-    decisions[it.id] = d; mode = null; pending = null; save(); render();
+    const changed = before !== JSON.stringify(DKEYS.map(k => d[k] === undefined ? null : d[k]));
+    decisions[it.id] = d; mode = null; pending = null;
+    // the edits carried along for the previous decision no longer follow from it
+    const autos = changed ? manual.filter(m => autoOf(m, it.id)) : [];
+    if (autos.length && confirm(`这一项的判断改了。之前为它一键添加的 ${autos.length} 条修改是否一起删除？\n` +
+                                autos.map(m => '- ' + editText(it, m)).join('\n')))
+      manual = manual.filter(m => !autoOf(m, it.id));
+    save(); render();
+    // offer the carry-along edits of the new decision now, before moving on
+    const adds = changed ? (issues.hints.items[it.id] || []).filter(h => h.fix && h.fix.type === 'add') : [];
+    if (adds.length && confirm(`${adds.map(h => h.msg).join('\n')}\n\n是否一键添加？\n${adds.map(h => '→ ' + fixText(h.fix)).join('\n')}`)) {
+      const well = it.well;
+      adds.forEach(h => manual.push({ well, label: h.fix.label, from_frame: h.fix.f1, to_frame: h.fix.f2, target: h.fix.target,
+                                      note: '[自动延续]', item: h.fix.item, auto_from: it.id, time: new Date().toISOString() }));
+      autoSort(well);
+      toast(`已添加 ${adds.length} 条修改`);
+    }
     if (fields && $('auto').checked) step(1);
   }
   function go(i) { idx = i; mode = null; pending = null; render(); window.scrollTo(0, 0); }
@@ -392,10 +521,17 @@
     return ls;
   }
   function elsewhere(it) {
-    const mine = involved(it), lines = [], hit = new Map();
+    const mine = involved(it), lines = [], hit = new Map(), resolved = [];
     const mark = (ls, where) => { const got = [...new Set(ls)].filter(l => typeof l === 'number' && mine.has(l));
-      got.forEach(l => hit.set(l, hit.has(l) ? hit.get(l) : where)); return got; };
+      got.forEach(l => { if (!hit.has(l)) hit.set(l, `　⟲ 已在 ${where} 改过`); }); return got; };
+    // an unknown detection of this page (?n) given an identity elsewhere: listed in the green box instead
+    const resolve = (l, frames, to, where, item) => {
+      resolved.push({ label: l, frames, to, where, item });
+      if (!hit.has(l)) hit.set(l, `　→ ${to}（${where}）`);
+    };
+    const unknownHere = l => typeof l === 'number' && l >= 50000 && mine.has(l);
     const nm = l => l >= 50000 ? labelName(it, l) : String(l);
+    const obs = (review.observed || {})[it.well] || {};
     for (const o of items) {
       if (o.id === it.id || o.well !== it.well) continue;
       const d = dec(o), c = d.choice;
@@ -403,36 +539,58 @@
       let ls;
       if (isGap(o)) ls = [o.x_label, c];
       else if (c === 'swap') ls = [o.a_label, d.swap_track, d.swap_rest];
-      else if (c === 'chain') ls = [o.a_label, ...(o.chain || []).filter(x => x.frame <= d.chain_until).map(x => x.label), chainLinkLabel(o, d)];
-      else ls = [o.a_label, c];
+      else if (c === 'chain') {
+        const taken = (o.chain || []).filter(x => x.frame <= d.chain_until);
+        taken.filter(x => unknownHere(x.label)).forEach(x => resolve(x.label, [x.frame], `轨迹 ${shownName(it, o.a_label)}`, o.id, o.id));
+        ls = [o.a_label, ...taken.filter(x => !unknownHere(x.label)).map(x => x.label), chainLinkLabel(o, d)];
+      } else ls = [o.a_label, c];
+      if (isGap(o) && unknownHere(o.x_label)) { resolve(o.x_label, o.x_frames, `轨迹 ${shownName(it, c)}`, o.id, o.id); continue; }
       const got = mark(ls, o.id);
       if (got.length) lines.push({ text: `${o.id}：${isGap(o) ? '' : `A = ${o.a_label}，`}${describe(o)}`, labels: got, item: o.id });
     }
     manual.forEach((m, k) => {
       if (m.well !== it.well || m.item === it.id) return;
+      const where = `修改 [${k + 1}]${m.item ? '，' + m.item : ''}`;
+      if (unknownHere(m.label)) {
+        resolve(m.label, (obs[String(m.label)] || []).filter(f => f >= m.from_frame && f <= m.to_frame), shownTarget(it, m.target), where, m.item || null);
+        return;
+      }
       const got = mark([m.label, m.target], `修改 [${k + 1}]`);
-      if (got.length) lines.push({ text: `修改 [${k + 1}]（${m.item || '手动修正'}）：轨迹 ${m.label} 第 ${m.from_frame}–${m.to_frame} 帧 → ${targetText(m.target)}`,
+      if (got.length) lines.push({ text: `修改 [${k + 1}]（${m.item || '手动修正'}）：${editText(it, m)}`,
                                    labels: got, item: m.item || null });
     });
-    return { lines, hit, nm };
+    return { lines, hit, nm, resolved };
   }
   function renderElsewhere(it) {
-    const { lines, hit, nm } = elsewhere(it), box = $('elsewhere');
+    const { lines, hit, nm, resolved } = elsewhere(it), box = $('elsewhere');
     touched = hit; box.innerHTML = '';
+    const jumpTo = (li, item) => { const j = item ? items.findIndex(x => x.id === item) : -1;
+      if (j >= 0) li.appendChild(button(`去看 ${item}`, false, () => go(j))); };
+    if (resolved.length) {
+      const div = document.createElement('div'); div.className = 'resolved';
+      div.innerHTML = '<b>✓ 本页的未知检测已在别处指定了身份：</b>';
+      const ul = document.createElement('ul'); ul.style.margin = '4px 0 0 18px';
+      resolved.sort((a, b) => (a.frames[0] ?? 0) - (b.frames[0] ?? 0) || a.label - b.label).forEach(r => {
+        const li = document.createElement('li');
+        const fr = r.frames.length ? `第 ${r.frames.join('、')} 帧` : '';
+        li.textContent = `${nm(r.label)} ${fr} → ${r.to}　（${r.where}）`;
+        jumpTo(li, r.item); ul.appendChild(li);
+      });
+      div.appendChild(ul); box.appendChild(div);
+    }
     if (!lines.length) return;
+    const blue = [...new Set(lines.flatMap(t => t.labels))].sort((a, b) => a - b);
     const div = document.createElement('div'); div.className = 'elsewhere';
-    div.innerHTML = `<b>ⓘ 本页的轨迹已在别处改过</b>（${[...hit.keys()].sort((a, b) => a - b).map(nm).join('、')}）：`;
+    div.innerHTML = `<b>ⓘ 本页的轨迹已在别处改过</b>（${blue.map(nm).join('、')}）：`;
     const ul = document.createElement('ul'); ul.style.margin = '4px 0 0 18px';
     lines.forEach(t => {
       const li = document.createElement('li');
       li.textContent = `${t.text}　· 涉及 ${t.labels.map(nm).join('、')}`;
-      const j = t.item ? items.findIndex(x => x.id === t.item) : -1;
-      if (j >= 0) li.appendChild(button(`去看 ${t.item}`, false, () => go(j)));
-      ul.appendChild(li);
+      jumpTo(li, t.item); ul.appendChild(li);
     });
     div.appendChild(ul); box.appendChild(div);
   }
-  const touchedMark = l => touched.has(l) ? `　⟲ 已在 ${touched.get(l)} 改过` : '';
+  const touchedMark = l => touched.get(l) || '';
   function render() {
     const it = items[idx], bad = conflicts(), d = dec(it), c = d.choice;
     if (isGap(it)) {
@@ -478,7 +636,7 @@
       done.appendChild(button('← 重选', false, () => { mode = 'track'; pending = null; render(); }));
       st.appendChild(done);
       const div = document.createElement('div'); div.className = 'step';
-      div.innerHTML = `<b>第 2 步</b>：轨迹 ${pending.label} 原来的那个细胞，第 ${pending.frame} 帧之后变成了哪条新轨迹？（Esc 取消，Backspace 回到第 1 步）`;
+      div.innerHTML = `<b>第 2 步</b>：轨迹 ${pending.label} 原来的那个细胞（第 ${pending.frame - 1} 帧及以前仍是轨迹 ${pending.label}），从第 ${pending.frame} 帧起（含第 ${pending.frame} 帧）被标成了哪条新轨迹？（Esc 取消，Backspace 回到第 1 步）`;
       const same = c === 'swap' && d.swap_track === pending.label;
       it.starts.forEach((s, k) => div.appendChild(button(optionText(it, k), same && d.swap_rest === s.b_label,
         () => setDecision({ choice: 'swap', swap_track: pending.label, swap_frame: pending.frame, swap_rest: s.b_label }))));
@@ -490,8 +648,9 @@
     $('conflict').textContent = bad.has(it.id) ? '冲突：这里选的轨迹也被另一个审阅项选中了' : '';
     $('note').value = d.note || '';
     $('pos').textContent = `第 ${idx + 1} / ${items.length} 个`;
-    issues = validateAll();
+    issues = dropDismissed(markSwaps(validateAll()));
     const nIssues = Object.keys(issues.items).length + Object.keys(issues.manual).length;
+    const nHints = Object.keys(issues.hints.items).length + Object.keys(issues.hints.manual).filter(k => !issues.manual[k]).length;
     const mineBad = manual.map((m, k) => [m, k]).filter(([m, k]) => m.item === it.id && issues.manual[k]);
     $('issueBox').innerHTML = '';
     if (issues.items[it.id] || mineBad.length) {
@@ -515,14 +674,41 @@
       if (all.some(t => t.kind === 'order')) box.appendChild(button('自动排序（解决顺序冲突）', false, () => $('autoSort').click()));
       $('issueBox').appendChild(box);
     }
+    const myHints = [...(issues.hints.items[it.id] || []).map(h => ['判断：', h]),
+      ...manual.map((m, k) => [m, k]).filter(([m, k]) => m.item === it.id && !issues.manual[k] && issues.hints.manual[k])
+               .flatMap(([m, k]) => issues.hints.manual[k].map(h => [`修改 [${k + 1}]：`, h]))];
+    const myOff = issues.off.filter(h => h.item === it.id);
+    if (myHints.length || myOff.length) {
+      const box = document.createElement('div'); box.className = 'hints';
+      box.innerHTML = myHints.length ? '<b>ⓘ 提醒（不影响 apply，请确认是不是同一个细胞）：</b>' : '';
+      const ul = document.createElement('ul'); ul.style.margin = '4px 0 0 18px';
+      myHints.forEach(([prefix, h]) => {
+        const li = document.createElement('li'); li.textContent = prefix + h.msg;
+        if (h.info) { const sub = document.createElement('div'); sub.style.cssText = 'color:#795548;font-size:12px;margin:2px 0';
+          sub.textContent = '参考：' + h.info; li.appendChild(sub); }
+        if (h.fix) { const txt = fixText(h.fix); li.appendChild(button(`${h.fix.type === 'add' ? '一键' : h.fix.type === 'extend' ? '' : '合并：'}${txt}`, false, () => { applyFix(h.fix); toast(`已修改：${txt}`); })); }
+        if (h.key) li.appendChild(button('不是同一个细胞（不再提醒）', false, () => { dismissed[h.key] = new Date().toISOString(); save(); render(); toast('已取消这条提醒'); }));
+        if (h.other && h.other !== it.id) { const j = items.findIndex(x => x.id === h.other);
+          if (j >= 0) li.appendChild(button(`去看 ${h.other}`, false, () => go(j))); }
+        ul.appendChild(li);
+      });
+      box.appendChild(ul);
+      if (myOff.length) {        // reminders marked "not the same cell" on this page can be brought back
+        const off = document.createElement('div'); off.style.cssText = 'color:#8d6e63;font-size:12px;margin-top:4px';
+        off.textContent = `本页有 ${myOff.length} 条提醒已标为“不是同一个细胞” `;
+        off.appendChild(button('恢复', false, () => { myOff.forEach(h => delete dismissed[h.key]); save(); render(); }));
+        box.appendChild(off);
+      }
+      $('issueBox').appendChild(box);
+    }
     const done = items.filter(x => choiceOf(x) !== undefined && choiceOf(x) !== null).length;
-    $('count').textContent = `已审 ${done} / ${items.length}` + (bad.size ? ` · 冲突 ${bad.size}` : '') + (manual.length ? ` · 手动修正 ${manual.length}` : '') + (nIssues ? ` · ⚠ 问题 ${nIssues}` : '');
+    $('count').textContent = `已审 ${done} / ${items.length}` + (bad.size ? ` · 冲突 ${bad.size}` : '') + (manual.length ? ` · 手动修正 ${manual.length}` : '') + (nIssues ? ` · ⚠ 问题 ${nIssues}` : '') + (nHints ? ` · ⓘ 提醒 ${nHints}` : '');
     $('count').style.color = nIssues ? '#d50000' : '';
     $('progress').style.width = (100 * done / items.length) + '%';
     const chips = $('chips'); chips.innerHTML = '';
     items.forEach((x, i) => {
       const ch = document.createElement('div');
-      ch.className = 'chip ' + statusOf(x, bad) + (i === idx ? ' cur' : '') + (hasIssue(x) ? ' bad' : '');
+      ch.className = 'chip ' + statusOf(x, bad) + (i === idx ? ' cur' : '') + (hasIssue(x) ? ' bad' : hasHint(x) ? ' hint' : '');
       ch.title = `${i + 1}: ${x.id}`; ch.onclick = () => go(i);
       chips.appendChild(ch);
     });
@@ -549,9 +735,11 @@
         if (dragFrom === null || dragFrom === k) return;
         const [moving] = manual.splice(dragFrom, 1); manual.splice(manual.indexOf(m), 0, moving); dragFrom = null; save(); render(); };
       const span = document.createElement('span');
-      span.textContent = `⠿ [${k + 1}] 轨迹 ${m.label} 第 ${m.from_frame}–${m.to_frame} 帧 → ${targetText(m.target)}` +
-                         (issues.manual[k] ? `　⚠ ${issues.manual[k].map(fmt).join('；')}` : '　✓');
+      span.textContent = `⠿ [${k + 1}] ${editText(it, m)}` +
+                         (issues.manual[k] ? `　⚠ ${issues.manual[k].map(fmt).join('；')}` :
+                          issues.hints.manual[k] ? `　✓ ⓘ ${issues.hints.manual[k].map(h => h.msg).join('；')}` : '　✓');
       if (issues.manual[k]) { span.style.color = '#d50000'; span.style.fontWeight = '600'; }
+      else if (issues.hints.manual[k]) span.style.color = '#e65100';
       const swapWith = other => { const j = other[1]; [manual[k], manual[j]] = [manual[j], manual[k]]; save(); render(); };
       row.appendChild(span);
       row.appendChild(button('↑', false, () => swapWith(mine[pos - 1]), pos === 0));
@@ -618,9 +806,18 @@
                            .sort((a, b) => +a.slice(1) - +b.slice(1));
   const nextX = well => 'X' + (Math.max(0, ...xNames(well).map(x => +x.slice(1))) + 1);
   const targetText = t => t === 'new' ? '新标签' : (isX(t) ? `${t}（新 ID）` : '轨迹 ' + t);
+  // a label as named in an item's image strip (A, 1, B, A?, ?3 ...), e.g. ?3（50560）; plain number when not shown there
+  const itemById = id => items.find(x => x.id === id);
+  function shownName(it, l) {
+    if (!it || typeof l !== 'number') return String(l);
+    const n = labelName(it, l);
+    return n === `?（${l}）` ? String(l) : n;
+  }
+  const shownTarget = (it, t) => typeof t === 'number' ? '轨迹 ' + shownName(it, t) : targetText(t);
+  const editText = (it, m) => `轨迹 ${shownName(it, m.label)} 第 ${m.from_frame}–${m.to_frame} 帧 → ${shownTarget(it, m.target)}`;
   function xSource(well, x) {      // where a named new identity was first created
     const m = manual.find(e => e.well === well && e.target === x);
-    return m ? `已建：${m.item || '手动修正'}，轨迹 ${m.label} 第 ${m.from_frame}–${m.to_frame} 帧` : '已建的新 ID';
+    return m ? `已建：${m.item || '手动修正'}，轨迹 ${shownName(itemById(m.item), m.label)} 第 ${m.from_frame}–${m.to_frame} 帧` : '已建的新 ID';
   }
   function fillTargets(selId, well) {
     const sel = $(selId), keep = sel.value;
@@ -657,8 +854,21 @@
   }
   function fillEditFrames(it) {
     const v = $('eLabel').value;
-    const fs = isX(v) ? xFrames(it.well, v) : ((it.visible || {})[v] || []);
-    const opts = fs.map(f => `<option value="${f}">${f}</option>`).join('');
+    // frames in the strip, plus strip frames that a decision or edit gives this track (e.g. a chain's detection)
+    const shown = new Set(Object.values(it.visible || {}).flat()), filled = (issues.filled || {})[it.well] || {}, by = {};
+    if (!isX(v)) Object.entries(filled).forEach(([k, who]) => { const [l, f] = k.split('@');
+      if (l === v && shown.has(+f) && !((it.visible || {})[v] || []).includes(+f)) by[+f] = who; });
+    const fs = isX(v) ? xFrames(it.well, v) : [...new Set([...((it.visible || {})[v] || []), ...Object.keys(by).map(Number)])].sort((a, b) => a - b);
+    // ＋ = added by a decision / edit; →X1 = a decision / edit already gave this frame of the track to X1
+    // (sources in the tooltips and the select's title)
+    const taken = isX(v) ? {} : ((issues.taken || {})[it.well] || {}), gone = f => taken[`${v}@${f}`];
+    const opts = fs.map(f => {
+      const tip = [by[f] ? `由 ${by[f]} 加入` : '', gone(f) ? `已改为 ${gone(f)}` : ''].filter(Boolean).join('，');
+      return `<option value="${f}"${tip ? ` title="${tip}"` : ''}>${f}${by[f] ? '＋' : ''}${gone(f) ? '→' + gone(f) : ''}</option>`;
+    }).join('');
+    const why = [...Object.entries(by).map(([f, w]) => `＋ 第 ${f} 帧由 ${w} 加入`),
+                 ...fs.filter(gone).map(f => `→ 第 ${f} 帧已改为 ${gone(f)}`)].join('；');
+    $('eFrom').title = $('eTo').title = why;
     $('eFrom').innerHTML = opts; $('eTo').innerHTML = opts;
     if (fs.length) { $('eFrom').value = String(fs[0]); $('eTo').value = String(fs[fs.length - 1]); }
   }
@@ -679,8 +889,8 @@
   $('eLabel').onchange = () => { fillEditFrames(items[idx]); fillEditTargets(items[idx]); };
   // another tab of this page changed the saved decisions / edits: take them over, so two tabs never overwrite each other
   window.addEventListener('storage', e => {
-    if (e.key !== KEY && e.key !== MKEY) return;
-    decisions = load(KEY, '{}'); manual = load(MKEY, '[]'); lastIdx = -1; render();
+    if (e.key !== KEY && e.key !== MKEY && e.key !== NKEY) return;
+    decisions = load(KEY, '{}'); manual = load(MKEY, '[]'); dismissed = load(NKEY, '{}'); lastIdx = -1; render();
     toast('已同步另一个标签页里的修改');
   });
   for (const id of ['mRow', 'mCol']) $(id).addEventListener('input', () => fillTargets('mTargetSel', wellFrom('m')));
@@ -701,6 +911,9 @@
       else if (issues.manual[k] && offerFix(issues.manual[k])) { /* fixed */ }
       else if (issues.manual[k]) alert(`这条修改 [${k + 1}] 无法执行，调整顺序也解决不了：\n- ${issues.manual[k].map(fmt).join('\n- ')}\n\n${SWAP_HINT}\n（也可以点“自动排序”，让页面自动插入中转。）`);
     }
+    const kh = manual.indexOf(edit), hint = kh < 0 || issues.manual[kh] ? null : (issues.hints.manual[kh] || []).find(h => h.fix);
+    if (hint) { const txt = fixText(hint.fix);
+      if (confirm(`提醒：${hint.msg}\n\n是否合并？\n→ ${txt}`)) { applyFix(hint.fix); toast(`已修改：${txt}`); } }
     return true;
   }
   $('eAdd').onclick = () => {
@@ -713,19 +926,24 @@
     const t = $('toast'); t.textContent = text; t.style.display = 'block';
     clearTimeout(toast.timer); toast.timer = setTimeout(() => { t.style.display = 'none'; }, 3500);
   }
-  // reorder each well's manual edits so that they run: repeatedly take the first remaining edit that can run after
-  // the ones already placed (an edit only ever frees its source frames and fills its target frames, so this finds an
-  // order whenever one exists); edits that can never run keep their relative order at the end
+  // reorder each well's manual edits so that they run: repeatedly take a remaining edit that can run after the ones
+  // already placed, preferring edits that do not put cells into a track another remaining edit still takes cells
+  // from in the same frames (that edit means the track's own cells, so it should run first); edits that can never
+  // run keep their relative order at the end
   function autoSort(onlyWell = null) {
     let moved = 0, stuck = 0;
+    const fillsSource = (m, rest) => rest.some(o => o !== m && String(o.label) === String(m.target) &&
+                                                    o.from_frame <= m.to_frame && m.from_frame <= o.to_frame);
     for (const well of [...new Set(manual.map(m => m.well))].filter(w => !onlyWell || w === onlyWell)) {
       const slots = manual.map((m, k) => (m.well === well ? k : -1)).filter(k => k >= 0);
       const remaining = slots.map(k => manual[k]), ordered = [];
       while (remaining.length) {
         let pick = -1;
-        for (let i = 0; i < remaining.length && pick < 0; i++) {
+        const order = remaining.map((m, i) => i);
+        order.sort((i, j) => fillsSource(remaining[i], remaining) - fillsSource(remaining[j], remaining) || i - j);
+        for (const i of order) {
           const trial = ordered.concat([remaining[i]]);
-          if (!validateAll(well, trial).manual[trial.length - 1]) pick = i;
+          if (!validateAll(well, trial).manual[trial.length - 1]) { pick = i; break; }
         }
         if (pick < 0) { stuck += remaining.length; ordered.push(...remaining.splice(0)); break; }
         ordered.push(remaining.splice(pick, 1)[0]);
@@ -774,7 +992,48 @@
     const fs = ((review.observed || {})[m.well] || {})[String(m.label)] || [];
     return fs.some(f => f >= m.from_frame && f < fix.from);
   }
+  // a failing pair of edits that exchange identities in the same frames: no order can work, so say that instead of
+  // 'order' / 'data', and offer to route it through a temporary new id
+  // reminders marked "not the same cell" are left out (listed in res.off so the page can bring them back)
+  function dropDismissed(res) {
+    res.off = [];
+    for (const src of ['items', 'manual']) for (const k of Object.keys(res.hints[src])) {
+      const all = res.hints[src][k], keep = all.filter(h => !(h.key && dismissed[h.key]));
+      all.filter(h => h.key && dismissed[h.key]).forEach(h => res.off.push({ key: h.key, item: src === 'items' ? k : (manual[k] || {}).item }));
+      if (keep.length) res.hints[src][k] = keep; else delete res.hints[src][k];
+    }
+    return res;
+  }
+  function markSwaps(res) {
+    for (const [a, b] of swapPairs()) {
+      const i = manual.indexOf(a), j = manual.indexOf(b);
+      if (!res.manual[i] && !res.manual[j]) continue;
+      const f1 = Math.max(a.from_frame, b.from_frame), f2 = Math.min(a.to_frame, b.to_frame);
+      const msg = `修改 [${i + 1}] 和 [${j + 1}] 在第 ${f1}${f2 > f1 ? '–' + f2 : ''} 帧互换 ID（轨迹 ${a.label} ↔ 轨迹 ${b.label}），` +
+                  '任何顺序都会冲突，需要借一个新 ID 中转';
+      const fix = { type: 'route', i, j };
+      res.manual[i] = [{ kind: 'swap', msg, other: b.item || null, otherName: null, fix }];
+      res.manual[j] = [{ kind: 'swap', msg, other: a.item || null, otherName: null, fix }];
+    }
+    return res;
+  }
   function fixText(fix) {
+    if (fix.type === 'extend')
+      return !manual[fix.k] ? '' : fix.to !== undefined ? `修改 [${fix.k + 1}] 一直改到第 ${fix.to} 帧` : `修改 [${fix.k + 1}] 从第 ${fix.from} 帧开始改`;
+    if (fix.type === 'add')
+      return `添加修改：轨迹 ${fix.label} 第 ${fix.f1}${fix.f2 > fix.f1 ? '–' + fix.f2 : ''} 帧 → ${targetText(fix.target)}`;
+    if (fix.type === 'resource') {
+      const m = manual[fix.k];
+      if (!m) return '';
+      const src = isX(fix.label) ? `${fix.label}（新 ID）` : '轨迹 ' + fix.label;
+      return `修改 [${fix.k + 1}] 改成：${src} 第 ${fix.f1}${fix.f2 > fix.f1 ? '–' + fix.f2 : ''} 帧 → ${targetText(m.target)}`;
+    }
+    if (fix.type === 'route') {
+      const a = manual[fix.i], b = manual[fix.j];
+      if (!a || !b) return '';
+      const x = nextX(a.well);
+      return `借用 ${x} 中转：轨迹 ${a.label} → ${x}，轨迹 ${b.label} → 轨迹 ${a.label}，${x} → 轨迹 ${a.target}`;
+    }
     const m = manual[fix.k];
     if (!m) return '';
     const name = isX(fix.child) ? `${fix.child}（新 ID）` : `轨迹 ${fix.child}`;
@@ -782,6 +1041,29 @@
                                     : `修改 [${fix.k + 1}] 拆成两条：第 ${m.from_frame}–${fix.from - 1} 帧保持原目标，第 ${fix.from}–${m.to_frame} 帧改成${name}`;
   }
   function applyFix(fix) {
+    if (fix.type === 'extend') {
+      const m = manual[fix.k];
+      if (m) { if (fix.to !== undefined) m.to_frame = Math.max(m.to_frame, fix.to); else m.from_frame = Math.min(m.from_frame, fix.from);
+               autoSort(m.well); }             // autoSort saves and renders
+      return;
+    }
+    if (fix.type === 'add') {        // carry another edit's change along to the frames a decision gave this track
+      manual.push({ well: fix.well, label: fix.label, from_frame: fix.f1, to_frame: fix.f2, target: fix.target,
+                    note: '[自动延续]', item: fix.item, auto_from: fix.item, time: new Date().toISOString() });
+      autoSort(fix.well); return;    // autoSort saves and renders
+    }
+    if (fix.type === 'resource') {
+      const m = manual[fix.k];
+      if (!m) return;
+      Object.assign(m, { label: fix.label, from_frame: fix.f1, to_frame: fix.f2, note: ((m.note || '') + ' [自动改来源]').trim() });
+      save(); render(); return;
+    }
+    if (fix.type === 'route') {
+      const a = manual[fix.i], b = manual[fix.j];
+      if (!a || !b) return;
+      routeSwaps([[a, b]]); autoSort(a.well);          // autoSort saves and renders
+      return;
+    }
     const m = manual[fix.k];
     if (!m || fix.type !== 'retarget') return;
     if (!needsSplit(fix)) m.target = fix.child;
@@ -795,7 +1077,7 @@
   function offerFix(list) {        // true if the user accepted an automatic fix for these issues
     const t = list.find(i => i.fix);
     const txt = t ? fixText(t.fix) : '';
-    if (!t || !confirm(`这条修改与本页的判断冲突：\n${t.msg}\n\n是否自动修改？\n→ ${txt}`)) return false;
+    if (!t || !confirm(`这条修改无法执行：\n${t.msg}\n\n是否自动修改？\n→ ${txt}`)) return false;
     applyFix(t.fix); toast(`已自动修改：${txt}`);
     return true;
   }
@@ -810,13 +1092,19 @@
       tr.ondrop = e => { e.preventDefault(); tr.classList.remove('dragover');
         if (dragFrom === null || dragFrom === k) return;
         const [moving] = manual.splice(dragFrom, 1); manual.splice(k, 0, moving); dragFrom = null; save(); render(); };
-      tr.innerHTML = `<td><span class="grip">⠿</span>${k + 1}</td><td>${m.well}</td><td>${m.label}</td><td>${m.from_frame}–${m.to_frame}</td>` +
-                     `<td>${targetText(m.target)}</td><td></td><td></td><td class="msg"></td><td></td>`;
+      tr.innerHTML = `<td><span class="grip">⠿</span>${k + 1}</td><td>${m.well}</td><td>${shownName(itemById(m.item), m.label)}</td><td>${m.from_frame}–${m.to_frame}</td>` +
+                     `<td>${shownTarget(itemById(m.item), m.target)}</td><td></td><td></td><td class="msg"></td><td></td>`;
       if (m.item) { const i = items.findIndex(x => x.id === m.item); tr.children[5].appendChild(button(m.item, i === idx, () => go(i))); }
       tr.children[6].textContent = m.note || '';
       if (issues.manual[k]) { tr.className = 'bad'; tr.children[7].textContent = '⚠ ' + issues.manual[k].map(fmt).join('；');
         const fx = issues.manual[k].find(t => t.fix); if (fx) { const txt = fixText(fx.fix);
           tr.children[7].appendChild(button('自动修改', false, () => { applyFix(fx.fix); toast(`已自动修改：${txt}`); })); } }
+      else if (issues.hints.manual[k]) { tr.children[7].textContent = '✓ ⓘ ' + issues.hints.manual[k].map(h => h.msg).join('；');
+        tr.children[7].style.color = '#e65100';
+        const hx = issues.hints.manual[k].find(h => h.fix); if (hx) { const txt = fixText(hx.fix);
+          tr.children[7].appendChild(button('合并', false, () => { applyFix(hx.fix); toast(`已修改：${txt}`); })); }
+        tr.children[7].appendChild(button('不是同一个细胞', false, () => {
+          issues.hints.manual[k].forEach(h => { if (h.key) dismissed[h.key] = new Date().toISOString(); }); save(); render(); })); }
       else tr.children[7].textContent = '✓';
       const swapRows = (a, b) => { [manual[a], manual[b]] = [manual[b], manual[a]]; save(); render(); };
       tr.children[8].appendChild(button('↑', false, () => swapRows(k, k - 1), k === 0));
@@ -838,7 +1126,8 @@
   $('filter').onchange = () => step(0);
   $('jump').onchange = e => { const n = parseInt(e.target.value, 10); if (n >= 1 && n <= items.length) go(n - 1); };
   $('export').onclick = () => {
-    const out = { review_id: review.review_id, dataset: review.dataset, exported: new Date().toISOString(), decisions, manual };
+    const out = { review_id: review.review_id, dataset: review.dataset, exported: new Date().toISOString(), decisions, manual,
+                  dismissed_reminders: dismissed };
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify(out, null, 1)], { type: 'application/json' }));
     a.download = 'decisions.json'; a.click(); URL.revokeObjectURL(a.href);
@@ -854,6 +1143,7 @@
         const seen = new Set(manual.map(m => JSON.stringify([m.well, m.label, m.from_frame, m.to_frame, m.target])));
         for (const m of data.manual) if (!seen.has(JSON.stringify([m.well, m.label, m.from_frame, m.to_frame, m.target]))) manual.push(m);
       }
+      dismissed = Object.assign(dismissed, data.dismissed_reminders || {});
       save(); render();
     });
   };

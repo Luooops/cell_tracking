@@ -40,7 +40,6 @@ in the order they are applied, so outputs made on the source data can be transla
 """
 import hashlib
 import json
-import math
 import os
 import re
 import shutil
@@ -280,34 +279,36 @@ def refine_well(table, observed, merges, swaps, moves=(), new_ids=None):
     the masks}; merges: [(a, a_frame, b, b_frame)]; swaps: [(a, a_frame, x, s, r, r_frame)]; moves: [(x, from, to,
     target | 'new', source)]. Moves (gap items, manual edits) are applied first, then swaps, then hand-overs.
     -> (new table, relabels [(x, from, to | None, new label)] in order). new_ids, if a dict, receives the integer
-    label given to every named new identity ('X1' -> 431). Raises ValueError on any inconsistency."""
+    label given to every named new identity ('X1' -> 431). A hand-over links the detections it was judged on: A's
+    detection at its end frame and the start's at its first frame, under whatever label the edits gave them (a start
+    relabelled into A then needs no link). A detection moved again to the same target is accepted as a repeat.
+    Raises ValueError on any inconsistency."""
     out = {l: tuple(v) for l, v in table.items()}
     observed = {l: sorted(fs) for l, fs in observed.items()}
     relabels, split = [], {}                          # split[x] = (s, x')
     named = {}                                        # 'X1' -> integer label
     next_label = max([l for l in table if l < UNKNOWN_OFFSET] + [0]) + 1
-    # an edit may take frames from a hand-over track only where the hand-over does not look: before A's end frame
-    # and after the start's first frame; swap tracks are not edited at all
-    free = {}                                         # label -> (first, last) frames an edit may take, or None
-    for a, a_frame, b, b_frame in merges:
-        for l, lo, hi in ((a, -math.inf, a_frame - 1), (b, b_frame + 1, math.inf)):
-            if l in free and free[l] is None:
-                continue
-            old = free.get(l, (-math.inf, math.inf))
-            free[l] = (max(old[0], lo), min(old[1], hi))
-    for l in {l for s in swaps for l in (s[0], s[2], s[4]) if l is not None}:
-        free[l] = None
+    # swap tracks are not edited (a swap splits a track at a frame); relabelling A into the track a swap says it
+    # became (with no other continuation) says the same as that swap, so that one edit is allowed
+    locked = {l for s in swaps for l in (s[0], s[2], s[4]) if l is not None}
+    absorb = {(a, x) for a, _, x, _, rest, _ in swaps if rest is None}
+    original = {l: list(fs) for l, fs in observed.items()}
+    went = {}                                         # (label, frame) -> label the detection was moved to
 
     for x, f1, f2, target, source in moves:
         if is_new_id(x):                              # a named new identity as source (e.g. a temporary X1 in a swap)
             if x not in named:
                 raise ValueError(f'{source}: new id {x} is used before an edit creates it')
             x = named[x]
-        if x in free and (free[x] is None or f1 < free[x][0] or f2 > free[x][1]):
-            raise ValueError(f'{source}: track {x} is also part of a swap, or the edit takes the end / start frame '
-                             f'of its hand-over; decide it in one place')
+        if x in locked and (x, target) not in absorb:
+            raise ValueError(f'{source}: track {x} is also part of a swap; decide it in one place')
         moving = [f for f in observed.get(x, []) if f1 <= f <= f2]
         if not moving:
+            # the same statement made twice (e.g. a chain and an edit both give a detection to A): nothing to do
+            to = named.get(target, target)
+            gone = [went.get((x, f)) for f in original.get(x, []) if f1 <= f <= f2]
+            if gone and all(g == to for g in gone):
+                continue
             raise ValueError(f'{source}: track {x} is not present in frames {f1}-{f2}')
         if target == 'new':
             target, next_label = next_label, next_label + 1
@@ -323,6 +324,7 @@ def refine_well(table, observed, merges, swaps, moves=(), new_ids=None):
             raise ValueError(f'{source}: track {x} has children; edit it by hand')
         observed[x] = [f for f in observed[x] if f not in moving]
         observed[target] = sorted(observed.get(target, []) + moving)
+        went.update({(x, f): target for f in moving})
         parent_x = out.get(x, (0, 0, 0))[2]           # an unlabelled detection may have no row
         if observed[x]:
             out[x] = (observed[x][0], observed[x][-1], parent_x)
@@ -336,6 +338,9 @@ def refine_well(table, observed, merges, swaps, moves=(), new_ids=None):
         s_new = split.get(label)
         return s_new[1] if s_new and frame >= s_new[0] else label
 
+    # a swap whose A the edits already relabelled entirely into its track (e.g. a gap item: X is that track) is done
+    swaps = [w for w in swaps if not (w[4] is None and w[0] not in out and original.get(w[0])
+                                      and all(went.get((w[0], f)) == w[2] for f in original[w[0]]))]
     for a, a_frame, x, s, rest, rest_frame in sorted(swaps, key=lambda w: w[2]):
         if x in split:
             raise ValueError(f'track {x} is split twice')
@@ -357,8 +362,19 @@ def refine_well(table, observed, merges, swaps, moves=(), new_ids=None):
         if rest is not None:
             r = at(rest, rest_frame)
             out[r] = (*out[r][:2], x)
+    def owner(label, frame):                          # the label a detection ended up with after the edits
+        seen = set()
+        while (label, frame) in went and (label, frame) not in seen:
+            seen.add((label, frame))
+            label = went[(label, frame)]
+        return label
+
     for a, a_frame, b, b_frame in merges:
-        a2, b2 = at(a, a_frame), at(b, b_frame)
+        a2, b2 = at(owner(a, a_frame), a_frame), at(owner(b, b_frame), b_frame)
+        if a2 == b2:                                  # the edits already made them one track
+            continue
+        if b2 not in out:
+            raise ValueError(f'track {b2} no longer exists (edits moved it away)')
         if out[b2][2]:
             raise ValueError(f'track {b2} already has parent {out[b2][2]}')
         out[b2] = (*out[b2][:2], a2)
@@ -438,11 +454,27 @@ def build_refined_dataset(source_root, target_root, sequences, new_tables, relab
     return modes
 
 
-def relabel_lookup(root):
+def run_data_root(run):
+    """data_root recorded in the config.json of a run folder or of its nearest parent that has one (None if none)."""
+    for folder in [Path(run).resolve(), *Path(run).resolve().parents]:
+        config = folder / 'config.json'
+        if config.is_file():
+            try:
+                return json.loads(config.read_text(encoding='utf-8')).get('data_root')
+            except ValueError:
+                return None
+    return None
+
+
+def relabel_lookup(root, run=None):
     """{well: [(label, from_frame, to_frame | None, new_label)]} from <root>/refine_log.json, in application order
-    ({} for a dataset that is not refined)."""
+    ({} for a dataset that is not refined, and for a run whose config says it was made on this refined dataset
+    itself: its labels are already the refined ones)."""
     path = Path(root) / 'refine_log.json'
     if not path.is_file():
+        return {}
+    made_on = run_data_root(run) if run is not None else None
+    if made_on and Path(str(made_on).replace('\\', '/')).name == Path(root).resolve().name:
         return {}
     out = {}
     for r in json.loads(path.read_text(encoding='utf-8')).get('relabels', []):

@@ -15,12 +15,16 @@ apply     the exported decisions -> a new dataset <data_dir>/<dataset>_refine (u
           track's masks from the swap frame. Every other file is hard-linked (copied where links are impossible);
           the source dataset is never modified. refine_log.json (with the relabels) + the decisions file record
           every change.
+refresh   rebuild review.html of an existing review from the current page template (candidates.json and the saved
+          progress stay as they are); also adds the detection positions the page uses for its reminders.
 
     python -m models.gnn_tracking.audit_handover prepare --dataset scripta_data \
         --output-root development/stage0_evaluation/handover_review_scripta_data
     (open <output-root>/review.html in a browser, decide, press Export -> decisions.json)
     python -m models.gnn_tracking.audit_handover apply --dataset scripta_data \
         --review development/stage0_evaluation/handover_review_scripta_data --decisions decisions.json
+    python -m models.gnn_tracking.audit_handover refresh --dataset scripta_data \
+        --review development/stage0_evaluation/handover_review_scripta_data
 """
 import argparse
 import datetime
@@ -69,6 +73,23 @@ def observed_frames(objects):
         for label in objects[f][0]:
             out.setdefault(str(int(label)), []).append(int(f))
     return out
+
+
+def positions(objects):
+    """{label (str): [[frame, x, y], ...]} centroids, rounded to 0.1 px -- distances shown with the page's reminders."""
+    out = {}
+    for f in sorted(objects):
+        for label, (x, y) in zip(*objects[f]):
+            out.setdefault(str(int(label)), []).append([int(f), round(float(x), 1), round(float(y), 1)])
+    return out
+
+
+def write_page(out, review, xy):
+    """review.html = the page template with the review and the positions embedded."""
+    embed = lambda data: json.dumps(data, separators=(',', ':')).replace('</', '<\\/')
+    page = (TEMPLATE.read_text(encoding='utf-8').replace('/*__REVIEW_DATA__*/', embed(review))
+            .replace('/*__XY_DATA__*/', embed(xy)))
+    (out / 'review.html').write_text(page, encoding='utf-8')
 
 
 def _crop(image, cx, cy, half):
@@ -188,10 +209,10 @@ def prepare(args, wells):
     out = args.output_root
     (out / 'panels').mkdir(parents=True)
     items = []
-    observed = {}
+    observed, xy = {}, {}
     for well in wells:
         frames, raws, masks, objects = load_well(args.data_root, well)
-        observed[well] = observed_frames(objects)
+        observed[well], xy[well] = observed_frames(objects), positions(objects)
         table = read_track_table(Path(args.data_root) / f'{well}_GT' / 'TRA' / 'man_track.txt')
         found = handover_candidates(well, frames, objects, table)
         for item in found:
@@ -224,9 +245,8 @@ def prepare(args, wells):
                        'track, both junctions inside the gate. No model output is used or shown.',
                   items=items, observed=observed)
     (out / 'candidates.json').write_text(json.dumps(review, indent=1), encoding='utf-8')
-    page = TEMPLATE.read_text(encoding='utf-8').replace(
-        '/*__REVIEW_DATA__*/', json.dumps(review, separators=(',', ':')).replace('</', '<\\/'))
-    (out / 'review.html').write_text(page, encoding='utf-8')
+    (out / 'positions.json').write_text(json.dumps(xy, separators=(',', ':')), encoding='utf-8')
+    write_page(out, review, xy)
     n_gap = sum(i.get('kind') == 'gap' for i in items)
     print(f'\n{len(items)} review items ({len(items) - n_gap} track ends, {n_gap} gap items); open {out / "review.html"}')
     return 0
@@ -294,10 +314,32 @@ def apply(args):
     return 0
 
 
+def refresh(args):
+    review = json.loads((args.review / 'candidates.json').read_text(encoding='utf-8'))
+    if review['dataset'] != args.dataset_name:
+        raise ValueError(f"review was made on {review['dataset']}, not {args.dataset_name}")
+    cache = args.review / 'positions.json'
+    if cache.exists():
+        xy = json.loads(cache.read_text(encoding='utf-8'))
+    else:
+        from skimage.measure import regionprops
+        xy = {}
+        for well in review['wells']:
+            objects = {}
+            for f, _, mask_path in sequence(args.data_root, well):
+                props = sorted(regionprops(tifffile.imread(mask_path)), key=lambda p: p.label)
+                objects[f] = ([p.label for p in props], [(p.centroid[1], p.centroid[0]) for p in props])
+            xy[well] = positions(objects)
+        cache.write_text(json.dumps(xy, separators=(',', ':')), encoding='utf-8')
+    write_page(args.review, review, xy)
+    print('rebuilt', args.review / 'review.html')
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest='command', required=True)
-    for name in ('prepare', 'apply'):
+    for name in ('prepare', 'apply', 'refresh'):
         p = sub.add_parser(name)
         p.add_argument('--config', type=Path, help='Default: project config.json')
         p.add_argument('--dataset', help='Dataset name from the config, or a folder under data_dir')
@@ -309,6 +351,8 @@ def main(argv=None):
             p.add_argument('--seed', type=int, default=0, help='Shuffle seed of the review order')
             p.add_argument('--reuse-review-id', type=Path, metavar='CANDIDATES_JSON',
                            help='Keep the review id of an earlier review of the same candidates (saved progress stays)')
+        elif name == 'refresh':
+            p.add_argument('--review', type=Path, required=True, help='The prepare output folder')
         else:
             p.add_argument('--review', type=Path, required=True, help='The prepare output folder')
             p.add_argument('--decisions', type=Path, required=True, help='decisions.json exported from the page')
@@ -332,7 +376,11 @@ def main(argv=None):
         log = log_path(log_root(args.output_root, base / cfg['output_root']), 'gnn_tracking',
                        f'{args.output_root.resolve().name}_handover_prepare_{spec["name"]}')
         return run_logged(log, prepare, args, wells, argv=argv)
-    args.target = args.target or base / cfg.get('data_dir', 'data') / f'{spec["name"]}_refine'
+    if args.command == 'refresh':
+        if not (args.review / 'candidates.json').exists():
+            parser.error(f'no candidates.json in {args.review}')
+        return refresh(args)
+    args.target =args.target or base / cfg.get('data_dir', 'data') / f'{spec["name"]}_refine'
     if args.target.exists():
         parser.error(f'target already exists: {args.target}; choose another --target')
     log = log_path(log_root(args.review, base / cfg['output_root']), 'gnn_tracking',

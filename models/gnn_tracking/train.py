@@ -51,13 +51,13 @@ VELOCITY_DROP = 0.2
 
 
 def gt_velocities(video, t, rng):
-    """{local index in frame t: (vx, vy)} from the GT position of the same track in frame t-1."""
+    """{local index in frame t: (vx, vy)} from the GT position of the same cell (cell_id) in frame t-1."""
     if t - 1 not in video.rows:
         return {}
     df = video.df
-    prev = {tid: k for k, tid in enumerate(df.loc[video.rows[t - 1], "track_id"].to_numpy()) if tid < UNLABELLED_OFFSET}
+    prev = {tid: k for k, tid in enumerate(df.loc[video.rows[t - 1], "cell_id"].to_numpy()) if tid < UNLABELLED_OFFSET}
     out = {}
-    for i, tid in enumerate(df.loc[video.rows[t], "track_id"].to_numpy()):
+    for i, tid in enumerate(df.loc[video.rows[t], "cell_id"].to_numpy()):
         if tid in prev and rng.random() >= VELOCITY_DROP:
             out[i] = tuple(video.pos[t][i] - video.pos[t - 1][prev[tid]])
     return out

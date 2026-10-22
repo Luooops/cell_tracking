@@ -53,7 +53,7 @@ def load_well(run, root, well):
     """-> dict(edges, relation [E] str, lineage, tracks DataFrame, divisions)."""
     edges = load_edges(Path(run) / well / 'edges.npz')
     tracks = pd.read_csv(Path(run) / well / 'instance_tracks.csv')
-    entries = relabel_lookup(root).get(well)
+    entries = relabel_lookup(root, run).get(well)
     if entries:                      # outputs made on the source data, scored on a refined dataset
         edges['src_label'] = np.array([translate(entries, t, l) for t, l in zip(edges['src_frame'], edges['src_label'])])
         edges['dst_label'] = np.array([translate(entries, t + g, l) for t, g, l in

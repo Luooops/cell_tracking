@@ -30,7 +30,7 @@ frame t+g get ids n_t .. N-1):
     msg_fwd               [M]            True for those forward candidate rows (rows 0 .. C-1 of one graph). The model
                                          writes its appearance-similarity features into exactly these rows; the mask is
                                          needed because 'the first C rows' is no longer true once graphs are batched
-    candidate_edge_label  [C]            1 if both cells carry the same GT track id       (training / scoring only)
+    candidate_edge_label  [C]            1 if both cells are the same GT cell (cell_id)   (training / scoring only)
     candidate_edge_unknown[C]            True if that label cannot be trusted             (left out of the loss)
 
 The two edge sets are deliberately separate: message edges are a wide graph that only carries context, candidate
@@ -154,7 +154,7 @@ def pair_graph(video, t, g, velocity):
     msg_extra[:C] = extra                  # block (a) comes first, so rows 0 .. C-1 are the forward candidates
 
     # ---- labels ----
-    tid_t, tid_n = sub_t.track_id.to_numpy(), sub_n.track_id.to_numpy()
+    tid_t, tid_n = sub_t.cell_id.to_numpy(), sub_n.cell_id.to_numpy()     # CTC lineage identity (utils/dataset.py)
     same = tid_t[src] == tid_n[dst]
     # A detection without identity has a unique id, so every edge touching it looks like "different cell". That
     # is only certain if the other end is a labelled track that also has its own labelled detection in the

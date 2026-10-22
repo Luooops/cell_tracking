@@ -15,7 +15,8 @@ class FakeVideo:
     """Two frames: labels 7, 8 in frame 0 and 7, 9 in frame 1 (9 is a new GT track); radius 10 px."""
     def __init__(self):
         self.df = pd.DataFrame(dict(video='v', frame=[0, 0, 1, 1], track_id=[7, 8, 7, 9], x=[0.0, 20, 3, 20],
-                                    y=[0.0, 0, 4, 5], area=[10, 10, 10, 10], mean_intensity=[1.0, 1, 1, 1]))
+                                    y=[0.0, 0, 4, 5], area=[10, 10, 10, 10], mean_intensity=[1.0, 1, 1, 1],
+                                    cell_id=[7, 8, 7, 9]))
         self.frames = [0, 1]
         self.rows = {0: np.array([0, 1]), 1: np.array([2, 3])}
         self.pos = {t: self.df.loc[self.rows[t], ['x', 'y']].to_numpy() for t in self.frames}

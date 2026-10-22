@@ -234,19 +234,47 @@ class TestMoves(unittest.TestCase):
         table, relabels = refine_well(self.table, self.observed, [], [], [m[1:] for m in r['moves']])
         self.assertEqual((table[9], table[354], relabels), ((0, 3, 0), (4, 5, 0), [(9, 4, 5, 354)]))
 
-    def test_target_already_present_or_track_decided_twice_raises(self):
+    def test_target_already_present_or_swap_track_edited_raises(self):
         with self.assertRaises(ValueError):
             refine_well(self.table, self.observed, [], [], [(140, 3, 3, 9, 'manual 1')])
-        with self.assertRaises(ValueError):
-            refine_well(self.table, self.observed, [(140, 3, 353, 4)], [], [(140, 3, 3, 353, 'manual 1')])
+        with self.assertRaises(ValueError):          # 9 is split by a swap
+            refine_well(self.table, self.observed, [], [(353, 2, 9, 3, None, None)], [(9, 4, 5, 'new', 'manual 1')])
 
-    def test_edit_of_hand_over_track_away_from_its_end_and_start_is_allowed(self):
+    def test_hand_over_links_the_detections_it_was_judged_on(self):
         table, observed, merge = {1: (0, 3, 0), 2: (5, 7, 0)}, {1: [0, 1, 2, 3], 2: [5, 6, 7]}, [(1, 3, 2, 5)]
-        out, relabels = refine_well(table, observed, merge, [], [(1, 0, 1, 'new', 'manual 1'), (2, 7, 7, 'new', 'manual 2')])
+        out, _ = refine_well(table, observed, merge, [], [(1, 0, 1, 'new', 'manual 1'), (2, 7, 7, 'new', 'manual 2')])
         self.assertEqual((out[1], out[2], out[3], out[4]), ((2, 3, 0), (5, 6, 1), (0, 1, 0), (7, 7, 0)))
-        for edit in [(1, 2, 3, 'new', 'manual 1'), (2, 5, 6, 'new', 'manual 1')]:
-            with self.assertRaises(ValueError):
-                refine_well(table, observed, merge, [], [edit])
+        out, _ = refine_well(table, observed, merge, [], [(1, 2, 3, 'new', 'manual 1')])   # A's end frame now is 3
+        self.assertEqual((out[1], out[2], out[3]), ((0, 1, 0), (5, 7, 3), (2, 3, 0)))
+        out, _ = refine_well(table, observed, merge, [], [(2, 5, 6, 'new', 'manual 1')])   # the start's first frame now is 3
+        self.assertEqual((out[1], out[2], out[3]), ((0, 3, 0), (7, 7, 0), (5, 6, 1)))
+        with self.assertRaises(ValueError):          # A's end detection goes to a track that goes on past the start
+            refine_well({**table, 9: (4, 8, 0)}, {**observed, 9: [4, 6, 8]}, merge, [], [(1, 3, 3, 9, 'manual 1')])
+
+    def test_same_statement_twice_is_accepted(self):
+        # a chain gives 50001 to 1 and links 1 -> 2; edits repeat the chain step and relabel 2 into 1
+        table, observed = {1: (0, 3, 0), 2: (5, 7, 0)}, {1: [0, 1, 2, 3], 50001: [4], 2: [5, 6, 7]}
+        moves = [(50001, 4, 4, 1, 'w:1'), (50001, 4, 4, 1, 'manual 1'), (2, 5, 7, 1, 'manual 2')]
+        out, relabels = refine_well(table, observed, [(1, 3, 2, 5)], [], moves)
+        self.assertEqual((out, relabels), ({1: (0, 7, 0)}, [(50001, 4, 4, 1), (2, 5, 7, 1)]))
+        with self.assertRaises(ValueError):          # repeating it with another target is still a conflict
+            refine_well(table, observed, [], [], [(50001, 4, 4, 1, 'w:1'), (50001, 4, 4, 2, 'manual 1')])
+
+    def test_swap_of_a_track_filled_into_its_swap_track_is_accepted(self):
+        # 1 sits only in 2's gap (frame 4): the gap item says 1 is 2, the swap says A became 2 from frame 5
+        table, observed = {1: (4, 4, 0), 2: (0, 7, 0)}, {1: [4], 2: [0, 1, 2, 3, 5, 6, 7]}
+        out, relabels = refine_well(table, observed, [], [(1, 4, 2, 5, None, None)], [(1, 4, 4, 2, 'w:gap:1')])
+        self.assertEqual((out, relabels), ({2: (0, 7, 0)}, [(1, 4, 4, 2)]))
+
+    def test_hand_over_follows_a_track_relabelled_as_a_whole(self):
+        # 1 hands over to 2; an edit relabels all of 1 into 3, so 2 continues 3
+        table, observed = {1: (2, 4, 0), 2: (5, 6, 0), 3: (0, 1, 0)}, {1: [2, 3, 4], 2: [5, 6], 3: [0, 1]}
+        out, _ = refine_well(table, observed, [(1, 4, 2, 5)], [], [(1, 2, 4, 3, 'manual 1')])
+        self.assertEqual(out, {2: (5, 6, 3), 3: (0, 4, 0)})
+        out, _ = refine_well(table, observed, [(1, 4, 2, 5)], [], [(1, 2, 3, 3, 'manual 1')])   # only a part: 1 keeps it
+        self.assertEqual((out[1], out[2]), ((4, 4, 0), (5, 6, 1)))
+        out, _ = refine_well(table, observed, [(1, 4, 2, 5)], [], [(1, 3, 4, 3, 'manual 1')])   # the end frame goes to 3
+        self.assertEqual((out[1], out[2], out[3]), ((2, 2, 0), (5, 6, 3), (0, 4, 0)))
 
     def test_named_new_identity_shared_by_two_edits(self):
         r = check_decisions([], {}, [dict(well='w', label=353, from_frame=4, to_frame=5, target='X1'),
@@ -288,6 +316,19 @@ class TestTranslate(unittest.TestCase):
             chained = [(140, 8, 8, 353), (353, 9, None, 595)]               # gap fill, then a swap of the target
             self.assertEqual([translate(chained, f, 140) for f in (7, 8)], [140, 353])
             self.assertEqual([translate(chained, f, 353) for f in (8, 9)], [353, 595])
+
+    def test_run_made_on_the_refined_dataset_is_not_translated(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / 'x_refine'
+            root.mkdir()
+            (root / 'refine_log.json').write_text(json.dumps(dict(relabels=[
+                dict(well='a', label=6, from_frame=3, new_label=7)])), encoding='utf-8')
+            for name, data_root in (('source_run', '/srv/data/x'), ('refined_run', '/srv/data/x_refine'), ('bare_run', None)):
+                (Path(folder) / name / 'oof' / 'a').mkdir(parents=True)
+                if data_root:
+                    (Path(folder) / name / 'config.json').write_text(json.dumps(dict(data_root=data_root)), encoding='utf-8')
+            found = {n: relabel_lookup(root, Path(folder) / n / 'oof' / 'a') for n in ('source_run', 'refined_run', 'bare_run')}
+        self.assertEqual({n: bool(v) for n, v in found.items()}, dict(source_run=True, refined_run=False, bare_run=True))
 
 
 if __name__ == '__main__':

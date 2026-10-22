@@ -21,10 +21,10 @@ from utils.dataset import UNLABELLED_OFFSET
 
 
 def gt_lookup(video):
-    """{(frame index, local index): GT track id} for the detections that have one."""
+    """{(frame index, local index): GT cell id (lineage identity, utils/dataset.py)} for the detections that have one."""
     out = {}
     for fi, t in enumerate(video.frames):
-        for i, tid in enumerate(video.df.loc[video.rows[t], "track_id"].to_numpy()):
+        for i, tid in enumerate(video.df.loc[video.rows[t], "cell_id"].to_numpy()):
             if tid < UNLABELLED_OFFSET:
                 out[(fi, i)] = int(tid)
     return out
