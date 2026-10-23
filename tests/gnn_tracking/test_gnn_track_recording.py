@@ -19,7 +19,7 @@ def synthetic_video():
         for k in range(9):
             if k == 4 and t == 3:
                 continue
-            rows.append(dict(video='syn', frame=t, track_id=k + 1, x=40.0 * (k % 3) + 3 * t + rng.normal(0, 0.5),
+            rows.append(dict(video='syn', frame=t, track_id=k + 1, cell_id=k + 1, x=40.0 * (k % 3) + 3 * t + rng.normal(0, 0.5),
                              y=40.0 * (k // 3) + rng.normal(0, 0.5), area=100.0 + k, mean_intensity=1.0 + 0.1 * k))
     df = pd.DataFrame(rows)
     crops = rng.random((len(df), 64, 64)).astype(np.float16)
@@ -71,6 +71,35 @@ class TestTrackVideoRecording(unittest.TestCase):
         video = synthetic_video()
         self.assertEqual(track_video_division(self.models, video),
                          track_video_division(self.models, video, recorder=EdgeRecorder(video)))
+
+    def test_prior_correction_subtracts_each_members_log_pos_weight(self):
+        from models.gnn_tracking.edge_record import EdgeRecorder
+        from models.gnn_tracking.track import track_video
+        video = synthetic_video()
+        raw, corrected = EdgeRecorder(video), EdgeRecorder(video)
+        for m, w in zip(self.models, (4.0, 2.0)):
+            m.pos_weight = w
+        try:
+            track_video(self.models, video, gap_round=False, recorder=raw)
+            track_video(self.models, video, gap_round=False, recorder=corrected, prior_correction=True)
+        finally:
+            for m in self.models:
+                m.pos_weight = None
+        a, b = raw.arrays(), corrected.arrays()
+        first = a['src_frame'] == video.frames[0]          # the first frame pair has no velocities: same graph
+        np.testing.assert_allclose(b['logits'][first], a['logits'][first] - np.log([4.0, 2.0]), atol=1e-4)
+
+    def test_prior_correction_needs_recorded_weights(self):
+        from models.gnn_tracking.track import track_video
+        for m in self.models:
+            m.pos_weight = None
+        with self.assertRaises(ValueError):
+            track_video(self.models, synthetic_video(), prior_correction=True)
+
+    def test_original_thresholds_are_the_defaults(self):
+        from models.gnn_tracking.track import track_video
+        video = synthetic_video()
+        self.assertEqual(track_video(self.models, video), track_video(self.models, video, link_thresh=0.5, gap_thresh=0.9))
 
 
 if __name__ == '__main__':

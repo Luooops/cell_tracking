@@ -25,12 +25,13 @@
   "models": {
     "gnn_division": {
       "weights": "models/gnn_tracking/weights",
-      "test": {"gap_round": true, "div_thresh": 0.5, "record_edges": false}
+      "test": {"gap_round": true, "div_thresh": 0.5, "link_thresh": 0.5, "gap_thresh": 0.9, "prior_correction": false,
+        "record_edges": false}
     },
     "gnn_tracking": {
       "weights": "models/gnn_tracking/weights",
-      "train": {"epochs": 40, "batch": 16, "lr": 0.001, "seeds": [0, 1, 2], "cv_outputs": false},
-      "test": {"gap_round": true, "record_edges": false}
+      "train": {"epochs": 40, "batch": 16, "lr": 0.001, "seeds": [0, 1, 2], "pos_weight": "auto", "cv_outputs": false},
+      "test": {"gap_round": true, "link_thresh": 0.5, "gap_thresh": 0.9, "prior_correction": false, "record_edges": false}
     },
     "trackastra": {"test": {"pretrained": "general_2d", "mode": "greedy_nodiv"}},
     "classical_tracking": {

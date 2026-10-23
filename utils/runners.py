@@ -71,7 +71,7 @@ def run_test(a):
             if a.model == 'gnn_division':
                 assign, parent = module.track_video_division(model, video, recorder=recorder, **params)
             else:
-                assign = module.track_video(model, video, gap_round=params['gap_round'], recorder=recorder)
+                assign = module.track_video(model, video, recorder=recorder, **params)
             reports[well] = export_gnn_well(destination, video, assign, parent, recorder)
         else:
             frames, rows, gt = detections(a.data_root, well)

@@ -16,6 +16,10 @@ Error coverage ("check the k% most uncertain items first: what share of all erro
 Uncertainty scores of an ensemble with member probabilities q [n, M]:
     closeness    min(p, 1 - p) of the mean p (0.5 = most uncertain)
     mutual_info  H(mean q) - mean H(q_m): the members' disagreement (epistemic part of the total entropy, nats)
+
+Recalibration of a logit z (fitted by maximum likelihood on held-out labels, Newton's method):
+    temperature  p = sigmoid(a z)          one scale a (= 1 / T); keeps p = 0.5 where it was
+    platt        p = sigmoid(a z + b)      scale and shift (Platt 1999)
 """
 import numpy as np
 
@@ -94,3 +98,33 @@ def coverage_curve(score, error, seed=0):
 def coverage_area(curve):
     """Area under a coverage curve on [0, 1] x [0, 1] (random check = 0.5, perfect ranking -> 1)."""
     return None if curve is None else float(np.trapezoid(curve / 100, COVERAGE_POINTS / 100))
+
+
+def fit_platt(z, y, shift=True, iterations=50, ridge=1e-6):
+    """Maximum-likelihood (a, b) of p = sigmoid(a z + b) for logits z [n] and labels y [n] in {0, 1}; with
+    shift=False b stays 0 (temperature scaling). Newton's method on the convex NLL from 0, with step halving
+    whenever a full step would raise the NLL (saturated logits make the plain Newton step overshoot)."""
+    z, y = np.asarray(z, dtype=np.float64), np.asarray(y, dtype=np.float64)
+    X = np.stack([z, np.ones_like(z)], 1) if shift else z[:, None]
+    w = np.zeros(X.shape[1])
+    loss = lambda v: nll(sigmoid(X @ v), y)
+    current = loss(w)
+    for _ in range(iterations):
+        p = sigmoid(X @ w)
+        grad = X.T @ (p - y)
+        hess = (X * (p * (1 - p))[:, None]).T @ X + ridge * np.eye(X.shape[1])
+        step = np.linalg.solve(hess, grad)
+        for _ in range(30):
+            trial = loss(w - step)
+            if trial <= current + 1e-12:
+                break
+            step = step / 2
+        w, current = w - step, min(trial, current)
+        if np.abs(step).max() < 1e-9:
+            break
+    return float(w[0]), float(w[1]) if shift else 0.0
+
+
+def apply_platt(z, ab):
+    """p = sigmoid(a z + b)."""
+    return sigmoid(ab[0] * np.asarray(z, dtype=np.float64) + ab[1])

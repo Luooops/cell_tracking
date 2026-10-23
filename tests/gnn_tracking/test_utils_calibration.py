@@ -3,7 +3,8 @@ import unittest
 
 import numpy as np
 
-from utils.calibration import (brier, calibration_report, coverage_area, coverage_curve, ece, mutual_information, nll,
+from utils.calibration import (apply_platt, brier, calibration_report, coverage_area, coverage_curve, ece, fit_platt,
+                               mutual_information, nll,
                                reliability)
 
 
@@ -69,3 +70,30 @@ class TestCoverageCurve(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestRecalibration(unittest.TestCase):
+    def test_platt_recovers_the_generating_scale_and_shift(self):
+        rng = np.random.default_rng(0)
+        z = rng.normal(0, 3, 200000)
+        y = rng.random(len(z)) < 1 / (1 + np.exp(-(0.5 * z - 1.0)))      # true p = sigmoid(0.5 z - 1)
+        a, b = fit_platt(z, y)
+        self.assertAlmostEqual(a, 0.5, delta=0.02)
+        self.assertAlmostEqual(b, -1.0, delta=0.03)
+        self.assertLess(nll(apply_platt(z, (a, b)), y), nll(1 / (1 + np.exp(-z)), y))
+
+    def test_temperature_keeps_the_shift_at_zero(self):
+        rng = np.random.default_rng(1)
+        z = rng.normal(0, 3, 100000)
+        y = rng.random(len(z)) < 1 / (1 + np.exp(-0.4 * z))
+        a, b = fit_platt(z, y, shift=False)
+        self.assertAlmostEqual(a, 0.4, delta=0.02)
+        self.assertEqual(b, 0.0)
+
+    def test_calibrated_logits_stay_unchanged(self):
+        rng = np.random.default_rng(2)
+        z = rng.normal(0, 2, 100000)
+        y = rng.random(len(z)) < 1 / (1 + np.exp(-z))
+        a, b = fit_platt(z, y)
+        self.assertAlmostEqual(a, 1.0, delta=0.03)
+        self.assertAlmostEqual(b, 0.0, delta=0.03)

@@ -13,7 +13,9 @@ Every well has 30 frames -> 29 + 14 + 14 = 57 graphs per version, 12 wells x 3 v
 
 Loss 1, edge classification (unchanged): binary cross-entropy on the edge logits, one vote per candidate edge,
 positives weighted by pos_weight = (number of negative edges) / (number of positive edges). Edges whose label is
-unknown (see graph.py) are left out.
+unknown (see graph.py) are left out. POS_WEIGHT = 'auto' is that original rule; a number fixes the weight instead
+(1 = the plain likelihood, so the edge probabilities are posteriors under the training labels' own prior). Each
+checkpoint keeps the weight it was trained with and the positive rate of its training edges per gap (train_prior).
 
 Loss 2, contrastive (new), on the appearance similarities alone, before any message passing:
     for a cell i of frame t with candidates j1, j2, j3 in frame t+g, softmax(sim(i, j) / 0.1) over the three must put
@@ -46,6 +48,7 @@ from models.gnn_tracking.graph import Video, pair_graph
 from models.gnn_tracking.model import TrackerGNN, DEVICE, TAU
 
 EPOCHS, BATCH, LR, AUX = 40, 16, 1e-3, 1.0
+POS_WEIGHT = "auto"      # 'auto' = negatives / positives of the training edges (original); or a number, e.g. 1
 MAX_GAP = 3              # gaps used in training (inference bridges only gap 2)
 VELOCITY_DROP = 0.2
 
@@ -86,7 +89,9 @@ def train(wells, seed=0, log=None):
         print(f"  {log}: building training graphs for {len(wells)} wells", flush=True)
     graphs = training_graphs(wells, np.random.default_rng(seed))          # kept on the CPU; a batch moves to the GPU
     y = torch.cat([g.candidate_edge_label[~g.candidate_edge_unknown] for g in graphs])
-    pos_weight = torch.tensor([float((1 - y).sum() / y.sum())], device=DEVICE)
+    gaps = torch.cat([g.candidate_edge_attr[~g.candidate_edge_unknown, -1] for g in graphs])
+    weight = float((1 - y).sum() / y.sum()) if POS_WEIGHT == "auto" else float(POS_WEIGHT)
+    pos_weight = torch.tensor([weight], device=DEVICE)
     torch.manual_seed(seed)
     model = TrackerGNN().to(DEVICE)
     opt = torch.optim.Adam(model.parameters(), lr=LR)
@@ -113,12 +118,14 @@ def train(wells, seed=0, log=None):
             elapsed = (time.time() - t0) / 60
             print(f"  {log}: epoch {ep + 1} / {EPOCHS}  loss {float(loss_sum) / n_batches:.4f}  "
                   f"({elapsed:.1f} min, ~{elapsed / (ep + 1) * (EPOCHS - ep - 1):.1f} min left)", flush=True)
+    model.train_prior = {int(g): float(y[gaps == g].mean()) for g in torch.unique(gaps).tolist()}   # per gap
     return model.eval(), float(pos_weight)
 
 
 def save(model, pos_weight, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    torch.save({"state_dict": model.state_dict(), "pos_weight": pos_weight}, path)
+    torch.save({"state_dict": model.state_dict(), "pos_weight": pos_weight,
+                "train_prior": getattr(model, "train_prior", None)}, path)
 
 
 def cross_validate(folds=(0, 1, 2), seeds=(0, 1, 2), save_dir=None):

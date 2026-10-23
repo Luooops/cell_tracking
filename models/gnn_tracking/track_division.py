@@ -27,8 +27,10 @@ from models.gnn_tracking.solver import match, match_division
 LINK_THRESH, GAP_THRESH, DIV_THRESH = 0.5, 0.9, 0.5
 
 
-def track_video_division(models, video, gap_round=True, div_thresh=DIV_THRESH, recorder=None):
-    """recorder: optional edge_record.EdgeRecorder; it only observes every solver call, the result is unchanged."""
+def track_video_division(models, video, gap_round=True, div_thresh=DIV_THRESH, recorder=None, link_thresh=LINK_THRESH,
+                         gap_thresh=GAP_THRESH, prior_correction=False):
+    """recorder: optional edge_record.EdgeRecorder; it only observes every solver call, the result is unchanged.
+    link_thresh / gap_thresh / prior_correction as in track.track_video."""
     frames = video.frames
     f0 = frames[0]
     assert frames == list(range(f0, f0 + len(frames))), "frames must be consecutive"
@@ -47,10 +49,10 @@ def track_video_division(models, video, gap_round=True, div_thresh=DIV_THRESH, r
     for t in frames[:-1]:                                             # round 1: adjacent frames, divisions allowed
         fi = t - f0
         gr = pair_graph(video, t, 1, velocities(fi))
-        p, logits = edge_scores(models, gr)
+        p, logits = edge_scores(models, gr, prior_correction)
         src, dst = gr.candidate_edge_index.numpy()
         targets = {}
-        links = match_division(p, src, dst - gr.n_t, gr.n_t, gr.n_n, LINK_THRESH, div_thresh)
+        links = match_division(p, src, dst - gr.n_t, gr.n_t, gr.n_n, link_thresh, div_thresh)
         if recorder is not None:
             recorder(1, t, 1, src, dst - gr.n_t, p, logits, np.ones(len(src), bool), links)
         for i, j in links:
@@ -78,7 +80,7 @@ def track_video_division(models, video, gap_round=True, div_thresh=DIV_THRESH, r
         if not ends or not starts:
             continue
         gr = pair_graph(video, t, 2, velocities(fi))
-        p, logits = edge_scores(models, gr)
+        p, logits = edge_scores(models, gr, prior_correction)
         src, dst = gr.candidate_edge_index.numpy(); dst = dst - gr.n_t
         row = {members[tid][-1][1]: r for r, tid in enumerate(ends)}
         col = {members[tid][0][1]: c for c, tid in enumerate(starts)}
@@ -88,7 +90,7 @@ def track_video_division(models, video, gap_round=True, div_thresh=DIV_THRESH, r
                 recorder(2, t, 2, src, dst, p, logits, np.zeros(len(src), bool), [])
             continue
         links = match(p[sel], np.array([row[src[e]] for e in sel]), np.array([col[dst[e]] for e in sel]),
-                      len(ends), len(starts), GAP_THRESH)
+                      len(ends), len(starts), gap_thresh)
         if recorder is not None:
             recorder(2, t, 2, src, dst, p, logits, np.isin(np.arange(len(src)), sel),
                      [(members[ends[r]][-1][1], members[starts[c]][0][1]) for r, c in links])

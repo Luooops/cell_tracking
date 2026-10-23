@@ -42,7 +42,9 @@ def train_model(a):
         raise ValueError(f'No training wells for dataset {a.dataset}; pass --wells or declare a split in the config')
     settings = dict(data_root=str(a.data_root), cache=str(a.destination / 'cache'), folds=ds['folds'],
                     dev_wells=dev_wells, epochs=a.params['epochs'], batch=a.params['batch'], lr=a.params['lr'],
-                    log_path=str(a.log_path))
+                    pos_weight=a.params.get('pos_weight', 'auto'), log_path=str(a.log_path))
+    if settings['pos_weight'] != 'auto' and not (isinstance(settings['pos_weight'], (int, float)) and settings['pos_weight'] > 0):
+        raise ValueError('pos_weight must be "auto" or a positive number')
     if a.cv and a.params.get('cv_outputs'):
         # Keep the fold models and track every held-out well with them (both trackers, test settings of
         # config.json, edges recorded): the out-of-fold answer sheets that calibration is fitted on.
@@ -109,6 +111,7 @@ def _run_gnn_jobs(settings, jobs):
     trainer.FOLDS = settings['folds']
     trainer.DEV_WELLS = settings['dev_wells']
     trainer.EPOCHS, trainer.BATCH, trainer.LR = settings['epochs'], settings['batch'], settings['lr']
+    trainer.POS_WEIGHT = settings.get('pos_weight', 'auto')
     results = []
     for job in jobs:
         if job[0] == 'fold':
@@ -144,7 +147,7 @@ def _write_oof(settings, k, seeds, save_dir):
             if name == 'gnn_division':
                 assign, parent = track_video_division(models, video, recorder=recorder, **params)
             else:
-                assign = track_video(models, video, gap_round=params['gap_round'], recorder=recorder)
+                assign = track_video(models, video, recorder=recorder, **params)
             folder = Path(settings['destination']) / 'oof' / name
             folder.mkdir(parents=True, exist_ok=True)
             report = export_gnn_well(folder / well, video, assign, parent, recorder)

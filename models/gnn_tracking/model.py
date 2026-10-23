@@ -128,18 +128,29 @@ class TrackerGNN(nn.Module):
 
 
 def load_model(path):
+    """The network of a checkpoint, with the pos_weight it was trained with and the positive rate of its training
+    edges per gap (train_prior) as attributes (None for checkpoints that do not record them)."""
     model = TrackerGNN().to(DEVICE)
     ck = torch.load(path, map_location=DEVICE, weights_only=False)
-    model.load_state_dict(ck["state_dict"] if "state_dict" in ck else ck)
+    full = isinstance(ck, dict) and "state_dict" in ck
+    model.load_state_dict(ck["state_dict"] if full else ck)
+    model.pos_weight = ck.get("pos_weight") if full else None
+    model.train_prior = ck.get("train_prior") if full else None
     return model.eval()
 
 
 @torch.no_grad()
-def edge_scores(models, gr):
+def edge_scores(models, gr, prior_correction=False):
     """(p [C], logits [C, M]) numpy: p = the mean over the ensemble members' sigmoid outputs (the tracker's input);
-    logits = every member's raw logit, kept for calibration and uncertainty analysis."""
+    logits = every member's logit as used, kept for calibration and uncertainty analysis.
+    prior_correction: a member trained with positives weighted by w scores with its prior odds raised w-fold; Bayes'
+    rule removes that by z - log(w) (w read from the member's checkpoint; nothing is fitted)."""
     gd = gr.to(DEVICE)
     z = torch.stack([m(gd) for m in models])                                  # [M, C]
+    if prior_correction:
+        if any(getattr(m, 'pos_weight', None) is None for m in models):
+            raise ValueError('prior_correction needs checkpoints that record their pos_weight')
+        z = z - torch.log(torch.tensor([float(m.pos_weight) for m in models], device=z.device))[:, None]
     p = torch.sigmoid(z).mean(0).cpu().numpy()
     gr.cpu()
     return p, z.T.float().cpu().numpy()

@@ -10,7 +10,8 @@ round 2: every gap-2 pair that has track ends and starts). One row per candidate
     src_frame    frame t;  g = the gap (dst frame = t + g)
     src_label    mask label (instance id) of the frame-t detection; dst_label likewise in frame t + g
     distance     centroid distance in px;  gate = r(t) x sqrt(g), the candidate radius of that graph
-    logits       [E, M] raw logit of every ensemble member;  p = mean of their sigmoids (what the solver used)
+    logits       [E, M] logit of every ensemble member as the tracker used it (after prior_correction, if on);
+                 p = mean of their sigmoids (what the solver used)
     in_solver    True if the edge was offered to the solver (round 1: all; round 2: track end -> track start only)
     chosen       True if the solver linked it
 
