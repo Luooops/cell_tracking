@@ -42,7 +42,10 @@ def train_model(a):
         raise ValueError(f'No training wells for dataset {a.dataset}; pass --wells or declare a split in the config')
     settings = dict(data_root=str(a.data_root), cache=str(a.destination / 'cache'), folds=ds['folds'],
                     dev_wells=dev_wells, epochs=a.params['epochs'], batch=a.params['batch'], lr=a.params['lr'],
-                    pos_weight=a.params.get('pos_weight', 'auto'), log_path=str(a.log_path))
+                    pos_weight=a.params.get('pos_weight', 'auto'), aleatoric=a.params.get('aleatoric', False),
+                    log_path=str(a.log_path))
+    if not isinstance(settings['aleatoric'], bool):
+        raise ValueError('aleatoric must be true or false')
     if settings['pos_weight'] != 'auto' and not (isinstance(settings['pos_weight'], (int, float)) and settings['pos_weight'] > 0):
         raise ValueError('pos_weight must be "auto" or a positive number')
     if a.cv and a.params.get('cv_outputs'):
@@ -112,6 +115,7 @@ def _run_gnn_jobs(settings, jobs):
     trainer.DEV_WELLS = settings['dev_wells']
     trainer.EPOCHS, trainer.BATCH, trainer.LR = settings['epochs'], settings['batch'], settings['lr']
     trainer.POS_WEIGHT = settings.get('pos_weight', 'auto')
+    trainer.ALEATORIC = settings.get('aleatoric', False)
     results = []
     for job in jobs:
         if job[0] == 'fold':

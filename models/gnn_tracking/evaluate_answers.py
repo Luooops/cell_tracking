@@ -13,8 +13,9 @@ negatives = unrelated; mother_daughter edges are reported on their own and unkno
                   for: round1_all (every adjacent-frame candidate), round1_decision (those with DECISION_LO <= p <=
                   DECISION_HI, where the decision is not already certain), round2_solver (gap-2 edges the solver saw)
     coverage      error coverage curves (utils/calibration.py) for false links (chosen edges that are unrelated) and
-                  missed links (solver edges left unchosen that are the same cell), ranked by closeness of p to 0.5
-                  and by the ensemble's mutual information; a random check is the diagonal
+                  missed links (solver edges left unchosen that are the same cell), ranked by closeness of p to 0.5,
+                  by the ensemble's mutual information and, for aleatoric ensembles, by the members' mean learned
+                  noise sigma^2 (log_var in edges.npz); a random check is the diagonal
     division      precision / recall / false positives per 1000 detections (utils/division_metrics.py); a run
                   without lineage.json predicts no division
 
@@ -94,7 +95,10 @@ def coverage_block(e, relation, sel, error_relation):
     p, q = e['p'][sel], sigmoid(e['logits'][sel])
     out = dict(items=int(sel.sum()), errors=int(error.sum()))
     curves = {}
-    for name, score in (('closeness', np.minimum(p, 1 - p)), ('mutual_info', mutual_information(q))):
+    scores = [('closeness', np.minimum(p, 1 - p)), ('mutual_info', mutual_information(q))]
+    if 'log_var' in e:
+        scores.append(('aleatoric', np.exp(e['log_var'][sel].astype(np.float64)).mean(1)))
+    for name, score in scores:
         curve = coverage_curve(score, error)
         curves[name] = curve
         out[name] = None if curve is None else dict(area=coverage_area(curve),
@@ -156,11 +160,12 @@ def plot(output_base, reliability_rows, coverage_rows, title):
     ax.legend(loc='upper left')
     for ax, pop, name in ((axes[1], 'false_links', 'False links'), (axes[2], 'missed_links', 'Missed links')):
         ax.plot([0, 100], [0, 100], color=EDGE, lw=0.6, ls='--', label='random', zorder=1)
-        for i, score in enumerate(('closeness', 'mutual_info')):
+        for i, score in enumerate(('closeness', 'mutual_info', 'aleatoric')):
             rows = [r for r in coverage_rows if r['population'] == pop and r['score'] == score]
             if rows:
                 ax.plot([r['checked_percent'] for r in rows], [r['errors_found_percent'] for r in rows], lw=0.9,
-                        color=RUN_COLORS[i], label={'closeness': 'p near 0.5', 'mutual_info': 'disagreement'}[score])
+                        color=RUN_COLORS[i], label={'closeness': 'p near 0.5', 'mutual_info': 'disagreement',
+                                                    'aleatoric': 'learned noise'}[score])
         ax.set(xlim=(0, 100), ylim=(0, 100), xlabel='Links checked (%)', ylabel=f'{name} found (%)')
         ax.legend(loc='lower right')
     for ax, letter in zip(axes, 'abc'):
@@ -176,8 +181,9 @@ def plot(output_base, reliability_rows, coverage_rows, title):
               f'{DECISION_LO} <= p <= {DECISION_HI}; round2 solver, gap-2 edges offered to the solver. Positives, same '
               f'cell; negatives, unrelated cells; mother-daughter and unknown-identity edges excluded. b, c, Share of '
               f'all false links (chosen but unrelated) and missed links (offered, not chosen, same cell) found when '
-              f'checking the given share of items in order of uncertainty: p near 0.5 (min(p, 1 - p)) or member '
-              f'disagreement (mutual information of the ensemble); dashed, random checking. Pooled over sequences. '
+              f'checking the given share of items in order of uncertainty: p near 0.5 (min(p, 1 - p)), member '
+              f'disagreement (mutual information of the ensemble) or, for networks that learn it, the members\' mean '
+              f'noise variance; dashed, random checking. Pooled over sequences. '
               f'Project association evaluation on fixed detections, not official CTC measures.')
     legend_path = output_base.parent / f'{output_base.name}_legend.txt'
     legend_path.write_text(legend + '\n', encoding='utf-8')
@@ -196,7 +202,7 @@ def evaluate(args, wells):
                            calibration={pop: {k: s['calibration'][pop][k] for k in ('n', 'ece', 'nll', 'brier')}
                                         for pop in POPULATIONS},
                            coverage_area={pop: {k: (v or {}).get('area') for k, v in s['coverage'][pop].items()
-                                                if k in ('closeness', 'mutual_info')} for pop in s['coverage']})
+                                                if k in ('closeness', 'mutual_info', 'aleatoric')} for pop in s['coverage']})
         cal = s['calibration']['round1_decision']
         print(f"{w}: {s['edges']} edges, round1 decision n={cal['n']} ECE={cal['ece']}, "
               f"divisions predicted {part['division']['predicted']} / GT {part['division']['gt_divisions']}", flush=True)

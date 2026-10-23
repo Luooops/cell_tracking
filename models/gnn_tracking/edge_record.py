@@ -10,8 +10,9 @@ round 2: every gap-2 pair that has track ends and starts). One row per candidate
     src_frame    frame t;  g = the gap (dst frame = t + g)
     src_label    mask label (instance id) of the frame-t detection; dst_label likewise in frame t + g
     distance     centroid distance in px;  gate = r(t) x sqrt(g), the candidate radius of that graph
-    logits       [E, M] logit of every ensemble member as the tracker used it (after prior_correction, if on);
-                 p = mean of their sigmoids (what the solver used)
+    logits       [E, M] logit of every ensemble member as the tracker used it (after prior_correction, if on; the
+                 expected logit of an aleatoric member);  p = mean of their sigmoids (what the solver used)
+    log_var      [E, M] each member's s = log sigma^2, only for aleatoric ensembles (model.py)
     in_solver    True if the edge was offered to the solver (round 1: all; round 2: track end -> track start only)
     chosen       True if the solver linked it
 
@@ -31,9 +32,10 @@ class EdgeRecorder:
         self.video = video
         self.parts = []
 
-    def __call__(self, round_, t, g, src, dst, p, logits, in_solver, chosen):
+    def __call__(self, round_, t, g, src, dst, p, logits, in_solver, chosen, log_var=None):
         """src / dst: local indices in frames t / t + g (one per candidate edge); p [E]; logits [E, M];
-        in_solver: bool [E]; chosen: iterable of (src local, dst local) pairs the solver linked."""
+        in_solver: bool [E]; chosen: iterable of (src local, dst local) pairs the solver linked;
+        log_var [E, M] or None."""
         v = self.video
         src, dst = np.asarray(src, dtype=np.int64), np.asarray(dst, dtype=np.int64)
         labels_t = v.df.loc[v.rows[t], 'track_id'].to_numpy()
@@ -48,11 +50,14 @@ class EdgeRecorder:
             in_solver=np.asarray(in_solver, bool).reshape(n),
             chosen=np.array([(int(i), int(j)) in picked for i, j in zip(src, dst)], bool).reshape(n),
             logits=np.asarray(logits, np.float32).reshape(n, -1)))
+        if log_var is not None:
+            self.parts[-1]['log_var'] = np.asarray(log_var, np.float32).reshape(n, -1)
 
     def arrays(self):
         if not self.parts:
             return {k: np.zeros(0) for k in COLUMNS} | {'logits': np.zeros((0, 0), np.float32)}
-        return {k: np.concatenate([part[k] for part in self.parts]) for k in COLUMNS + ('logits',)}
+        extra = ('log_var',) if all('log_var' in part for part in self.parts) else ()
+        return {k: np.concatenate([part[k] for part in self.parts]) for k in COLUMNS + ('logits',) + extra}
 
     def save(self, path):
         np.savez_compressed(path, **self.arrays())

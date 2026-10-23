@@ -59,12 +59,12 @@ def track_video(models, video, gap_round=True, recorder=None, link_thresh=LINK_T
     for t in frames[:-1]:
         fi = t - f0
         gr = pair_graph(video, t, 1, velocities(fi))
-        p, logits = edge_scores(models, gr, prior_correction)
+        p, logits, log_var = edge_scores(models, gr, prior_correction)
         src, dst = gr.candidate_edge_index.numpy()
         matched = set()
         links = match(p, src, dst - gr.n_t, gr.n_t, gr.n_n, link_thresh)
         if recorder is not None:
-            recorder(1, t, 1, src, dst - gr.n_t, p, logits, np.ones(len(src), bool), links)
+            recorder(1, t, 1, src, dst - gr.n_t, p, logits, np.ones(len(src), bool), links, log_var)
         for i, j in links:
             tid = assign[(fi, i)]
             assign[(fi + 1, j)] = tid; members[tid].append((fi + 1, j)); matched.add(j)
@@ -82,20 +82,20 @@ def track_video(models, video, gap_round=True, recorder=None, link_thresh=LINK_T
         if not ends or not starts:
             continue
         gr = pair_graph(video, t, 2, velocities(fi))
-        p, logits = edge_scores(models, gr, prior_correction)
+        p, logits, log_var = edge_scores(models, gr, prior_correction)
         src, dst = gr.candidate_edge_index.numpy(); dst = dst - gr.n_t
         row = {members[tid][-1][1]: r for r, tid in enumerate(ends)}       # local index in frame t   -> solver row
         col = {members[tid][0][1]: c for c, tid in enumerate(starts)}      # local index in frame t+2 -> solver column
         sel = [e for e in range(len(src)) if src[e] in row and dst[e] in col]
         if not sel:
             if recorder is not None:
-                recorder(2, t, 2, src, dst, p, logits, np.zeros(len(src), bool), [])
+                recorder(2, t, 2, src, dst, p, logits, np.zeros(len(src), bool), [], log_var)
             continue
         links = match(p[sel], np.array([row[src[e]] for e in sel]), np.array([col[dst[e]] for e in sel]),
                       len(ends), len(starts), gap_thresh)
         if recorder is not None:
             recorder(2, t, 2, src, dst, p, logits, np.isin(np.arange(len(src)), sel),
-                     [(members[ends[r]][-1][1], members[starts[c]][0][1]) for r, c in links])
+                     [(members[ends[r]][-1][1], members[starts[c]][0][1]) for r, c in links], log_var)
         for r, c in links:
             a, b = ends[r], starts[c]
             for k in members[b]:

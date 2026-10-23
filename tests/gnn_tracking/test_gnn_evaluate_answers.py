@@ -10,7 +10,7 @@ import pandas as pd
 from models.gnn_tracking.evaluate_answers import main
 
 
-def write_run(root):
+def write_run(root, log_var=False):
     """GT: mother 1 (frames 0-1) divides into 2 and 3 (frame 2); track 4 runs through frames 0-2.
     The tracker linked 1 -> 1, 4 -> 4, and one daughter (1 -> 2) as a continuation; no lineage.json."""
     gt = root / 'data' / 's01_GT' / 'TRA'
@@ -33,7 +33,7 @@ def write_run(root):
     z = np.log(p / (1 - p))
     np.savez(well / 'edges.npz', round=np.ones(8, np.int8), src_frame=t, g=np.ones(8, np.int8), src_label=a,
              dst_label=b, distance=np.ones(8), gate=np.full(8, 10.0), p=p, in_solver=np.ones(8, bool), chosen=chosen,
-             logits=np.stack([z, z + 0.1], 1))
+             logits=np.stack([z, z + 0.1], 1), **(dict(log_var=np.zeros((8, 2), np.float32)) if log_var else {}))
 
 
 class TestEvaluateAnswers(unittest.TestCase):
@@ -59,6 +59,18 @@ class TestEvaluateAnswers(unittest.TestCase):
                 self.assertTrue((out / name).is_file(), name)
             with self.assertRaises(SystemExit):
                 main(['--data-root', str(root / 'data'), '--run', str(root / 'run'), '--output-root', str(out)])
+
+
+    def test_learned_noise_is_a_ranking_when_recorded(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            write_run(root, log_var=True)
+            out = root / 'eval'
+            self.assertEqual(main(['--data-root', str(root / 'data'), '--run', str(root / 'run'),
+                                   '--output-root', str(out), '--no-plots']), 0)
+            report = json.loads((out / 'metrics.json').read_text(encoding='utf-8'))
+            self.assertIn('aleatoric', report['overall']['coverage']['missed_links'])
+            self.assertIn('aleatoric', report['per_well']['s01']['coverage_area']['false_links'])
 
 
 if __name__ == '__main__':

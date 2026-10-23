@@ -12,6 +12,12 @@ Step 2: the network. One graph in, one logit per candidate edge out ("are these 
     h --2 x attention message passing over the message edges--> h [N, 64]
     cat(h[i], h[j], edge input) [64 + 64 + 16 = 144] --MLP--> 1 logit
 
+With aleatoric=True the MLP gives a second number per edge, s = log sigma^2: how noisy the network judges that edge
+to be (cells pressed together, a merged detection, a doubtful label). The edge's logit is then mu + sigma * noise
+(Kendall & Gal, "What uncertainties do we need in Bayesian deep learning for computer vision?", NeurIPS 2017):
+training averages the likelihood over noise draws (train.py), and its probability is the expected sigmoid, close
+to sigmoid(mu / sqrt(1 + pi sigma^2 / 8)) -- an edge the network finds noisy is scored closer to 0.5 by itself.
+
 Why the appearance network has its own training objective (train.py): an earlier version fed a small crop encoder
 that was trained only through the edge loss, and it contributed nothing -- setting its output to zero did not change
 the score. The same small encoder, trained instead with a contrastive loss that asks which candidate is the same
@@ -88,13 +94,23 @@ class AttentionLayer(MessagePassing):
         return (alpha.unsqueeze(-1) * v).reshape(-1, self.dim)            # [M, 64]
 
 
+LOG_VAR_RANGE = (-10.0, 10.0)   # clamp of s = log sigma^2 (numerical safety only)
+
+
+def expected_logit(mu, log_var):
+    """Logit of E[sigmoid(mu + sigma * N(0, 1))] by the probit approximation (MacKay 1992)."""
+    return mu / torch.sqrt(1.0 + torch.pi / 8.0 * torch.exp(log_var))
+
+
 class TrackerGNN(nn.Module):
-    def __init__(self):
+    def __init__(self, aleatoric=False):
         super().__init__()
+        self.aleatoric = aleatoric
         self.embed = AppearanceNet()
         self.enc = nn.Linear(F_NODE + F_VISUAL, HIDDEN)
         self.layers = nn.ModuleList([AttentionLayer() for _ in range(LAYERS)])
-        self.edge_mlp = nn.Sequential(nn.Linear(2 * HIDDEN + F_EDGE, HIDDEN), nn.ReLU(), nn.Linear(HIDDEN, 1))
+        self.edge_mlp = nn.Sequential(nn.Linear(2 * HIDDEN + F_EDGE, HIDDEN), nn.ReLU(),
+                                      nn.Linear(HIDDEN, 2 if aleatoric else 1))
 
     def _embed_chunk(self, x):
         with torch.autocast("cuda", enabled=DEVICE.type == "cuda"):       # half precision for the convolutions
@@ -124,15 +140,19 @@ class TrackerGNN(nn.Module):
         h = torch.relu(self.enc(torch.cat([g.geom_x, e], dim=1)))                                # [N, 64]
         for layer in self.layers:
             h = layer(h, g.message_edge_index, msg_attr)
-        return self.edge_mlp(torch.cat([h[src], h[dst], cand_attr], dim=-1)).squeeze(-1)         # [C] logits
+        out = self.edge_mlp(torch.cat([h[src], h[dst], cand_attr], dim=-1))                     # [C, 1 or 2]
+        if not self.aleatoric:
+            return out.squeeze(-1)                                                               # [C] logits
+        self.log_var = out[:, 1].clamp(*LOG_VAR_RANGE)                                           # [C] s = log sigma^2
+        return out[:, 0]                                                                         # [C] mu
 
 
 def load_model(path):
     """The network of a checkpoint, with the pos_weight it was trained with and the positive rate of its training
     edges per gap (train_prior) as attributes (None for checkpoints that do not record them)."""
-    model = TrackerGNN().to(DEVICE)
     ck = torch.load(path, map_location=DEVICE, weights_only=False)
     full = isinstance(ck, dict) and "state_dict" in ck
+    model = TrackerGNN(aleatoric=bool(ck.get("aleatoric", False)) if full else False).to(DEVICE)
     model.load_state_dict(ck["state_dict"] if full else ck)
     model.pos_weight = ck.get("pos_weight") if full else None
     model.train_prior = ck.get("train_prior") if full else None
@@ -141,19 +161,28 @@ def load_model(path):
 
 @torch.no_grad()
 def edge_scores(models, gr, prior_correction=False):
-    """(p [C], logits [C, M]) numpy: p = the mean over the ensemble members' sigmoid outputs (the tracker's input);
-    logits = every member's logit as used, kept for calibration and uncertainty analysis.
+    """(p [C], logits [C, M], log_var [C, M] or None) numpy: p = the mean over the ensemble members' sigmoid outputs
+    (the tracker's input); logits = every member's logit as used (for an aleatoric member the expected logit, so
+    sigmoid(logit) is its probability); log_var = the members' s = log sigma^2 when all of them have one.
     prior_correction: a member trained with positives weighted by w scores with its prior odds raised w-fold; Bayes'
-    rule removes that by z - log(w) (w read from the member's checkpoint; nothing is fitted)."""
+    rule removes that by mu - log(w) (w read from the member's checkpoint; nothing is fitted)."""
     gd = gr.to(DEVICE)
-    z = torch.stack([m(gd) for m in models])                                  # [M, C]
+    mus, log_vars = [], []
+    for m in models:
+        mus.append(m(gd))
+        log_vars.append(m.log_var if getattr(m, 'aleatoric', False) else None)
+    z = torch.stack(mus)                                                      # [M, C]
     if prior_correction:
         if any(getattr(m, 'pos_weight', None) is None for m in models):
             raise ValueError('prior_correction needs checkpoints that record their pos_weight')
         z = z - torch.log(torch.tensor([float(m.pos_weight) for m in models], device=z.device))[:, None]
+    lv = torch.stack([v if v is not None else torch.zeros_like(z[0]) for v in log_vars])
+    noisy = torch.tensor([v is not None for v in log_vars], device=z.device)[:, None]
+    z = torch.where(noisy, expected_logit(z, lv), z)
     p = torch.sigmoid(z).mean(0).cpu().numpy()
     gr.cpu()
-    return p, z.T.float().cpu().numpy()
+    log_var = lv.T.float().cpu().numpy() if all(v is not None for v in log_vars) else None
+    return p, z.T.float().cpu().numpy(), log_var
 
 
 def edge_probabilities(models, gr):

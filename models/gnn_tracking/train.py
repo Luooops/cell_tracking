@@ -25,6 +25,12 @@ This is the same question the tracker has to answer, asked of the appearance net
 cell's real competitors (its spatial neighbours), which is what makes them useful.
 total = loss1 + AUX * loss2, AUX = 1 (set a priori, not tuned).
 
+Loss 1 with ALEATORIC = True (model.py): the network also gives s = log sigma^2 per edge, and loss 1 becomes the
+negative log of the likelihood averaged over MC_SAMPLES noisy logits mu + sigma * noise (Kendall & Gal 2017),
+weighted like the plain loss. A large sigma lowers the loss of an edge the network cannot get right (an ambiguous
+pair, a doubtful label) but raises it on every edge it can, so the network learns where to be unsure; nothing is
+added by hand. MC_SAMPLES = 20, set a priori.
+
 Velocity (teacher forcing): a frame-t cell gets the displacement from its GT position one frame earlier. For 20%
 of the cells it is withheld at random, so the model also learns to judge cells without a known velocity -- at
 inference that is every new track and every cell just after a missed frame.
@@ -49,6 +55,8 @@ from models.gnn_tracking.model import TrackerGNN, DEVICE, TAU
 
 EPOCHS, BATCH, LR, AUX = 40, 16, 1e-3, 1.0
 POS_WEIGHT = "auto"      # 'auto' = negatives / positives of the training edges (original); or a number, e.g. 1
+ALEATORIC = False        # True: the network also learns how noisy each edge is (model.py); loss averaged over noise
+MC_SAMPLES = 20          # noise draws per edge for the aleatoric loss
 MAX_GAP = 3              # gaps used in training (inference bridges only gap 2)
 VELOCITY_DROP = 0.2
 
@@ -84,6 +92,17 @@ def contrastive_loss(sim, src, dst, positive):
     return -torch.log(softmax(s, src)[positive] + 1e-9).mean() - torch.log(softmax(s, dst)[positive] + 1e-9).mean()
 
 
+def aleatoric_loss(mu, log_var, label, pos_weight, samples=MC_SAMPLES):
+    """-log of the likelihood of label averaged over `samples` draws of mu + sigma * N(0, 1), per edge; positives
+    weighted by pos_weight and averaged over edges as binary_cross_entropy_with_logits does."""
+    eps = torch.randn((samples,) + mu.shape, device=mu.device)
+    z = mu + torch.exp(0.5 * log_var) * eps                                           # [S, E]
+    log_lik = -F.binary_cross_entropy_with_logits(z, label.expand_as(z), reduction="none")
+    nll = -(torch.logsumexp(log_lik, 0) - np.log(samples))                            # [E]
+    weight = torch.where(label > 0.5, pos_weight, torch.ones_like(label))
+    return (weight * nll).mean()
+
+
 def train(wells, seed=0, log=None):
     if log:
         print(f"  {log}: building training graphs for {len(wells)} wells", flush=True)
@@ -93,7 +112,7 @@ def train(wells, seed=0, log=None):
     weight = float((1 - y).sum() / y.sum()) if POS_WEIGHT == "auto" else float(POS_WEIGHT)
     pos_weight = torch.tensor([weight], device=DEVICE)
     torch.manual_seed(seed)
-    model = TrackerGNN().to(DEVICE)
+    model = TrackerGNN(aleatoric=ALEATORIC).to(DEVICE)
     opt = torch.optim.Adam(model.parameters(), lr=LR)
     if log:
         print(f"  {log}: {len(graphs)} graphs, {-(-len(graphs) // BATCH)} batches per epoch", flush=True)
@@ -106,7 +125,10 @@ def train(wells, seed=0, log=None):
             known = ~b.candidate_edge_unknown
             label = b.candidate_edge_label[known]
             logit = model(b)
-            loss = F.binary_cross_entropy_with_logits(logit[known], label, pos_weight=pos_weight)
+            if ALEATORIC:
+                loss = aleatoric_loss(logit[known], model.log_var[known], label, pos_weight)
+            else:
+                loss = F.binary_cross_entropy_with_logits(logit[known], label, pos_weight=pos_weight)
             src, dst = b.candidate_edge_index
             loss = loss + AUX * contrastive_loss(model.sim[known], src[known], dst[known], label > 0.5)
             opt.zero_grad(); loss.backward(); opt.step()
@@ -125,7 +147,8 @@ def train(wells, seed=0, log=None):
 def save(model, pos_weight, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     torch.save({"state_dict": model.state_dict(), "pos_weight": pos_weight,
-                "train_prior": getattr(model, "train_prior", None)}, path)
+                "train_prior": getattr(model, "train_prior", None), "aleatoric": bool(getattr(model, "aleatoric", False))},
+               path)
 
 
 def cross_validate(folds=(0, 1, 2), seeds=(0, 1, 2), save_dir=None):
