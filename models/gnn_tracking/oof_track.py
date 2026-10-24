@@ -17,6 +17,10 @@ config.json for each tracker and are overridden with --set (keys must exist ther
 Writes into a new --output-root: oof/<tracker>/<well>/ (instance_tracks.csv, metrics.json, edges.npz) and
 config.json (the run, dataset root and settings), so evaluate_answers / evaluate_ctc can score it like the original
 out-of-fold sheets.
+
+--in-fold (diagnostic only) tracks instead the wells each fold was TRAINED on, with that fold's models, into
+infold/fold<k>/<tracker>/<well>/: how the models do on data they have seen, against the out-of-fold sheets, shows
+how much of the training data they have memorised. Never use these sheets for any score or choice.
 """
 import argparse
 import datetime
@@ -62,12 +66,15 @@ def run(args, run_config, settings):
     (out / 'config.json').write_text(json.dumps(dict(
         cv_run=str(args.cv_run.resolve()), dataset=run_config['dataset'], data_root=args.data_root, folds=folds,
         seeds=seeds, trackers=settings, created=datetime.datetime.now().isoformat(timespec='seconds'),
-        scope='out-of-fold tracking with the fold models of the CV run; no training'), indent=2), encoding='utf-8')
+        in_fold=args.in_fold, scope=('IN-FOLD diagnostic: each fold model tracks its own training wells; never a score'
+                                      if args.in_fold else 'out-of-fold tracking with the fold models of the CV run; '
+                                      'no training')), indent=2), encoding='utf-8')
     for k, fold in enumerate(folds):
         models = [load_model(str(args.cv_run / 'checkpoints' / f'fold{k}_seed{s}.pt')) for s in seeds]
         if any(settings[t].get('prior_correction') for t in settings):
             print(f"fold {k}: pos_weight {[round(m.pos_weight, 3) for m in models]}", flush=True)
-        for well in fold:
+        wells = [w for other in folds if other is not fold for w in other] if args.in_fold else fold
+        for well in wells:
             video = Video(*dataset.load_well(well))
             for name, params in settings.items():
                 recorder, parent = EdgeRecorder(video), None
@@ -75,12 +82,12 @@ def run(args, run_config, settings):
                     assign, parent = track_video_division(models, video, recorder=recorder, **params)
                 else:
                     assign = track_video(models, video, recorder=recorder, **params)
-                folder = out / 'oof' / name
+                folder = out / 'infold' / f'fold{k}' / name if args.in_fold else out / 'oof' / name
                 folder.mkdir(parents=True, exist_ok=True)
                 report = export_gnn_well(folder / well, video, assign, parent, recorder)
                 (folder / well / 'metrics.json').write_text(json.dumps(dict(fold=k, seeds=seeds, settings=params, **report),
                                                                        indent=2), encoding='utf-8')
-                print(f"fold {k} {well} {name}: perfect {report['perfect']:.1f}  id switches {report['id_switches']}",
+                print(f"fold {k} {well} {name}{' (in fold)' if args.in_fold else ''}: perfect {report['perfect']:.1f}  id switches {report['id_switches']}",
                       flush=True)
     print('saved', out)
     return 0
@@ -94,6 +101,8 @@ def main(argv=None):
     parser.add_argument('--trackers', nargs='+', choices=TRACKERS, default=list(TRACKERS))
     parser.add_argument('--set', action='append', default=[], metavar='KEY=JSON', help='Override a test setting')
     parser.add_argument('--device', choices=['auto', 'cpu', 'cuda'], default='auto')
+    parser.add_argument('--in-fold', action='store_true',
+                        help='Diagnostic: track the wells each fold was trained on (memorisation check), not a score')
     parser.add_argument('--output-root', type=Path, required=True, help='New directory for the out-of-fold sheets')
     args = parser.parse_args(argv)
     cfg, base = read_config(args.config)
