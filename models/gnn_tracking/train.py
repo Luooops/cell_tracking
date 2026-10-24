@@ -51,12 +51,14 @@ from torch_geometric.utils import softmax
 
 from utils.dataset import HERE, DEV_WELLS, FOLDS, UNLABELLED_OFFSET, load_well
 from models.gnn_tracking.graph import Video, pair_graph
+from models.gnn_tracking import motion as kalman
 from models.gnn_tracking.model import TrackerGNN, DEVICE, TAU
 
 EPOCHS, BATCH, LR, AUX = 40, 16, 1e-3, 1.0
 POS_WEIGHT = "auto"      # 'auto' = negatives / positives of the training edges (original); or a number, e.g. 1
 ALEATORIC = False        # True: the network also learns how noisy each edge is (model.py); loss averaged over noise
 MC_SAMPLES = 20          # noise draws per edge for the aleatoric loss
+MOTION = "velocity"      # "velocity" (one-step velocity, original) or "kalman" (motion.py: filter fitted per fold)
 MAX_GAP = 3              # gaps used in training (inference bridges only gap 2)
 VELOCITY_DROP = 0.2
 
@@ -74,7 +76,44 @@ def gt_velocities(video, t, rng):
     return out
 
 
-def training_graphs(wells, rng):
+def gt_tracks(video):
+    """{cell id: [(frame index, x, y), ...]} of the labelled GT cells of a video, in time order."""
+    if getattr(video, '_gt_tracks', None) is None:
+        tracks = {}
+        for fi, t in enumerate(video.frames):
+            for cell, (x, y) in zip(video.df.loc[video.rows[t], "cell_id"].to_numpy(), video.pos[t]):
+                if cell < UNLABELLED_OFFSET:
+                    tracks.setdefault(int(cell), []).append((fi, float(x), float(y)))
+        video._gt_tracks = tracks
+    return video._gt_tracks
+
+
+def gt_motion(video, t, rng, params):
+    """Kalman state of every frame-t cell from its GT history up to t (motion.state). As with the velocity, the
+    history is withheld for VELOCITY_DROP of the cells (and is unknown for unlabelled ones): such a cell is filtered
+    from its current detection alone, as a new track is at inference."""
+    fi = video.frames.index(t)
+    tracks = gt_tracks(video)
+    hist = []
+    for cell, (x, y) in zip(video.df.loc[video.rows[t], "cell_id"].to_numpy(), video.pos[t]):
+        if cell < UNLABELLED_OFFSET and rng.random() >= VELOCITY_DROP:
+            hist.append([p for p in tracks[int(cell)] if p[0] <= fi])
+        else:
+            hist.append([(fi, float(x), float(y))])
+    return kalman.state(hist, fi + 1, params)
+
+
+def fit_motion(wells):
+    """Kalman parameters (motion.fit: maximum likelihood, model chosen by BIC) on the GT tracks of these wells."""
+    tracks, length = [], 0
+    for w in wells:
+        video = Video(*load_well(w))
+        tracks += list(gt_tracks(video).values())
+        length = max(length, len(video.frames))
+    return kalman.fit(kalman.histories(tracks, length))
+
+
+def training_graphs(wells, rng, motion=None):
     graphs = []
     for w in wells:
         for flip in (None, "h", "v"):
@@ -82,7 +121,10 @@ def training_graphs(wells, rng):
             for g in range(1, MAX_GAP + 1):
                 for t in video.frames:
                     if t + g in video.rows and (g == 1 or t % 2 == 0):
-                        graphs.append(pair_graph(video, t, g, gt_velocities(video, t, rng)))
+                        if motion is None:
+                            graphs.append(pair_graph(video, t, g, gt_velocities(video, t, rng)))
+                        else:
+                            graphs.append(pair_graph(video, t, g, {}, motion=gt_motion(video, t, rng, motion)))
     return graphs
 
 
@@ -106,13 +148,22 @@ def aleatoric_loss(mu, log_var, label, pos_weight, samples=MC_SAMPLES):
 def train(wells, seed=0, log=None):
     if log:
         print(f"  {log}: building training graphs for {len(wells)} wells", flush=True)
-    graphs = training_graphs(wells, np.random.default_rng(seed))          # kept on the CPU; a batch moves to the GPU
+    motion = None
+    if MOTION == "kalman":
+        motion = fit_motion(wells)
+        if log:
+            fits = ', '.join(f"{m} BIC {f['bic']:.0f}" for m, f in motion['fits'].items())
+            print(f"  {log}: motion model {motion['model']} (q {motion['q']:.1f}, r {motion['r']:.1f}, "
+                  f"v0 {motion['v0']:.1f}; {fits})", flush=True)
+    elif MOTION != "velocity":
+        raise ValueError(f'MOTION must be "velocity" or "kalman", not {MOTION!r}')
+    graphs = training_graphs(wells, np.random.default_rng(seed), motion)  # kept on the CPU; a batch moves to the GPU
     y = torch.cat([g.candidate_edge_label[~g.candidate_edge_unknown] for g in graphs])
     gaps = torch.cat([g.candidate_edge_attr[~g.candidate_edge_unknown, -1] for g in graphs])
     weight = float((1 - y).sum() / y.sum()) if POS_WEIGHT == "auto" else float(POS_WEIGHT)
     pos_weight = torch.tensor([weight], device=DEVICE)
     torch.manual_seed(seed)
-    model = TrackerGNN(aleatoric=ALEATORIC).to(DEVICE)
+    model = TrackerGNN(aleatoric=ALEATORIC, motion=motion).to(DEVICE)
     opt = torch.optim.Adam(model.parameters(), lr=LR)
     if log:
         print(f"  {log}: {len(graphs)} graphs, {-(-len(graphs) // BATCH)} batches per epoch", flush=True)
@@ -147,7 +198,8 @@ def train(wells, seed=0, log=None):
 def save(model, pos_weight, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     torch.save({"state_dict": model.state_dict(), "pos_weight": pos_weight,
-                "train_prior": getattr(model, "train_prior", None), "aleatoric": bool(getattr(model, "aleatoric", False))},
+                "train_prior": getattr(model, "train_prior", None), "aleatoric": bool(getattr(model, "aleatoric", False)),
+                "motion": getattr(model, "motion", None)},
                path)
 
 

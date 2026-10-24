@@ -17,12 +17,23 @@ apply     the exported decisions -> a new dataset <data_dir>/<dataset>_refine (u
           every change.
 refresh   rebuild review.html of an existing review from the current page template (candidates.json and the saved
           progress stay as they are); also adds the detection positions the page uses for its reminders.
+add-links append the tracker's confident errors of an out-of-fold run on the refined dataset (audit_confident.py:
+          round-1 links made between different GT cells with every member above 0.9, then same-cell edges left out
+          with every member below 0.1) to an existing review as 'link' items -- is the GT right here? --, drawn and
+          edited in the review's own labels; wrong labels are corrected with the page's ID edits. Saved progress is
+          kept. apply of the whole review then writes a new refined dataset (--target data/scripta_data_refine2).
 
     python -m models.gnn_tracking.audit_handover prepare --dataset scripta_data \
         --output-root development/stage0_evaluation/handover_review_scripta_data
     (open <output-root>/review.html in a browser, decide, press Export -> decisions.json)
     python -m models.gnn_tracking.audit_handover apply --dataset scripta_data \
         --review development/stage0_evaluation/handover_review_scripta_data --decisions decisions.json
+    python -m models.gnn_tracking.audit_handover add-links --dataset scripta_data \
+        --review development/stage0_evaluation/handover_review_scripta_data_v6 --run-dataset scripta_data_refine \
+        --run development/stage1_calibration/oof_cv_v003_lnk/oof/gnn_tracking
+    python -m models.gnn_tracking.audit_handover apply --dataset scripta_data \
+        --review development/stage0_evaluation/handover_review_scripta_data_v6 --decisions decisions.json \
+        --target data/scripta_data_refine2
     python -m models.gnn_tracking.audit_handover refresh --dataset scripta_data \
         --review development/stage0_evaluation/handover_review_scripta_data
 """
@@ -252,6 +263,82 @@ def prepare(args, wells):
     return 0
 
 
+def add_links(args, wells):
+    """Append the tracker's confident errors of an out-of-fold run on the refined dataset to this review as 'link'
+    items, in the review's own (source) labels: a refined detection is mapped to the source label of the same mask."""
+    from models.gnn_tracking.audit_confident import CONTEXT, confident_false_links, confident_missed_links, draw
+    from models.gnn_tracking.evaluate_answers import load_well as load_answers
+    from utils.lineage import Lineage
+    review_path = args.review / 'candidates.json'
+    review = json.loads(review_path.read_text(encoding='utf-8'))
+    have = {i['id'] for i in review['items']}
+    rng = random.Random(args.seed)
+    new = {'false': [], 'missed': []}
+    for well in wells:
+        part = load_answers(args.run, args.run_root, well)
+        table = read_track_table(Path(args.run_root) / f'{well}_GT' / 'TRA' / 'man_track.txt')
+        found = ([dict(f, sub='false') for f in confident_false_links(part['edges'], part['relation'], table)] +
+                 [dict(f, sub='missed') for f in confident_missed_links(part['edges'], part['relation'])])
+        if not found:
+            continue
+        frames, raws, masks, objects = load_well(args.data_root, well)
+        to_source = {}                                         # (frame, refined label) -> source label
+        for f, _, mask_path in sequence(args.run_root, well):
+            refined = tifffile.imread(mask_path)
+            on = refined > 0
+            for r, o in np.unique(np.stack([refined[on], masks[f][on]]), axis=1).T:
+                to_source[(int(f), int(r))] = int(o)
+        lineage = Lineage(table, ())
+        cell = lambda label: lineage.cell_of.get(label, label)
+        e = part['edges']
+        for f in found:
+            t, a, b, model_b = f['t'], f['a'], f['b'], f.get('model_b', f['b'])
+            shown = range(t - CONTEXT, t + CONTEXT + 2)
+
+            def members(label, exclude=None):
+                if label is None or cell(label) == exclude:
+                    return []
+                return sorted({o for (fr, r), o in to_source.items() if fr in shown and cell(r) == cell(label)})
+            sa, sb = to_source[(t, a)], to_source[(t + 1, b)]
+            item_id = f"{well}:link:{f['sub']}:{t}:{sa}:{sb}"
+            if item_id in have:
+                continue
+            blue = b if f['sub'] == 'false' else model_b
+            sel = (e['round'] == 1) & (e['src_frame'] == t)
+            item = dict(id=item_id, kind='link', sub=f['sub'], well=well, a_label=sa, a_frame=t, b_label=sb,
+                        model_b=None if model_b is None else to_source[(t + 1, model_b)], q=f['q'], cls=f['cls'],
+                        radius=round(float(e['gate'][sel][0]) if sel.any() else 100.0, 1), starts=[], neighbours=[],
+                        chain=[], run_labels=dict(a=a, b=b, model_b=model_b))
+            item['panel'] = f"panels/{well}_link_{f['sub']}_t{t}_{sa}_{sb}.png"
+            item['frames_shown'], item['visible'], item['tags'] = draw(
+                t, members(a), members(blue, exclude=cell(a)), raws, masks, objects, item['radius'],
+                args.review / item['panel'])
+            item['a_first'] = item['frames_shown'][0]
+            new[f['sub']].append(item)
+            have.add(item_id)
+        print(f"{well}: {sum(f['sub'] == 'false' for f in found)} confident false links, "
+              f"{sum(f['sub'] == 'missed' for f in found)} confident missed links", flush=True)
+    for part in new.values():
+        rng.shuffle(part)
+    added = new['false'] + new['missed']                     # false links first, each part in random order
+    backup = args.review / 'candidates_before_links.json'
+    if not backup.exists():
+        backup.write_text(review_path.read_text(encoding='utf-8'), encoding='utf-8')
+    review['items'] += added
+    review.setdefault('link_runs', []).append(dict(
+        run=str(Path(args.run).resolve()), dataset=args.run_dataset, added=len(added),
+        created=datetime.datetime.now().isoformat(timespec='seconds'),
+        rule='link items: round-1 links the tracker chose between different GT cells with every ensemble member above '
+             '0.9, and round-1 same-cell edges it left out with every member below 0.1, in an out-of-fold run on the '
+             'refined dataset; shown and edited in this review\'s labels'))
+    review_path.write_text(json.dumps(review, indent=1), encoding='utf-8')
+    xy = json.loads((args.review / 'positions.json').read_text(encoding='utf-8'))
+    write_page(args.review, review, xy)
+    print(f"\nadded {len(added)} link items ({len(new['false'])} false, {len(new['missed'])} missed); the review now "
+          f"has {len(review['items'])} items; open {args.review / 'review.html'} (saved progress is kept)")
+    return 0
+
+
 def apply(args):
     review = json.loads((args.review / 'candidates.json').read_text(encoding='utf-8'))
     exported = json.loads(args.decisions.read_text(encoding='utf-8'))
@@ -303,7 +390,8 @@ def apply(args):
     (args.target / 'refine_log.json').write_text(json.dumps(log, indent=2), encoding='utf-8')
     c = result['counts']
     print(f"same cell {c['same']}, swap {c['swap']}, gap {c['gap']}, manual {c['manual']}, different {c['none']}, "
-          f"unsure {c['unsure']}, undecided {len(result['undecided'])}; man_track.txt rewritten in {len(tables)} "
+          f"unsure {c['unsure']}, link items: GT right {c['gt_ok']} / fixed {c['fixed']} / ambiguous {c['ambiguous']}, "
+          f"undecided {len(result['undecided'])}; man_track.txt rewritten in {len(tables)} "
           f"wells; files {modes}")
     for w, ids in sorted(new_ids.items()):
         if ids:
@@ -339,7 +427,7 @@ def refresh(args):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest='command', required=True)
-    for name in ('prepare', 'apply', 'refresh'):
+    for name in ('prepare', 'apply', 'refresh', 'add-links'):
         p = sub.add_parser(name)
         p.add_argument('--config', type=Path, help='Default: project config.json')
         p.add_argument('--dataset', help='Dataset name from the config, or a folder under data_dir')
@@ -353,6 +441,12 @@ def main(argv=None):
                            help='Keep the review id of an earlier review of the same candidates (saved progress stays)')
         elif name == 'refresh':
             p.add_argument('--review', type=Path, required=True, help='The prepare output folder')
+        elif name == 'add-links':
+            p.add_argument('--review', type=Path, required=True, help='The review to extend (its prepare folder)')
+            p.add_argument('--run', type=Path, required=True,
+                           help='Out-of-fold folder of a run on --run-dataset (<well>/edges.npz + instance_tracks.csv)')
+            p.add_argument('--run-dataset', required=True, help='Refined dataset the run was made and is judged on')
+            p.add_argument('--seed', type=int, default=0, help='Shuffle seed of the added items')
         else:
             p.add_argument('--review', type=Path, required=True, help='The prepare output folder')
             p.add_argument('--decisions', type=Path, required=True, help='decisions.json exported from the page')
@@ -376,6 +470,25 @@ def main(argv=None):
         log = log_path(log_root(args.output_root, base / cfg['output_root']), 'gnn_tracking',
                        f'{args.output_root.resolve().name}_handover_prepare_{spec["name"]}')
         return run_logged(log, prepare, args, wells, argv=argv)
+    if args.command == 'add-links':
+        review = args.review / 'candidates.json'
+        if not review.is_file() or not (args.review / 'positions.json').is_file():
+            parser.error(f'{args.review} has no candidates.json + positions.json (run refresh on it first)')
+        made_on = json.loads(review.read_text(encoding='utf-8'))
+        if made_on['dataset'] != spec['name']:
+            parser.error(f"the review was made on {made_on['dataset']}, not {spec['name']}")
+        try:
+            args.run_root = resolve_dataset(cfg, base, args.run_dataset, None)['root']
+        except FileNotFoundError as exc:
+            parser.error(str(exc))
+        wells = sorted(p.parent.name for p in args.run.glob('*/edges.npz'))
+        if not wells or not set(wells) <= set(made_on['wells']):
+            parser.error(f'the run needs wells of the review: {sorted(set(wells) - set(made_on["wells"]))}')
+        if held := sorted(set(wells) & set(spec['held_out'])):
+            parser.error(f'test wells must not be reviewed from a run: {" ".join(held)}')
+        log = log_path(log_root(args.review, base / cfg['output_root']), 'gnn_tracking',
+                       f'{args.review.resolve().name}_handover_add_links_{spec["name"]}')
+        return run_logged(log, add_links, args, wells, argv=argv)
     if args.command == 'refresh':
         if not (args.review / 'candidates.json').exists():
             parser.error(f'no candidates.json in {args.review}')

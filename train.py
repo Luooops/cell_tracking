@@ -43,7 +43,9 @@ def train_model(a):
     settings = dict(data_root=str(a.data_root), cache=str(a.destination / 'cache'), folds=ds['folds'],
                     dev_wells=dev_wells, epochs=a.params['epochs'], batch=a.params['batch'], lr=a.params['lr'],
                     pos_weight=a.params.get('pos_weight', 'auto'), aleatoric=a.params.get('aleatoric', False),
-                    log_path=str(a.log_path))
+                    motion=a.params.get('motion', 'velocity'), log_path=str(a.log_path))
+    if settings['motion'] not in ('velocity', 'kalman'):
+        raise ValueError('motion must be "velocity" or "kalman"')
     if not isinstance(settings['aleatoric'], bool):
         raise ValueError('aleatoric must be true or false')
     if settings['pos_weight'] != 'auto' and not (isinstance(settings['pos_weight'], (int, float)) and settings['pos_weight'] > 0):
@@ -116,6 +118,7 @@ def _run_gnn_jobs(settings, jobs):
     trainer.EPOCHS, trainer.BATCH, trainer.LR = settings['epochs'], settings['batch'], settings['lr']
     trainer.POS_WEIGHT = settings.get('pos_weight', 'auto')
     trainer.ALEATORIC = settings.get('aleatoric', False)
+    trainer.MOTION = settings.get('motion', 'velocity')
     results = []
     for job in jobs:
         if job[0] == 'fold':

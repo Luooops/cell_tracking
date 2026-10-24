@@ -20,6 +20,7 @@ Returns (assign, parent): assign as in track.py, parent = {daughter track id: mo
 """
 import numpy as np
 
+from models.gnn_tracking import motion as kalman
 from models.gnn_tracking.graph import pair_graph
 from models.gnn_tracking.model import edge_scores
 from models.gnn_tracking.solver import match, match_division
@@ -46,9 +47,24 @@ def track_video_division(models, video, gap_round=True, div_thresh=DIV_THRESH, r
                 out[i] = tuple(video.pos[fi + f0][i] - video.pos[fi - 1 + f0][prev[0][1]])
         return out
 
+    # Kalman motion (motion.py): the ensemble was trained with the filter parameters stored in its checkpoints
+    params = getattr(models[0], 'motion', None)
+    if any(getattr(m, 'motion', None) != params for m in models):
+        raise ValueError('ensemble members were trained with different motion settings')
+
+    def motion_state(fi):
+        """Kalman state of the frame-fi cells from their track's detections up to frame fi (motion.state)."""
+        hist = [[(k[0], *video.pos[k[0] + f0][k[1]]) for k in members[assign[(fi, i)]] if k[0] <= fi]
+                for i in range(len(video.rows[fi + f0]))]
+        return kalman.state(hist, fi + 1, params)
+
+    def graph(t, g):
+        fi = t - f0
+        return pair_graph(video, t, g, {}, motion=motion_state(fi)) if params else pair_graph(video, t, g, velocities(fi))
+
     for t in frames[:-1]:                                             # round 1: adjacent frames, divisions allowed
         fi = t - f0
-        gr = pair_graph(video, t, 1, velocities(fi))
+        gr = graph(t, 1)
         p, logits, log_var = edge_scores(models, gr, prior_correction)
         src, dst = gr.candidate_edge_index.numpy()
         targets = {}
@@ -79,7 +95,7 @@ def track_video_division(models, video, gap_round=True, div_thresh=DIV_THRESH, r
         starts = [tid for tid, ks in members.items() if ks[0][0] == fj and tid not in parent]
         if not ends or not starts:
             continue
-        gr = pair_graph(video, t, 2, velocities(fi))
+        gr = graph(t, 2)
         p, logits, log_var = edge_scores(models, gr, prior_correction)
         src, dst = gr.candidate_edge_index.numpy(); dst = dst - gr.n_t
         row = {members[tid][-1][1]: r for r, tid in enumerate(ends)}

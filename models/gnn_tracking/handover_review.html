@@ -25,7 +25,7 @@
   .card h2 { font-size:14px; margin:0 0 8px; }
   .meta { color:var(--muted); margin-bottom:8px; }
   .kind { display:inline-block; font-size:12px; padding:1px 6px; border-radius:4px; color:#fff; margin-right:6px; }
-  .kind.end { background:var(--accent); } .kind.gap { background:var(--gap); }
+  .kind.end { background:var(--accent); } .kind.gap { background:var(--gap); } .kind.link { background:#6d4c41; }
   .panel { overflow-x:auto; margin:8px 0; border:1px solid var(--line); border-radius:6px; }
   .panel img { display:block; max-width:none; }
   .choices { display:flex; flex-wrap:wrap; gap:8px; margin:10px 0; }
@@ -45,6 +45,7 @@
   .chip.chain { background:var(--chain); }
   .chainbox { background:#ffebee; border:1px solid #ffcdd2; border-radius:6px; padding:8px 10px; margin:6px 0; display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
   .chip.none { background:var(--none); } .chip.unsure { background:var(--unsure); } .chip.conflict { background:var(--conflict); }
+  .chip.gt_ok { background:var(--none); } .chip.fixed { background:var(--same); } .chip.ambiguous { background:var(--unsure); }
   .chip.cur { border-color:#000; }
   .chip.hint { box-shadow:0 0 0 2px #ffb300; }
   .chip.bad { box-shadow:0 0 0 2px #d50000; }
@@ -75,7 +76,7 @@
   <label>显示 <select id="filter">
     <option value="all">全部</option><option value="undecided">未审</option><option value="same">同一细胞</option>
     <option value="swap">ID 交换</option><option value="chain">延续为未标注</option><option value="gap">填补缺口</option><option value="none">都不是</option>
-    <option value="unsure">不确定</option><option value="conflict">冲突</option><option value="issue">有问题（红框）</option><option value="hint">有提醒（黄框）</option>
+    <option value="unsure">不确定</option><option value="gt_ok">可疑连接：GT 正确</option><option value="fixed">可疑连接：已修改</option><option value="ambiguous">可疑连接：模棱两可</option><option value="conflict">冲突</option><option value="issue">有问题（红框）</option><option value="hint">有提醒（黄框）</option>
   </select></label>
   <label><input type="checkbox" id="auto" checked> 作答后自动下一个</label>
   <button id="export">导出 decisions.json</button>
@@ -167,6 +168,11 @@
   const dec = it => decisions[it.id] || {};
   const choiceOf = it => dec(it).choice;
   const isGap = it => it.kind === 'gap';
+  // second-round items: a link the tracker made (sub 'false') or left out ('missed') against the GT, all members
+  // confident; the answer says whether the GT is right, corrections are ID edits
+  const isLink = it => it.kind === 'link';
+  const LINK_OPTIONS = [['gt_ok', '1：GT 正确（模型错了）'], ['fixed', '2：GT 有误，已在下方“修改 ID”里改好'],
+                        ['ambiguous', '3：模棱两可（细胞贴在一起 / 检测合并或拆分）']];
   const options = it => isGap(it) ? it.targets.map(t => t.label) : it.starts.map(s => s.b_label);
 
   function conflicts() {           // a start or a track claimed twice
@@ -482,6 +488,7 @@
   function describe(it) {
     const d = dec(it), c = d.choice;
     if (c === undefined || c === null) return '未审';
+    if (isLink(it)) return { gt_ok: 'GT 正确，模型错了', fixed: 'GT 有误，已修改', ambiguous: '模棱两可', unsure: '不确定' }[c] || c;
     if (typeof c === 'number') return isGap(it) ? `X（轨迹 ${it.x_label}）就是轨迹 ${c}` : `A 与轨迹 ${c} 是同一细胞`;
     if (c === 'swap') return `ID 交换：A 从第 ${d.swap_frame} 帧起被标成了轨迹 ${d.swap_track}；轨迹 ${d.swap_track} 原来的细胞 → ` +
                              (d.swap_rest === null || d.swap_rest === undefined ? '没有' : `轨迹 ${d.swap_rest}`);
@@ -516,7 +523,8 @@
   function involved(it) {
     const ls = new Set(Object.keys(it.visible || {}).map(Number));
     if (isGap(it)) { ls.add(it.x_label); it.targets.forEach(t => ls.add(t.label)); }
-    else { ls.add(it.a_label); it.starts.forEach(x => ls.add(x.b_label)); (it.neighbours || []).forEach(n => ls.add(n.label));
+    else { ls.add(it.a_label); if (isLink(it)) { ls.add(it.b_label); if (it.model_b !== null && it.model_b !== undefined) ls.add(it.model_b); }
+           it.starts.forEach(x => ls.add(x.b_label)); (it.neighbours || []).forEach(n => ls.add(n.label));
            (it.chain || []).forEach(c => ls.add(c.label)); if (it.chain_meets) ls.add(it.chain_meets.label); }
     return ls;
   }
@@ -593,7 +601,14 @@
   const touchedMark = l => touched.get(l) || '';
   function render() {
     const it = items[idx], bad = conflicts(), d = dec(it), c = d.choice;
-    if (isGap(it)) {
+    if (isLink(it)) {
+      const t = it.a_frame;
+      $('meta').innerHTML = it.sub === 'false'
+        ? `<span class="kind link">可疑连接 · 模型连了</span>孔板 ${it.well} · 第 ${t} 帧：模型把 A（轨迹 ${it.a_label}）连到了第 ${t + 1} 帧的 B（轨迹 ${it.b_label}），三个模型的把握 ${it.q.join(' / ')}，但 GT 说它们不是同一个细胞`
+        : `<span class="kind link">可疑连接 · 模型没连</span>孔板 ${it.well} · 第 ${t} 帧：GT 说 A（轨迹 ${it.a_label}）在第 ${t + 1} 帧是轨迹 ${it.b_label}，三个模型都认为不是（把握 ${it.q.join(' / ')}）` +
+          (it.model_b !== null && it.model_b !== undefined ? `；模型把 A 连到了蓝色的 B（轨迹 ${it.model_b}）` : '；模型没有把 A 连到任何细胞');
+      $('legend').innerHTML = '红色 <b>A</b> = GT 中 A 这个细胞的所有检测；蓝色 <b>B</b> = 模型把 A 连到的那个细胞（按 GT 的身份）；灰色数字 = 其他轨迹；灰色 <b>?1, ?2, …</b> = 身份未知的检测。所有帧同一个裁剪框。GT 对吗？GT 有误就在下方“修改 ID”里改，再选 2。';
+    } else if (isGap(it)) {
       const fr = it.x_frames;
       $('meta').innerHTML = `<span class="kind gap">填补缺口</span>孔板 ${it.well} · 轨迹 X = ${it.x_label} 只在第 ${fr[0]}${fr.length > 1 ? '–' + fr[fr.length - 1] : ''} 帧出现，正好落在附近轨迹的缺口里`;
       $('legend').innerHTML = '红色 <b>X</b> = 只在缺口里出现的短轨迹；彩色 <b>1, 2, …</b> = 在缺口前后都出现的轨迹；灰色数字 = 其他已有轨迹的 GT 编号；灰色 <b>?1, ?2, …</b> = 身份未知的检测。X 其实是哪一条？';
@@ -604,11 +619,17 @@
     $('panel').src = it.panel;
     renderElsewhere(it);
     const box = $('choices'); box.innerHTML = '';
-    options(it).forEach((label, k) => box.appendChild(button(optionText(it, k), c === label, () => setDecision({ choice: label }))));
-    box.appendChild(button('0：都不是', c === 'none', () => setDecision({ choice: 'none' })));
-    box.appendChild(button('u：不确定', c === 'unsure', () => setDecision({ choice: 'unsure' })));
+    if (isLink(it)) {
+      LINK_OPTIONS.forEach(([v, text]) => box.appendChild(button(text, c === v, () => setDecision({ choice: v }))));
+      box.appendChild(button('u：不确定', c === 'unsure', () => setDecision({ choice: 'unsure' })));
+    }
+    if (!isLink(it)) options(it).forEach((label, k) => box.appendChild(button(optionText(it, k), c === label, () => setDecision({ choice: label }))));
+    if (!isLink(it)) {
+      box.appendChild(button('0：都不是', c === 'none', () => setDecision({ choice: 'none' })));
+      box.appendChild(button('u：不确定', c === 'unsure', () => setDecision({ choice: 'unsure' })));
+    }
     const nb = isGap(it) ? [] : (it.neighbours || []);
-    if (!isGap(it)) box.appendChild(button('s：A 之后被标成了已有轨迹（ID 交换）', c === 'swap' || mode, () => { mode = 'track'; render(); }, !nb.length));
+    if (!isGap(it) && !isLink(it)) box.appendChild(button('s：A 之后被标成了已有轨迹（ID 交换）', c === 'swap' || mode, () => { mode = 'track'; render(); }, !nb.length));
     const cb = $('chainBox'); cb.innerHTML = '';
     if (!isGap(it) && (it.chain || []).length) {
       const ch = it.chain, last = ch[ch.length - 1].frame, div = document.createElement('div'); div.className = 'chainbox';
@@ -780,7 +801,8 @@
         if (it.x_label === label) roles.push('缺口里的短轨迹 X');
         if (it.targets.some(t => t.label === label)) roles.push('缺口所在的轨迹');
       } else {
-        if (it.a_label === label) roles.push('结束的轨迹 A');
+        if (it.a_label === label) roles.push(isLink(it) ? '可疑连接的 A' : '结束的轨迹 A');
+        if (isLink(it) && (it.b_label === label || it.model_b === label)) roles.push('可疑连接的 B');
         if (it.starts.some(s => s.b_label === label)) roles.push('新起点');
         if ((it.chain || []).some(c => c.label === label)) roles.push('延续链里的未标注检测');
         if ((it.neighbours || []).some(n => n.label === label)) roles.push('附近已有轨迹');
@@ -831,6 +853,7 @@
   // edit row of the current item: tracks, frames and targets come from the IDs visible in its image strip
   function labelName(it, l) {
     if (isGap(it) ? l === it.x_label : l === it.a_label) return `${isGap(it) ? 'X' : 'A'}（${l}）`;
+    if (isLink(it) && l === (it.sub === 'false' ? it.b_label : it.model_b)) return `B（${l}）`;
     const k = options(it).indexOf(l);
     if (k >= 0) return `${k + 1}（${l}）`;
     if (!isGap(it) && it.chain_meets && it.chain_meets.label === l) return `B（${l}）`;
@@ -1151,6 +1174,14 @@
     if (['TEXTAREA', 'INPUT', 'SELECT'].includes(e.target.tagName)) return;
     const it = items[idx], nb = isGap(it) ? [] : (it.neighbours || []), opts = options(it);
     if (e.key === 'Escape') { mode = null; pending = null; render(); return; }
+    if (isLink(it)) {
+      if (/^[1-3]$/.test(e.key)) setDecision({ choice: LINK_OPTIONS[+e.key - 1][0] });
+      else if (e.key === 'u' || e.key === 'U') setDecision({ choice: 'unsure' });
+      else if (e.key === 'Backspace') { e.preventDefault(); setDecision(null); }
+      else if (e.key === 'ArrowRight') step(1);
+      else if (e.key === 'ArrowLeft') step(-1);
+      return;
+    }
     if (mode === 'track') {
       if (/^[1-9]$/.test(e.key) && nb[+e.key - 1]) { pending = nb[+e.key - 1]; mode = 'rest'; render(); }
       return;

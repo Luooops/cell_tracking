@@ -96,6 +96,28 @@ class TestTrackVideoRecording(unittest.TestCase):
         with self.assertRaises(ValueError):
             track_video(self.models, synthetic_video(), prior_correction=True)
 
+    def test_kalman_ensemble_builds_motion_features_and_tracks(self):
+        import torch
+        from models.gnn_tracking import motion as kalman
+        from models.gnn_tracking.graph import pair_graph
+        from models.gnn_tracking.model import DEVICE, TrackerGNN
+        from models.gnn_tracking.track import track_video
+        from models.gnn_tracking.train import gt_motion
+        params = dict(model='cv', q=1.0, r=0.5, v0=4.0, fits={})
+        video = synthetic_video()
+        state = gt_motion(video, video.frames[2], np.random.default_rng(0), params)
+        gr = pair_graph(video, video.frames[2], 1, {}, motion=state)
+        self.assertEqual(gr.candidate_edge_attr.shape[1], 14)
+        self.assertEqual(gr.message_edge_attr.shape[1], 14)
+        self.assertEqual(int(state['seen'].max()), 3)                       # frames 0, 1, 2 of a GT cell
+        torch.manual_seed(0)
+        models = [TrackerGNN(motion=params).to(DEVICE).eval() for _ in range(2)]
+        assign = track_video(models, video)
+        self.assertEqual(len(assign), sum(len(video.rows[t]) for t in video.frames))
+        with self.assertRaises(ValueError):                                 # members must share the motion setting
+            track_video([models[0], self.models[0]], video)
+        self.assertIsNotNone(kalman)
+
     def test_original_thresholds_are_the_defaults(self):
         from models.gnn_tracking.track import track_video
         video = synthetic_video()

@@ -12,6 +12,15 @@
         ["r15c12", "r12c13", "r07c02", "r09c01"],
         ["r13c12", "r16c13", "r09c09", "r14c03"]]
     },
+    "scripta_data_refine2": {
+      "root": "data/scripta_data_refine2",
+      "test_wells": ["r16c02", "r01c20", "r07c07"],
+      "train_wells": ["r15c12", "r12c13", "r07c02", "r09c01", "r13c12", "r16c13", "r09c09", "r14c03"],
+      "val_wells": ["r08c13", "r11c12", "r03c12", "r14c13"],
+      "folds": [["r08c13", "r11c12", "r03c12", "r14c13"],
+        ["r15c12", "r12c13", "r07c02", "r09c01"],
+        ["r13c12", "r16c13", "r09c09", "r14c03"]]
+    },
     "scripta_data_refine": {
       "root": "data/scripta_data_refine",
       "test_wells": ["r16c02", "r01c20", "r07c07"],
@@ -30,7 +39,7 @@
     },
     "gnn_tracking": {
       "weights": "models/gnn_tracking/weights",
-      "train": {"epochs": 40, "batch": 16, "lr": 0.001, "seeds": [0, 1, 2], "pos_weight": "auto", "aleatoric": false,
+      "train": {"epochs": 40, "batch": 16, "lr": 0.001, "seeds": [0, 1, 2], "pos_weight": "auto", "aleatoric": false, "motion": "velocity",
         "cv_outputs": false},
       "test": {"gap_round": true, "link_thresh": 0.5, "gap_thresh": 0.9, "prior_correction": false, "record_edges": false}
     },

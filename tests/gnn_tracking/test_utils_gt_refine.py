@@ -297,6 +297,15 @@ class TestMoves(unittest.TestCase):
         with self.assertRaises(ValueError):                              # X1 used as a source before it exists
             refine_well(self.table, self.observed, [], [], [m[1:] for m in r['moves']][1:])
 
+    def test_link_items_are_counted_and_their_corrections_are_edits(self):
+        items = [dict(id='w:link:false:3:1:2', kind='link', well='w'), dict(id='w:link:missed:4:5:5', kind='link', well='w')]
+        r = check_decisions(items, {'w:link:false:3:1:2': dict(choice='fixed'), 'w:link:missed:4:5:5': dict(choice='gt_ok')},
+                            [dict(well='w', label=2, from_frame=4, to_frame=4, target=1)])
+        self.assertEqual((r['problems'], r['counts']['fixed'], r['counts']['gt_ok'], r['moves']),
+                         ([], 1, 1, [('w', 2, 4, 4, 1, 'manual 1')]))
+        bad = check_decisions(items, {'w:link:false:3:1:2': dict(choice=2)})
+        self.assertEqual(len(bad['problems']), 1)
+
     def test_invalid_manual_edit_is_a_problem(self):
         r = check_decisions([], {}, [dict(well='w', label=9, from_frame=5, to_frame=4, target=3),
                                      dict(well='w', label=9, from_frame=1, to_frame=2, target='Y1')])
@@ -316,6 +325,23 @@ class TestTranslate(unittest.TestCase):
             chained = [(140, 8, 8, 353), (353, 9, None, 595)]               # gap fill, then a swap of the target
             self.assertEqual([translate(chained, f, 140) for f in (7, 8)], [140, 353])
             self.assertEqual([translate(chained, f, 353) for f in (8, 9)], [353, 595])
+
+    def test_second_round_chains_the_relabels_of_both_rounds(self):
+        with tempfile.TemporaryDirectory() as folder:
+            data = Path(folder) / 'data'
+            for name, source, relabels in (('x_refine', 'x', [dict(well='a', label=6, from_frame=3, new_label=7)]),
+                                           ('x_refine2', 'x_refine', [dict(well='a', label=7, from_frame=5, new_label=9)])):
+                (data / name).mkdir(parents=True)
+                (data / name / 'refine_log.json').write_text(json.dumps(dict(source=f'/srv/data/{source}', relabels=relabels)),
+                                                            encoding='utf-8')
+            for run, made_on in (('on_x', 'x'), ('on_refine', 'x_refine'), ('on_refine2', 'x_refine2')):
+                (Path(folder) / run / 'a').mkdir(parents=True)
+                (Path(folder) / run / 'config.json').write_text(json.dumps(dict(data_root=f'/srv/data/{made_on}')), encoding='utf-8')
+            found = {run: relabel_lookup(data / 'x_refine2', Path(folder) / run / 'a') for run in ('on_x', 'on_refine', 'on_refine2')}
+        self.assertEqual(found['on_x'], {'a': [(6, 3, None, 7), (7, 5, None, 9)]})
+        self.assertEqual(found['on_refine'], {'a': [(7, 5, None, 9)]})
+        self.assertEqual(found['on_refine2'], {})
+        self.assertEqual([translate(found['on_x']['a'], f, 6) for f in (2, 4, 6)], [6, 7, 9])
 
     def test_run_made_on_the_refined_dataset_is_not_translated(self):
         with tempfile.TemporaryDirectory() as folder:

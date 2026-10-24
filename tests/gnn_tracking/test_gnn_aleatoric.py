@@ -68,6 +68,20 @@ class TestAleatoric(unittest.TestCase):
         self.assertTrue(loaded.aleatoric)
         self.assertEqual(loaded.edge_mlp[-1].out_features, 2)
 
+    def test_checkpoint_round_trip_keeps_the_motion_parameters(self):
+        import os
+        import tempfile
+        from models.gnn_tracking.model import DEVICE, TrackerGNN, load_model
+        from models.gnn_tracking.train import save
+        params = dict(model='cv', q=1.0, r=0.5, v0=4.0, fits={})
+        model = TrackerGNN(motion=params).to(DEVICE)
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, 'm.pt')
+            save(model, 1.0, path)
+            loaded = load_model(path)
+        self.assertEqual(loaded.motion, params)
+        self.assertEqual(loaded.edge_mlp[0].in_features, model.edge_mlp[0].in_features)
+
 
 if __name__ == '__main__':
     unittest.main()

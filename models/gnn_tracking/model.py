@@ -59,6 +59,9 @@ class AppearanceNet(nn.Module):
         return F.normalize(self.fc(self.conv(x).flatten(1)), dim=1)
 
 
+F_MOTION_EDGE = F_GEOM_EDGE + 1   # edge features with Kalman motion (graph.py): one column more
+
+
 class AttentionLayer(MessagePassing):
     """One round of message passing with multi-head query/key/value attention on the sparse message graph.
 
@@ -103,13 +106,16 @@ def expected_logit(mu, log_var):
 
 
 class TrackerGNN(nn.Module):
-    def __init__(self, aleatoric=False):
+    def __init__(self, aleatoric=False, motion=None):
+        """motion: the Kalman parameters (motion.py) this network is trained with, or None for the one-step velocity;
+        it fixes the number of edge features and travels with the checkpoint to the tracker."""
         super().__init__()
-        self.aleatoric = aleatoric
+        self.aleatoric, self.motion = aleatoric, motion
+        f_edge = (F_MOTION_EDGE if motion else F_GEOM_EDGE) + F_APP_EDGE
         self.embed = AppearanceNet()
         self.enc = nn.Linear(F_NODE + F_VISUAL, HIDDEN)
-        self.layers = nn.ModuleList([AttentionLayer() for _ in range(LAYERS)])
-        self.edge_mlp = nn.Sequential(nn.Linear(2 * HIDDEN + F_EDGE, HIDDEN), nn.ReLU(),
+        self.layers = nn.ModuleList([AttentionLayer(f_edge=f_edge) for _ in range(LAYERS)])
+        self.edge_mlp = nn.Sequential(nn.Linear(2 * HIDDEN + f_edge, HIDDEN), nn.ReLU(),
                                       nn.Linear(HIDDEN, 2 if aleatoric else 1))
 
     def _embed_chunk(self, x):
@@ -152,7 +158,8 @@ def load_model(path):
     edges per gap (train_prior) as attributes (None for checkpoints that do not record them)."""
     ck = torch.load(path, map_location=DEVICE, weights_only=False)
     full = isinstance(ck, dict) and "state_dict" in ck
-    model = TrackerGNN(aleatoric=bool(ck.get("aleatoric", False)) if full else False).to(DEVICE)
+    model = TrackerGNN(aleatoric=bool(ck.get("aleatoric", False)) if full else False,
+                       motion=ck.get("motion") if full else None).to(DEVICE)
     model.load_state_dict(ck["state_dict"] if full else ck)
     model.pos_weight = ck.get("pos_weight") if full else None
     model.train_prior = ck.get("train_prior") if full else None

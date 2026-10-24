@@ -53,6 +53,10 @@ UNKNOWN_OFFSET = 50000
 MAX_GAP = 2
 MAX_NEIGHBOURS = 6
 SAME, SWAP, CHAIN, GAP, MANUAL, NONE, UNSURE = 'same', 'swap', 'chain', 'gap', 'manual', 'none', 'unsure'
+# answers to a 'link' item (a link the tracker made or left out against the GT, all members confident): the
+# corrections themselves are manual edits
+GT_OK, FIXED, AMBIGUOUS = 'gt_ok', 'fixed', 'ambiguous'
+LINK_CHOICES = (GT_OK, FIXED, AMBIGUOUS)
 CHAIN_REACH = 0.5          # a chain step goes to the nearest detection within this fraction of the gate
 
 
@@ -181,7 +185,7 @@ def check_decisions(candidates, decisions, manual=()):
     undecided [ids], problems [str])."""
     by_id = {c['id']: c for c in candidates}
     merges, swaps, moves, problems = [], [], [], []
-    counts = {SAME: 0, SWAP: 0, CHAIN: 0, GAP: 0, MANUAL: 0, NONE: 0, UNSURE: 0}
+    counts = {SAME: 0, SWAP: 0, CHAIN: 0, GAP: 0, MANUAL: 0, NONE: 0, UNSURE: 0, GT_OK: 0, FIXED: 0, AMBIGUOUS: 0}
     claimed_start, claimed_track = {}, {}
 
     def claim(store, well, label, owner, what):
@@ -198,6 +202,12 @@ def check_decisions(candidates, decisions, manual=()):
             continue
         if choice in (NONE, UNSURE):
             counts[choice] += 1
+            continue
+        if item.get('kind') == 'link':
+            if choice not in LINK_CHOICES:
+                problems.append(f'{item_id}: choice {choice!r} is not one of {LINK_CHOICES}')
+            else:
+                counts[choice] += 1
             continue
         if item.get('kind') == 'gap':
             frames = item['x_frames']
@@ -467,18 +477,28 @@ def run_data_root(run):
 
 
 def relabel_lookup(root, run=None):
-    """{well: [(label, from_frame, to_frame | None, new_label)]} from <root>/refine_log.json, in application order
-    ({} for a dataset that is not refined, and for a run whose config says it was made on this refined dataset
-    itself: its labels are already the refined ones)."""
+    """{well: [(label, from_frame, to_frame | None, new_label)]} from <root>/refine_log.json, in application order:
+    how labels of the data a run was made on become labels of this refined dataset. A refined dataset may itself be
+    made from a refined dataset (its log names the source; sources are looked up next to it, in the same data
+    folder): for a run made on an earlier dataset of that chain, the relabels of every step from there on are
+    joined. {} for a dataset that is not refined and for a run made on this dataset itself; a run without a config
+    is taken to be made on the immediate source."""
     path = Path(root) / 'refine_log.json'
     if not path.is_file():
         return {}
     made_on = run_data_root(run) if run is not None else None
-    if made_on and Path(str(made_on).replace('\\', '/')).name == Path(root).resolve().name:
+    made_on = Path(str(made_on).replace('\\', '/')).name if made_on else None
+    if made_on == Path(root).resolve().name:
         return {}
+    log = json.loads(path.read_text(encoding='utf-8'))
     out = {}
-    for r in json.loads(path.read_text(encoding='utf-8')).get('relabels', []):
+    for r in log.get('relabels', []):
         out.setdefault(r['well'], []).append((r['label'], r['from_frame'], r.get('to_frame'), r['new_label']))
+    source = Path(str(log.get('source', '')).replace('\\', '/')).name
+    upstream = Path(root).resolve().parent / source
+    if made_on and source and made_on != source and (upstream / 'refine_log.json').is_file():
+        earlier = relabel_lookup(upstream, run)
+        out = {w: earlier.get(w, []) + out.get(w, []) for w in set(earlier) | set(out)}
     return out
 
 

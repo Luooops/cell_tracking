@@ -23,6 +23,11 @@ frame t+g get ids n_t .. N-1):
                                            8-11  velocity residual: (target - predicted position) / r as dx, dy,
                                                  length; and 1 if the source has a velocity
                                            12    gap feature (g - 1) / 2: 0 for adjacent frames, 0.5 for g = 2
+                                         With a Kalman motion state (motion.py, train.motion = "kalman") columns 8-11
+                                         become the target's offset from the predicted position in predicted standard
+                                         deviations (dx, dy, length) and 1 if the source was seen more than once, a
+                                         column log(predicted sd / r) follows, and the gap feature moves to column 13:
+                                         [C, 14]. Node columns 5-7 hold the filter's velocity / r and that indicator.
     message_edge_index    [2, M]         the edges information flows along: the candidate edges in both directions
                                          plus, inside each frame, every cell's 4 nearest neighbours
     message_edge_attr     [M, 13]        same 13 columns; columns 4-11 are filled only for the forward candidate
@@ -45,6 +50,7 @@ from torch_geometric.data import Data
 
 from utils.dataset import UNLABELLED_OFFSET, load_well
 from models.gnn_tracking.gating import gating_radius
+from models.gnn_tracking.motion import features as motion_features
 
 KNN = 4                  # same-frame neighbours per cell in the message graph
 # The adaptive gating radius (SAFETY, R_MIN, SPACING_CAP, WINDOW, R_FALLBACK) lives in gating.py.
@@ -97,12 +103,14 @@ def _knn(pos, k=KNN):
     return np.array([(i, j) for i in range(len(pos)) for j in idx[i][1:]], int)
 
 
-def pair_graph(video, t, g, velocity):
+def pair_graph(video, t, g, velocity, motion=None):
     """Graph of frames (t, t+g).
 
     velocity: {local index of a frame-t cell: (vx, vy)} = its displacement over the last frame step (t-1 -> t), in
     pixels, for the cells whose previous position is known. Training takes it from the GT track, inference from
-    the links the tracker has made so far. Over a gap of g frames the cell is expected to move g x that far."""
+    the links the tracker has made so far. Over a gap of g frames the cell is expected to move g x that far.
+    motion: instead, the Kalman filter state of every frame-t cell (motion.state, same sources); then velocity is
+    not used and the motion features of motion.features replace the velocity features."""
     df = video.df
     r = video.radius(t) * np.sqrt(g)       # a random walk spreads with sqrt(time): 98.6% of the true 2- and
                                            # 3-frame links are inside r * sqrt(g) (measured on the dev wells)
@@ -126,14 +134,18 @@ def pair_graph(video, t, g, velocity):
     comp = np.stack([d / (best_src[src] + 1e-3), d / (best_dst[dst] + 1e-3),
                      np.log1p(n_src[src]), np.log1p(n_dst[dst])], axis=1)   # [C, 4]
 
-    # velocity features: where would the source be if it kept moving as it did in the last step?
-    v, has_v = np.zeros((n_t, 2)), np.zeros(n_t)
-    for i, vi in velocity.items():
-        v[i] = (g * vi[0], g * vi[1]); has_v[i] = 1.0
-    res = (pn[dst] - (pt[src] + v[src])) / r
-    vel_edge = np.stack([res[:, 0], res[:, 1], np.hypot(res[:, 0], res[:, 1]), has_v[src]], axis=1)   # [C, 4]
     vel_node = np.zeros((n_t + n_n, 3), np.float32)
-    vel_node[:n_t, 0:2] = v / r; vel_node[:n_t, 2] = has_v
+    if motion is not None:
+        # Kalman features: how far is the target from where the filter expects the source, in its own uncertainty?
+        vel_edge, vel_node[:n_t] = motion_features(motion, g, pt, pn, src, dst, r)                   # [C, 5]
+    else:
+        # velocity features: where would the source be if it kept moving as it did in the last step?
+        v, has_v = np.zeros((n_t, 2)), np.zeros(n_t)
+        for i, vi in velocity.items():
+            v[i] = (g * vi[0], g * vi[1]); has_v[i] = 1.0
+        res = (pn[dst] - (pt[src] + v[src])) / r
+        vel_edge = np.stack([res[:, 0], res[:, 1], np.hypot(res[:, 0], res[:, 1]), has_v[src]], axis=1)   # [C, 4]
+        vel_node[:n_t, 0:2] = v / r; vel_node[:n_t, 2] = has_v
 
     extra = np.concatenate([comp, vel_edge], axis=1).astype(np.float32)    # [C, 8]
     gap = (g - 1) / 2.0
@@ -173,9 +185,9 @@ def pair_graph(video, t, g, velocity):
     gr.crops = f32(np.concatenate([video.crops[video.rows[t]], video.crops[video.rows[t + g]]])).unsqueeze(1)   # float16 [N, 1, 64, 64]
     gr.msg_fwd = torch.zeros(M, dtype=torch.bool); gr.msg_fwd[:C] = True
     gr.candidate_edge_index = f32(np.stack([src, dst + n_t])).long()
-    gr.candidate_edge_attr = torch.cat([f32(cand_geom), f32(extra), torch.full((C, 1), gap)], dim=1)   # [C, 13]
+    gr.candidate_edge_attr = torch.cat([f32(cand_geom), f32(extra), torch.full((C, 1), gap)], dim=1)   # [C, 13 or 14]
     gr.message_edge_index = f32(msg_index).long()
-    gr.message_edge_attr = torch.cat([f32(msg_geom), f32(msg_extra), torch.full((M, 1), gap)], dim=1)  # [M, 13]
+    gr.message_edge_attr = torch.cat([f32(msg_geom), f32(msg_extra), torch.full((M, 1), gap)], dim=1)  # [M, 13 or 14]
     gr.candidate_edge_label = f32(same.astype(np.float32))
     gr.candidate_edge_unknown = f32(unknown)
     gr.n_t, gr.n_n = n_t, n_n
