@@ -51,23 +51,30 @@ def load_model(path):
     return model.eval()
 
 
-def _shift(model, gap, target):
-    """log pi_target - log pi_mix for this gap (zero if the target dataset was not in training)."""
+PRIORS = ('full', 'division', 'none')     # which classes get the target's prior: all, only division, none
+
+
+def _shift(model, gap, target, prior='full'):
+    """log pi_target - log pi_mix for this gap (zero if the target dataset was not in training). prior='division'
+    shifts only the division class (same : unrelated stays the network's own), 'none' shifts nothing."""
     pri = model.priors
-    if pri is None or target not in pri['datasets']:
+    if prior == 'none' or pri is None or target not in pri['datasets']:
         return np.zeros(3)
     g = min(gap, max(pri['mix']))
-    return np.log(pri['datasets'][target][g]) - np.log(pri['mix'][g])
+    shift = np.log(pri['datasets'][target][g]) - np.log(pri['mix'][g])
+    if prior == 'division':
+        shift[:2] = 0
+    return shift
 
 
 @torch.no_grad()
-def edge_scores(models, gr, gap, target):
+def edge_scores(models, gr, gap, target, prior='full'):
     """-> dict(p_same [C], p_div [C], logits [C, M] (each member's logit of SAME vs the rest), mi [C]) numpy,
-    with every member's prior exchanged for the target dataset's."""
+    with every member's prior exchanged for the target dataset's (all classes, only division or none: prior)."""
     gd = gr.to(DEVICE)
     q = []
     for m in models:
-        z = m(gd) + torch.as_tensor(_shift(m, gap, target), dtype=torch.float32, device=DEVICE)
+        z = m(gd) + torch.as_tensor(_shift(m, gap, target, prior), dtype=torch.float32, device=DEVICE)
         q.append(torch.softmax(z, dim=1))
     gr.cpu()
     q = torch.stack(q).cpu().double().numpy()                                 # [M, C, 3]

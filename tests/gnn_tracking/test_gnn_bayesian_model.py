@@ -22,6 +22,10 @@ class TestGnnBayesian(unittest.TestCase):
         self.assertLess(_shift(M, 1, 'scripta')[2], -3)            # division much rarer on scripta than in the mix
         self.assertGreater(_shift(M, 1, 'hela')[2], 0)
         self.assertEqual(_shift(M, 1, 'unknown').tolist(), [0, 0, 0])
+        only_div = _shift(M, 1, 'scripta', 'division')
+        self.assertEqual(only_div[:2].tolist(), [0, 0])               # same : unrelated left to the network
+        self.assertEqual(only_div[2], _shift(M, 1, 'scripta')[2])
+        self.assertEqual(_shift(M, 1, 'scripta', 'none').tolist(), [0, 0, 0])
 
     def test_three_way_network_tracks_with_and_without_divisions(self):
         import torch

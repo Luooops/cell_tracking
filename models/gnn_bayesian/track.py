@@ -34,9 +34,9 @@ class Recorder(EdgeRecorder):
 
 
 def track_video(models, video, target, divisions=False, gap_round=True, link_thresh=LINK_THRESH,
-                gap_thresh=GAP_THRESH, div_thresh=DIV_THRESH, recorder=None):
+                gap_thresh=GAP_THRESH, div_thresh=DIV_THRESH, recorder=None, prior='full'):
     """-> (assign, parent) as gnn_tracking.track_division (parent stays empty without divisions). target: the
-    dataset whose class priors score this video."""
+    dataset whose class priors score this video; prior: which classes get them (model.PRIORS)."""
     frames = video.frames
     f0 = frames[0]
     assert frames == list(range(f0, f0 + len(frames))), "frames must be consecutive"
@@ -55,7 +55,7 @@ def track_video(models, video, target, divisions=False, gap_round=True, link_thr
     for t in frames[:-1]:                                             # round 1: adjacent frames
         fi = t - f0
         gr = pair_graph(video, t, 1, velocities(fi))
-        s = edge_scores(models, gr, 1, target)
+        s = edge_scores(models, gr, 1, target, prior)
         src, dst = gr.candidate_edge_index.numpy()
         dst = dst - gr.n_t
         if divisions:
@@ -90,7 +90,7 @@ def track_video(models, video, target, divisions=False, gap_round=True, link_thr
         if not ends or not starts:
             continue
         gr = pair_graph(video, t, 2, velocities(fi))
-        s = edge_scores(models, gr, 2, target)
+        s = edge_scores(models, gr, 2, target, prior)
         src, dst = gr.candidate_edge_index.numpy()
         dst = dst - gr.n_t
         row = {members[tid][-1][1]: r for r, tid in enumerate(ends)}

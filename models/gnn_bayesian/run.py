@@ -13,12 +13,17 @@ Experiments of gnn_bayesian (training on server GPUs; evaluation with gnn_tracki
 
     cache fill <out>/cache with every video used (run it once before starting several processes on one root).
 
+--retrack none|division|full (cv / hela) trains nothing: it loads the ensembles in <out>/checkpoints and tracks the
+same held-out videos again with that prior exchange (model.PRIORS: every class / only division / none) into
+<out>/retrack_<prior>/... (oof/<tracker>/<well>/ or <dataset>/<tracker>/<sequence>/); existing folders are refused.
+
 --gpus 0 1 fills the cache, then splits the folds (cv) or held-out sequences (hela) round-robin over the GPUs, one
 child process per GPU (each with its own log). Several processes may also share one --output-root by hand
 (--folds / --held-out); a fold or held-out sequence whose checkpoints exist is refused.
 
     python -m models.gnn_bayesian.run cv --gpus 0 1 --output-root development/stage2_bayesian/cv_b001
     python -m models.gnn_bayesian.run hela --gpus 0 1 --output-root development/stage2_bayesian/hela_b001
+    python -m models.gnn_bayesian.run cv --retrack none --output-root development/stage2_bayesian/cv_b001
 """
 import argparse
 import datetime
@@ -34,20 +39,24 @@ from utils.run_log import log_path, log_root, run_logged
 TRACKERS = {'gnn_tracking': False, 'gnn_division': True}
 
 
-def _track_and_export(models, spec, target, cache, folder_of, extra_report):
+def _track_and_export(models, spec, target, cache, folder_of, extra_report, prior='full'):
     from models.gnn_tracking.graph import Video
     from models.gnn_bayesian.data import load, split
     from models.gnn_bayesian.track import Recorder, track_video
     from utils.runners import export_gnn_well
     video = Video(*load(spec, cache))
     _, well = split(spec)
+    taken = [folder_of(name) / well for name in TRACKERS if (folder_of(name) / well).exists()]
+    if taken:
+        raise FileExistsError(f'already tracked: {taken}')
     for name, divisions in TRACKERS.items():
         recorder = Recorder(video)
-        assign, parent = track_video(models, video, target, divisions=divisions, recorder=recorder)
+        assign, parent = track_video(models, video, target, divisions=divisions, recorder=recorder, prior=prior)
         folder = folder_of(name)
         folder.mkdir(parents=True, exist_ok=True)
         report = export_gnn_well(folder / well, video, assign, parent if divisions else None, recorder)
-        (folder / well / 'metrics.json').write_text(json.dumps(dict(**extra_report, **report), indent=2), encoding='utf-8')
+        (folder / well / 'metrics.json').write_text(json.dumps(dict(**extra_report, prior=prior, **report), indent=2),
+                                                   encoding='utf-8')
         print(f"{spec} {name}: perfect {report['perfect']:.1f}  id switches {report['id_switches']}"
               + (f"  divisions {len(parent)}" if divisions else ''), flush=True)
 
@@ -64,6 +73,19 @@ def _train_ensemble(specs, seeds, cache, paths, label):
     return models
 
 
+def _ensemble(args, specs, cache, paths, label):
+    """Train the ensemble (refusing existing checkpoints) or, with --retrack, load it."""
+    if args.retrack:
+        from models.gnn_bayesian.model import load_model
+        missing = [p for p in paths if not p.exists()]
+        if missing:
+            raise FileNotFoundError(f'{label}: no checkpoints {missing}')
+        return [load_model(p) for p in paths]
+    if any(p.exists() for p in paths):
+        raise FileExistsError(f'{label} already has checkpoints in {paths[0].parent}')
+    return _train_ensemble(specs, args.seeds, cache, paths, label)
+
+
 def _fill_cache(args, cache, extra):
     from models.gnn_bayesian.data import load
     for spec in [f'{args.scripta}/{w}' for f in args.scripta_spec['folds'] for w in f] + extra:
@@ -74,7 +96,7 @@ def _split_over_gpus(args):
     """One child process per GPU, each given its share of the folds / held-out sequences; waits for all."""
     key, items = ('--folds', args.folds) if args.command == 'cv' else ('--held-out', args.held_out)
     common = [args.command, '--scripta', args.scripta, '--extra', *args.extra, '--seeds', *map(str, args.seeds),
-              '--device', args.device, '--output-root', str(args.output_root)]
+              '--device', args.device, '--output-root', str(args.output_root)] + (['--retrack', args.retrack] if args.retrack else [])
     children = []
     for i, gpu in enumerate(args.gpus):
         share = items[i::len(args.gpus)]
@@ -92,6 +114,7 @@ def run(args):
         os.environ['LAB_TRACKER_DEVICE'] = args.device
     out, cache = args.output_root, args.output_root / 'cache'
     out.mkdir(parents=True, exist_ok=True)
+    dest, prior = (out / f'retrack_{args.retrack}', args.retrack) if args.retrack else (out, 'full')
     scripta = args.scripta_spec
     extra = [f'{d}/{s}' for d in args.extra for s in ctc_sequences(args.extra_roots[d])]
     config = out / 'config.json'
@@ -109,26 +132,22 @@ def run(args):
     elif args.command == 'cv':
         for k in args.folds:
             paths = [out / 'checkpoints' / f'fold{k}_seed{s}.pt' for s in args.seeds]
-            if any(p.exists() for p in paths):
-                raise FileExistsError(f'fold {k} already has checkpoints in {out}')
             fold = scripta['folds'][k]
             specs = [f'{args.scripta}/{w}' for f in scripta['folds'] for w in f if w not in fold] + extra
-            models = _train_ensemble(specs, args.seeds, cache, paths, f'fold {k}')
+            models = _ensemble(args, specs, cache, paths, f'fold {k}')
             for w in fold:
                 _track_and_export(models, f'{args.scripta}/{w}', args.scripta, cache,
-                                  lambda name: out / 'oof' / name, dict(fold=k, seeds=args.seeds))
+                                  lambda name: dest / 'oof' / name, dict(fold=k, seeds=args.seeds), prior)
     else:
         dataset = args.extra[0]
         for held in args.held_out:
             paths = [out / 'checkpoints' / f'{dataset}_{held}_seed{s}.pt' for s in args.seeds]
-            if any(p.exists() for p in paths):
-                raise FileExistsError(f'{dataset} {held} already has checkpoints in {out}')
             specs = ([f'{args.scripta}/{w}' for f in scripta['folds'] for w in f]
                      + [s for s in extra if s != f'{dataset}/{held}'])
-            models = _train_ensemble(specs, args.seeds, cache, paths, f'{dataset} without {held}')
+            models = _ensemble(args, specs, cache, paths, f'{dataset} without {held}')
             _track_and_export(models, f'{dataset}/{held}', dataset, cache,
-                              lambda name: out / dataset / name, dict(held_out=held, seeds=args.seeds))
-    print('saved', out)
+                              lambda name: dest / dataset / name, dict(held_out=held, seeds=args.seeds), prior)
+    print('saved', dest)
     return 0
 
 
@@ -142,6 +161,8 @@ def main(argv=None):
     parser.add_argument('--seeds', nargs='+', type=int, default=[0, 1, 2])
     parser.add_argument('--device', choices=['auto', 'cpu', 'cuda'], default='auto')
     parser.add_argument('--gpus', nargs='+', type=int, help='Split the folds / held-out sequences over these GPUs')
+    parser.add_argument('--retrack', choices=['none', 'division', 'full'],
+                        help='Load the checkpoints and track again with this prior exchange (no training)')
     parser.add_argument('--output-root', type=Path, required=True)
     args = parser.parse_args(argv)
     cfg, base = read_config()
@@ -154,6 +175,8 @@ def main(argv=None):
         if missing:
             parser.error(f'{args.extra[0]} has no sequences {missing}')
     stage = {'cache': 'cache', 'cv': 'cv_folds' + ''.join(map(str, args.folds)), 'hela': 'hela_held' + '_'.join(args.held_out)}[args.command]
+    if args.retrack and args.command != 'cache':
+        stage += f'_retrack_{args.retrack}'
     if args.gpus and args.command != 'cache':
         stage += '_gpus' + ''.join(map(str, args.gpus))                 # the children log under their own stages
     log = log_path(log_root(args.output_root, base / cfg['output_root']), 'gnn_bayesian',
