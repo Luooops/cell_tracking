@@ -4,14 +4,15 @@ track.py
 The two-round tracker of gnn_tracking (track.py / track_division.py: same rounds, bookkeeping and CTC lineage),
 scored by the 3-way network: continuations on p_same, divisions (optional) on p_division (solver.py). Every edge is
 recorded with p_same (as 'p' and the members' SAME logits, so gnn_tracking.evaluate_answers reads it), p_div and
-the ensemble's mutual information.
+the ensemble's mutual information. A binary ensemble (model n_classes=2, the ablation) divides as gnn_division:
+solver.match_division on p_same. track_video_em(): two passes, the second with the video's EM prior.
 """
 import numpy as np
 
 from models.gnn_tracking.edge_record import EdgeRecorder
 from models.gnn_tracking.graph import pair_graph
-from models.gnn_tracking.solver import match
-from models.gnn_bayesian.model import edge_scores
+from models.gnn_tracking.solver import match, match_division
+from models.gnn_bayesian.model import edge_scores, em_prior, reference_prior
 from models.gnn_bayesian.solver import match_with_divisions
 
 LINK_THRESH, GAP_THRESH, DIV_THRESH = 0.4, 0.4, 0.5      # from the costs of LNK (0.4) and BC (0.5), not tuned
@@ -34,9 +35,11 @@ class Recorder(EdgeRecorder):
 
 
 def track_video(models, video, target, divisions=False, gap_round=True, link_thresh=LINK_THRESH,
-                gap_thresh=GAP_THRESH, div_thresh=DIV_THRESH, recorder=None, prior='full'):
+                gap_thresh=GAP_THRESH, div_thresh=DIV_THRESH, recorder=None, prior='full', video_prior=None):
     """-> (assign, parent) as gnn_tracking.track_division (parent stays empty without divisions). target: the
-    dataset whose class priors score this video; prior: which classes get them (model.PRIORS)."""
+    dataset whose class priors score this video; prior: which classes get them (model.PRIORS; 'em' needs
+    video_prior {gap: [K]})."""
+    binary = models[0].n_classes == 2
     frames = video.frames
     f0 = frames[0]
     assert frames == list(range(f0, f0 + len(frames))), "frames must be consecutive"
@@ -55,10 +58,12 @@ def track_video(models, video, target, divisions=False, gap_round=True, link_thr
     for t in frames[:-1]:                                             # round 1: adjacent frames
         fi = t - f0
         gr = pair_graph(video, t, 1, velocities(fi))
-        s = edge_scores(models, gr, 1, target, prior)
+        s = edge_scores(models, gr, 1, target, prior, video_prior)
         src, dst = gr.candidate_edge_index.numpy()
         dst = dst - gr.n_t
-        if divisions:
+        if divisions and binary:
+            links = match_division(s['p_same'], src, dst, gr.n_t, gr.n_n, link_thresh, div_thresh)
+        elif divisions:
             links = match_with_divisions(s['p_same'], s['p_div'], src, dst, gr.n_t, gr.n_n, link_thresh, div_thresh)
         else:
             links = match(s['p_same'], src, dst, gr.n_t, gr.n_n, link_thresh)
@@ -90,7 +95,7 @@ def track_video(models, video, target, divisions=False, gap_round=True, link_thr
         if not ends or not starts:
             continue
         gr = pair_graph(video, t, 2, velocities(fi))
-        s = edge_scores(models, gr, 2, target, prior)
+        s = edge_scores(models, gr, 2, target, prior, video_prior)
         src, dst = gr.candidate_edge_index.numpy()
         dst = dst - gr.n_t
         row = {members[tid][-1][1]: r for r, tid in enumerate(ends)}
@@ -114,3 +119,19 @@ def track_video(models, video, target, divisions=False, gap_round=True, link_thr
             for d, m in parent.items():
                 if m == b: parent[d] = a
     return assign, parent
+
+
+def track_video_em(models, video, target, divisions=False, recorder=None, **kw):
+    """Pass 1 scores the video with the network's own output (prior 'none'); em_prior() then estimates the video's
+    class prior per gap from every recorded candidate edge, against the target's reference prior; pass 2 tracks with
+    it. -> (assign, parent, video_prior {gap: [K]})."""
+    first = Recorder(video)
+    track_video(models, video, target, divisions=divisions, recorder=first, prior='none', **kw)
+    e = first.arrays()
+    k = models[0].n_classes
+    q = np.stack([1 - e['p'] - e['p_div'], e['p'], e['p_div']], 1)[:, :k]
+    video_prior = {int(g): em_prior(q[e['g'] == g], reference_prior(models[0], int(g), target)).tolist()
+                   for g in np.unique(e['g'])}
+    assign, parent = track_video(models, video, target, divisions=divisions, recorder=recorder, prior='em',
+                                 video_prior=video_prior, **kw)
+    return assign, parent, video_prior

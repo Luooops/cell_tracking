@@ -7,6 +7,8 @@ teacher-forced velocities, optimiser and schedule are gnn_tracking/train.py's. T
     probabilities stay posteriors under the training mix; model.py exchanges the prior per dataset)
   + AUX x the original contrastive appearance loss on the SAME edges.
 Every model keeps the class counts of its training edges per (dataset, gap) as its priors.
+n_classes=2 is the binary ablation 'linked or not': SAME and DIVISION are both positive (a daughter is a link of its
+mother), so gnn_division's solver can divide on two strong links; same data, augmentation and schedule.
 """
 import time
 
@@ -18,7 +20,7 @@ from torch_geometric.loader import DataLoader
 from models.gnn_tracking.graph import Video, pair_graph
 from models.gnn_tracking.model import DEVICE
 from models.gnn_tracking.train import AUX, BATCH, EPOCHS, LR, MAX_GAP, contrastive_loss, gt_velocities
-from models.gnn_bayesian.data import SAME, edge_classes, load, split
+from models.gnn_bayesian.data import SAME, UNRELATED, edge_classes, load, split
 from models.gnn_bayesian.model import TrackerGNN3, class_priors
 
 
@@ -40,13 +42,14 @@ def training_graphs(specs, cache, rng):
     return graphs, counts
 
 
-def train(specs, seed, cache, log=None):
+def train(specs, seed, cache, log=None, n_classes=3):
     if log:
         print(f'  {log}: building training graphs for {len(specs)} videos', flush=True)
     graphs, counts = training_graphs(specs, cache, np.random.default_rng(seed))
     torch.manual_seed(seed)
-    model = TrackerGNN3().to(DEVICE)
-    model.priors = class_priors({k: v.tolist() for k, v in counts.items()})
+    model = TrackerGNN3(n_classes).to(DEVICE)
+    merge = (lambda c: c) if n_classes == 3 else (lambda c: np.array([c[0], c[1] + c[2]]))
+    model.priors = class_priors({k: merge(v).tolist() for k, v in counts.items()})
     if log:
         div = {d: int(sum(c[2] for (dd, g), c in counts.items() if dd == d)) for d in {d for d, _ in counts}}
         print(f'  {log}: {len(graphs)} graphs, division edges per dataset {div}', flush=True)
@@ -58,11 +61,12 @@ def train(specs, seed, cache, log=None):
         for b in DataLoader(graphs, batch_size=BATCH, shuffle=True):
             b = b.to(DEVICE)
             known = ~b.candidate_edge_unknown.bool()
-            label = b.edge_class[known]
+            label = b.edge_class[known] if n_classes == 3 else (b.edge_class[known] != UNRELATED).long()
             logits = model(b)
             loss = F.cross_entropy(logits[known], label)
             src, dst = b.candidate_edge_index
-            loss = loss + AUX * contrastive_loss(model.sim[known], src[known], dst[known], label == SAME)
+            same = b.edge_class[known] == SAME                       # appearance loss on continuations only
+            loss = loss + AUX * contrastive_loss(model.sim[known], src[known], dst[known], same)
             opt.zero_grad(); loss.backward(); opt.step()
             loss_sum += loss.detach(); n_batches += 1
         if DEVICE.type == 'cuda':

@@ -13,7 +13,12 @@ Experiments of gnn_bayesian (training on server GPUs; evaluation with gnn_tracki
 
     cache fill <out>/cache with every video used (run it once before starting several processes on one root).
 
---retrack none|division|full (cv / hela) trains nothing: it loads the ensembles in <out>/checkpoints and tracks the
+--classes 2 trains the binary ablation 'linked or not' (continuation and mother -> daughter positive; divisions as
+gnn_division: two strong links).
+--prior (default division, the retrack result) is the prior exchange used to track after training; em estimates
+each video's prior (model.em_prior, two tracking passes, the estimate in metrics.json).
+
+--retrack none|division|full|em (cv / hela) trains nothing: it loads the ensembles in <out>/checkpoints and tracks the
 same held-out videos again with that prior exchange (model.PRIORS: every class / only division / none) into
 <out>/retrack_<prior>/... (oof/<tracker>/<well>/ or <dataset>/<tracker>/<sequence>/); existing folders are refused.
 
@@ -24,6 +29,7 @@ child process per GPU (each with its own log). Several processes may also share 
     python -m models.gnn_bayesian.run cv --gpus 0 1 --output-root development/stage2_bayesian/cv_b001
     python -m models.gnn_bayesian.run hela --gpus 0 1 --output-root development/stage2_bayesian/hela_b001
     python -m models.gnn_bayesian.run cv --retrack none --output-root development/stage2_bayesian/cv_b001
+    python -m models.gnn_bayesian.run cv --classes 2 --gpus 0 1 --output-root development/stage2_bayesian/cv_b002
 """
 import argparse
 import datetime
@@ -42,7 +48,7 @@ TRACKERS = {'gnn_tracking': False, 'gnn_division': True}
 def _track_and_export(models, spec, target, cache, folder_of, extra_report, prior='full'):
     from models.gnn_tracking.graph import Video
     from models.gnn_bayesian.data import load, split
-    from models.gnn_bayesian.track import Recorder, track_video
+    from models.gnn_bayesian.track import Recorder, track_video, track_video_em
     from utils.runners import export_gnn_well
     video = Video(*load(spec, cache))
     _, well = split(spec)
@@ -51,22 +57,27 @@ def _track_and_export(models, spec, target, cache, folder_of, extra_report, prio
         raise FileExistsError(f'already tracked: {taken}')
     for name, divisions in TRACKERS.items():
         recorder = Recorder(video)
-        assign, parent = track_video(models, video, target, divisions=divisions, recorder=recorder, prior=prior)
+        if prior == 'em':
+            assign, parent, video_prior = track_video_em(models, video, target, divisions=divisions, recorder=recorder)
+            report_prior = dict(prior=prior, video_prior=video_prior)
+        else:
+            assign, parent = track_video(models, video, target, divisions=divisions, recorder=recorder, prior=prior)
+            report_prior = dict(prior=prior)
         folder = folder_of(name)
         folder.mkdir(parents=True, exist_ok=True)
         report = export_gnn_well(folder / well, video, assign, parent if divisions else None, recorder)
-        (folder / well / 'metrics.json').write_text(json.dumps(dict(**extra_report, prior=prior, **report), indent=2),
+        (folder / well / 'metrics.json').write_text(json.dumps(dict(**extra_report, **report_prior, **report), indent=2),
                                                    encoding='utf-8')
         print(f"{spec} {name}: perfect {report['perfect']:.1f}  id switches {report['id_switches']}"
               + (f"  divisions {len(parent)}" if divisions else ''), flush=True)
 
 
-def _train_ensemble(specs, seeds, cache, paths, label):
+def _train_ensemble(specs, seeds, cache, paths, label, n_classes=3):
     from models.gnn_bayesian.model import save
     from models.gnn_bayesian.train import train
     models = []
     for seed, path in zip(seeds, paths):
-        model = train(specs, seed, cache, log=f'{label} seed {seed}')
+        model = train(specs, seed, cache, log=f'{label} seed {seed}', n_classes=n_classes)
         path.parent.mkdir(parents=True, exist_ok=True)
         save(model, path)
         models.append(model)
@@ -83,7 +94,7 @@ def _ensemble(args, specs, cache, paths, label):
         return [load_model(p) for p in paths]
     if any(p.exists() for p in paths):
         raise FileExistsError(f'{label} already has checkpoints in {paths[0].parent}')
-    return _train_ensemble(specs, args.seeds, cache, paths, label)
+    return _train_ensemble(specs, args.seeds, cache, paths, label, args.classes)
 
 
 def _fill_cache(args, cache, extra):
@@ -96,7 +107,8 @@ def _split_over_gpus(args):
     """One child process per GPU, each given its share of the folds / held-out sequences; waits for all."""
     key, items = ('--folds', args.folds) if args.command == 'cv' else ('--held-out', args.held_out)
     common = [args.command, '--scripta', args.scripta, '--extra', *args.extra, '--seeds', *map(str, args.seeds),
-              '--device', args.device, '--output-root', str(args.output_root)] + (['--retrack', args.retrack] if args.retrack else [])
+              '--device', args.device, '--classes', str(args.classes), '--prior', args.prior,
+              '--output-root', str(args.output_root)] + (['--retrack', args.retrack] if args.retrack else [])
     children = []
     for i, gpu in enumerate(args.gpus):
         share = items[i::len(args.gpus)]
@@ -114,15 +126,16 @@ def run(args):
         os.environ['LAB_TRACKER_DEVICE'] = args.device
     out, cache = args.output_root, args.output_root / 'cache'
     out.mkdir(parents=True, exist_ok=True)
-    dest, prior = (out / f'retrack_{args.retrack}', args.retrack) if args.retrack else (out, 'full')
+    dest, prior = (out / f'retrack_{args.retrack}', args.retrack) if args.retrack else (out, args.prior)
     scripta = args.scripta_spec
     extra = [f'{d}/{s}' for d in args.extra for s in ctc_sequences(args.extra_roots[d])]
     config = out / 'config.json'
     if not config.exists():
         config.write_text(json.dumps(dict(
             model='gnn_bayesian', scripta=args.scripta, data_root=str(scripta['root']), extra=args.extra, extra_videos=extra,
-            seeds=args.seeds, folds=scripta['folds'], created=datetime.datetime.now().isoformat(timespec='seconds'),
-            scope='3-way edges (unrelated / same / division) trained on scripta + extra datasets; per-dataset class priors'),
+            seeds=args.seeds, folds=scripta['folds'], classes=args.classes, prior=args.prior, created=datetime.datetime.now().isoformat(timespec='seconds'),
+            scope=('3-way edges (unrelated / same / division)' if args.classes == 3 else 'binary edges (same cell or not)')
+            + ' trained on scripta + extra datasets; per-dataset class priors'),
             indent=2), encoding='utf-8')
     if args.command == 'cache':
         _fill_cache(args, cache, extra)
@@ -161,7 +174,10 @@ def main(argv=None):
     parser.add_argument('--seeds', nargs='+', type=int, default=[0, 1, 2])
     parser.add_argument('--device', choices=['auto', 'cpu', 'cuda'], default='auto')
     parser.add_argument('--gpus', nargs='+', type=int, help='Split the folds / held-out sequences over these GPUs')
-    parser.add_argument('--retrack', choices=['none', 'division', 'full'],
+    parser.add_argument('--classes', type=int, choices=[2, 3], default=3, help='2: the binary ablation (training only)')
+    parser.add_argument('--prior', choices=['division', 'none', 'full', 'em'], default='division',
+                        help='Prior exchange used to track after training')
+    parser.add_argument('--retrack', choices=['none', 'division', 'full', 'em'],
                         help='Load the checkpoints and track again with this prior exchange (no training)')
     parser.add_argument('--output-root', type=Path, required=True)
     args = parser.parse_args(argv)
