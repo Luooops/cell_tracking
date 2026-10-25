@@ -13,18 +13,19 @@ Experiments of gnn_bayesian (training on server GPUs; evaluation with gnn_tracki
 
     cache fill <out>/cache with every video used (run it once before starting several processes on one root).
 
-Several processes may share one --output-root (e.g. one per GPU with --folds / --held-out); a fold or held-out
-sequence whose checkpoints exist is refused.
+--gpus 0 1 fills the cache, then splits the folds (cv) or held-out sequences (hela) round-robin over the GPUs, one
+child process per GPU (each with its own log). Several processes may also share one --output-root by hand
+(--folds / --held-out); a fold or held-out sequence whose checkpoints exist is refused.
 
-    python -m models.gnn_bayesian.run cv --scripta scripta_data_refine --extra Fluo-N2DL-HeLa --folds 0 \\
-        --output-root development/stage2_bayesian/cv_b001
-    python -m models.gnn_bayesian.run hela --scripta scripta_data_refine --extra Fluo-N2DL-HeLa --held-out 01 \\
-        --output-root development/stage2_bayesian/hela_b001
+    python -m models.gnn_bayesian.run cv --gpus 0 1 --output-root development/stage2_bayesian/cv_b001
+    python -m models.gnn_bayesian.run hela --gpus 0 1 --output-root development/stage2_bayesian/hela_b001
 """
 import argparse
 import datetime
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 from utils.config import ctc_sequences, read_config, resolve_dataset
@@ -63,6 +64,29 @@ def _train_ensemble(specs, seeds, cache, paths, label):
     return models
 
 
+def _fill_cache(args, cache, extra):
+    from models.gnn_bayesian.data import load
+    for spec in [f'{args.scripta}/{w}' for f in args.scripta_spec['folds'] for w in f] + extra:
+        load(spec, cache)
+
+
+def _split_over_gpus(args):
+    """One child process per GPU, each given its share of the folds / held-out sequences; waits for all."""
+    key, items = ('--folds', args.folds) if args.command == 'cv' else ('--held-out', args.held_out)
+    common = [args.command, '--scripta', args.scripta, '--extra', *args.extra, '--seeds', *map(str, args.seeds),
+              '--device', args.device, '--output-root', str(args.output_root)]
+    children = []
+    for i, gpu in enumerate(args.gpus):
+        share = items[i::len(args.gpus)]
+        if share:
+            cmd = [sys.executable, '-m', 'models.gnn_bayesian.run', *common, key, *map(str, share)]
+            print(f'GPU {gpu}: {key} {" ".join(map(str, share))}', flush=True)
+            children.append((gpu, subprocess.Popen(cmd, env={**os.environ, 'CUDA_VISIBLE_DEVICES': str(gpu)})))
+    failed = [gpu for gpu, child in children if child.wait() != 0]
+    if failed:
+        raise RuntimeError(f'child processes on GPUs {failed} failed (see their logs)')
+
+
 def run(args):
     if args.device != 'auto':
         os.environ['LAB_TRACKER_DEVICE'] = args.device
@@ -78,9 +102,10 @@ def run(args):
             scope='3-way edges (unrelated / same / division) trained on scripta + extra datasets; per-dataset class priors'),
             indent=2), encoding='utf-8')
     if args.command == 'cache':
-        from models.gnn_bayesian.data import load
-        for spec in [f'{args.scripta}/{w}' for f in scripta['folds'] for w in f] + extra:
-            load(spec, cache)
+        _fill_cache(args, cache, extra)
+    elif args.gpus:
+        _fill_cache(args, cache, extra)
+        _split_over_gpus(args)
     elif args.command == 'cv':
         for k in args.folds:
             paths = [out / 'checkpoints' / f'fold{k}_seed{s}.pt' for s in args.seeds]
@@ -116,6 +141,7 @@ def main(argv=None):
     parser.add_argument('--held-out', nargs='+', default=['01', '02'], help='hela: sequences of the first extra dataset')
     parser.add_argument('--seeds', nargs='+', type=int, default=[0, 1, 2])
     parser.add_argument('--device', choices=['auto', 'cpu', 'cuda'], default='auto')
+    parser.add_argument('--gpus', nargs='+', type=int, help='Split the folds / held-out sequences over these GPUs')
     parser.add_argument('--output-root', type=Path, required=True)
     args = parser.parse_args(argv)
     cfg, base = read_config()
@@ -128,6 +154,8 @@ def main(argv=None):
         if missing:
             parser.error(f'{args.extra[0]} has no sequences {missing}')
     stage = {'cache': 'cache', 'cv': 'cv_folds' + ''.join(map(str, args.folds)), 'hela': 'hela_held' + '_'.join(args.held_out)}[args.command]
+    if args.gpus and args.command != 'cache':
+        stage += '_gpus' + ''.join(map(str, args.gpus))                 # the children log under their own stages
     log = log_path(log_root(args.output_root, base / cfg['output_root']), 'gnn_bayesian',
                    f'{args.output_root.resolve().name}_{stage}')
     return run_logged(log, run, args, argv=argv)
