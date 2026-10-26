@@ -5,18 +5,16 @@ gnn_tracking's TrackerGNN with a 3-way last layer: for every candidate edge the 
 cell) and DIVISION (mother -> daughter). Everything before the last layer is the original network.
 
 Bayesian helpers:
-  - class priors: every checkpoint keeps the class frequencies of its training edges per gap, for the whole training
-    mix and for every training dataset. A network trained on the mix scores with the mix's prior; for a video of
-    dataset D the prior is exchanged for D's own (Bayes' rule: logit + log pi_D - log pi_mix). A dataset without
-    divisions (scripta) thus gets a division prior near 0 and the network keeps its continuation behaviour there.
-    The retrack experiment showed the network partly recognises its dataset, so exchanging the same : unrelated
-    prior counts it twice; prior='division' exchanges only the division class.
-  - EM (Saerens, Latinne & Decaestecker 2002): em_prior() estimates one test video's class prior from the
-    network's own posteriors, without labels. The reference is the target dataset's training prior (what the network
-    already outputs, by the retrack result), or the mix for a dataset not in training.
+  - the network is trained with plain cross-entropy (no class weights), so its softmax is the posterior under the
+    training mix; it is used as it is (prior 'none'): one model, one cost-derived decision rule for every dataset,
+    nothing that depends on knowing where a video comes from. The network partly recognises its data by itself.
+    prior='division' (analysis only, labelled as using dataset knowledge) exchanges the division prior of the mix for
+    the target dataset's: logit_division + log pi_D - log pi_mix; it is the upper bound of what a dataset's division
+    rate adds. Every checkpoint keeps the class frequencies of its training edges (per gap, mix and per dataset).
+  - ensemble and views: probabilities are the mean of the softmax over every member and every view of the graph
+    (views: the video mirrored as in training, scored edge by edge -- a Bayesian average over nuisance orientations,
+    i.e. test-time augmentation); their disagreement is the mutual information H(mean) - mean H(member).
   - binary ablation (n_classes=2): 'linked or not' (SAME + DIVISION positive); its p_same is p(link).
-  - ensemble: probabilities are the mean of the members' softmax; their disagreement is the mutual information
-    H(mean) - mean H(member), the 'where am I unsure' signal recorded with every edge.
 """
 import numpy as np
 import torch
@@ -59,61 +57,38 @@ def load_model(path):
     return model.eval()
 
 
-PRIORS = ('full', 'division', 'none', 'em')    # the target's prior for all classes / only division / none;
-                                                # em: the video's own prior estimated by em_prior()
+PRIORS = ('none', 'division')     # none: the network's own posterior; division: target's division prior (analysis)
 
 
-def reference_prior(model, gap, target):
-    """The prior the network's raw output stands for on the target: its training prior, else the mix's."""
+def _shift(model, gap, target, prior='none'):
+    """Added to the logits: zero for 'none'; for 'division' log pi_target - log pi_mix in the division entry only
+    (zero if the target was not in training)."""
     pri = model.priors
-    g = min(gap, max(pri['mix']))
-    return np.asarray(pri['datasets'][target][g] if target in pri['datasets'] else pri['mix'][g])
-
-
-def _shift(model, gap, target, prior='full', video_prior=None):
-    """Added to the logits. full: log pi_target - log pi_mix (zero if the target was not in training); division:
-    only its division entry (same : unrelated stays the network's own); none: zero; em: log video_prior[gap] -
-    log reference_prior."""
-    pri = model.priors
-    if prior == 'em':
-        return np.log(video_prior[min(gap, max(video_prior))]) - np.log(reference_prior(model, gap, target))
-    if prior == 'none' or pri is None or target not in pri['datasets']:
-        return np.zeros(model.n_classes)
-    g = min(gap, max(pri['mix']))
-    shift = np.log(pri['datasets'][target][g]) - np.log(pri['mix'][g])
-    if prior == 'division':
-        shift[:2] = 0
+    shift = np.zeros(model.n_classes)
+    if prior == 'division' and pri is not None and target in pri['datasets'] and model.n_classes > 2:
+        g = min(gap, max(pri['mix']))
+        shift[2] = np.log(pri['datasets'][target][g][2]) - np.log(pri['mix'][g][2])
     return shift
 
 
-def em_prior(q, reference, iters=1000, tol=1e-9):
-    """Saerens et al. (2002): q [E, K] posteriors under the reference prior -> the prior of these edges that is
-    consistent with them (fixed point of pi = mean_e normalise(q_e * pi / reference)). No labels used."""
-    q, reference = np.asarray(q, float), np.asarray(reference, float)
-    pi = reference.copy()
-    for _ in range(iters):
-        w = q * (pi / reference)
-        new = (w / w.sum(1, keepdims=True)).mean(0)
-        new = np.clip(new, 1e-6, None); new /= new.sum()
-        if np.abs(new - pi).max() < tol:
-            return new
-        pi = new
-    return pi
-
-
 @torch.no_grad()
-def edge_scores(models, gr, gap, target, prior='full', video_prior=None):
-    """-> dict(p_same [C], p_div [C], logits [C, M] (each member's logit of SAME vs the rest), mi [C]) numpy,
-    with every member's prior exchanged as prior / video_prior say (_shift). A binary ensemble has p_div = 0."""
-    gd = gr.to(DEVICE)
+def edge_scores(models, views, gap, target, prior='none'):
+    """views: [(graph, order)] -- the same frame pair seen several ways (the first is the reference; order [C] puts
+    a view's candidate edges into the reference's order, None for the reference itself). -> dict(p_same [C],
+    p_div [C], logits [C, M x V] (each member's logit of SAME vs the rest, in every view), mi [C]) numpy: the mean
+    softmax over every member and view, prior exchanged as `prior` says. A binary ensemble has p_div = 0."""
     q = []
-    for m in models:
-        z = m(gd) + torch.as_tensor(_shift(m, gap, target, prior, video_prior), dtype=torch.float32, device=DEVICE)
-        q.append(torch.softmax(z, dim=1))
-    gr.cpu()
-    q = torch.stack(q).cpu().double().numpy()                                 # [M, C, n_classes]
+    for gr, order in views:
+        gd = gr.to(DEVICE)
+        for m in models:
+            z = m(gd) + torch.as_tensor(_shift(m, gap, target, prior), dtype=torch.float32, device=DEVICE)
+            out = torch.softmax(z, dim=1)
+            q.append(out if order is None else out[torch.as_tensor(order, device=DEVICE)])
+        gr.cpu()
+    q = torch.stack(q).cpu().double().numpy()                                 # [M x V, C, n_classes]
     p = q.mean(0)
     entropy = lambda x: -(x * np.log(np.clip(x, 1e-12, 1))).sum(-1)
     mi = np.maximum(entropy(p) - entropy(q).mean(0), 0.0)
     same = np.clip(q[:, :, 1], 1e-7, 1 - 1e-7)
-    return dict(p_same=p[:, 1], p_div=p[:, 2] if p.shape[1] > 2 else np.zeros(len(p)), logits=np.log(same / (1 - same)).T, mi=mi)
+    return dict(p_same=p[:, 1], p_div=p[:, 2] if p.shape[1] > 2 else np.zeros(len(p)),
+                logits=np.log(same / (1 - same)).T, mi=mi)

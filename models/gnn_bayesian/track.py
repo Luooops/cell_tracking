@@ -5,40 +5,68 @@ The two-round tracker of gnn_tracking (track.py / track_division.py: same rounds
 scored by the 3-way network: continuations on p_same, divisions (optional) on p_division (solver.py). Every edge is
 recorded with p_same (as 'p' and the members' SAME logits, so gnn_tracking.evaluate_answers reads it), p_div and
 the ensemble's mutual information. A binary ensemble (model n_classes=2, the ablation) divides as gnn_division:
-solver.match_division on p_same. track_video_em(): two passes, the second with the video's EM prior.
+solver.match_division on p_same.
+
+views: mirrored copies of the video (data.load(..., flip), same detections in the same order); every frame pair is
+then scored on each of them too, with the velocities of the same links, and the scores are averaged (test-time
+augmentation, model.edge_scores). ablate (cue analysis): 'appearance' shuffles the cell images within each frame of
+every graph (appearance carries no information, its distribution is kept); 'velocity' builds every graph without
+velocities (as for a cell seen for the first time); position, size and competition stay. cues=True keeps the real
+tracking and records, per edge, the probabilities the same graph gets under each ablation (p_noapp, p_novel).
 """
 import numpy as np
 
 from models.gnn_tracking.edge_record import EdgeRecorder
 from models.gnn_tracking.graph import pair_graph
 from models.gnn_tracking.solver import match, match_division
-from models.gnn_bayesian.model import edge_scores, em_prior, reference_prior
+from models.gnn_bayesian.model import edge_scores
 from models.gnn_bayesian.solver import match_with_divisions
 
 LINK_THRESH, GAP_THRESH, DIV_THRESH = 0.4, 0.4, 0.5      # from the costs of LNK (0.4) and BC (0.5), not tuned
+ABLATIONS = ('appearance', 'velocity')
 
 
 class Recorder(EdgeRecorder):
-    """gnn_tracking's EdgeRecorder + p_div and mi per edge."""
+    """gnn_tracking's EdgeRecorder + p_div and mi per edge (and p_noapp / p_novel of the cue analysis)."""
+    EXTRA = ('p_div', 'mi', 'p_noapp', 'p_novel')
 
     def __call__(self, round_, t, g, src, dst, scores, in_solver, chosen):
         super().__call__(round_, t, g, src, dst, scores['p_same'], scores['logits'], in_solver, chosen)
-        self.parts[-1]['p_div'] = np.asarray(scores['p_div'], np.float32)
-        self.parts[-1]['mi'] = np.asarray(scores['mi'], np.float32)
+        for k in self.EXTRA:
+            if k in scores:
+                self.parts[-1][k] = np.asarray(scores[k], np.float32)
 
     def arrays(self):
         out = super().arrays()
         if self.parts:
-            for k in ('p_div', 'mi'):
-                out[k] = np.concatenate([part[k] for part in self.parts])
+            for k in self.EXTRA:
+                if k in self.parts[0]:
+                    out[k] = np.concatenate([part[k] for part in self.parts])
         return out
 
 
+def _shuffled_images(gr, seed):
+    """The graph with its cell images permuted within frame t and within frame t + g."""
+    import torch
+    rng = np.random.default_rng(seed)
+    order = np.concatenate([rng.permutation(gr.n_t), gr.n_t + rng.permutation(gr.n_n)])
+    out = gr.clone()
+    out.crops = gr.crops[torch.as_tensor(order)]
+    return out
+
+
+def _order(reference, view):
+    """Indices putting the view's candidate edges into the reference's order (same detections, same edges)."""
+    ref, other = reference.candidate_edge_index.numpy(), view.candidate_edge_index.numpy()
+    where = {(int(a), int(b)): k for k, (a, b) in enumerate(other.T)}
+    return np.array([where[(int(a), int(b))] for a, b in ref.T])
+
+
 def track_video(models, video, target, divisions=False, gap_round=True, link_thresh=LINK_THRESH,
-                gap_thresh=GAP_THRESH, div_thresh=DIV_THRESH, recorder=None, prior='full', video_prior=None):
+                gap_thresh=GAP_THRESH, div_thresh=DIV_THRESH, recorder=None, prior='none', views=(), ablate=None,
+                cues=False):
     """-> (assign, parent) as gnn_tracking.track_division (parent stays empty without divisions). target: the
-    dataset whose class priors score this video; prior: which classes get them (model.PRIORS; 'em' needs
-    video_prior {gap: [K]})."""
+    dataset of the video (used only by prior 'division'); prior: model.PRIORS; views / ablate / cues: see above."""
     binary = models[0].n_classes == 2
     frames = video.frames
     f0 = frames[0]
@@ -47,18 +75,35 @@ def track_video(models, video, target, divisions=False, gap_round=True, link_thr
     for i in range(len(video.rows[f0])):
         assign[(0, i)] = next_id; members[next_id] = [(0, i)]; next_id += 1
 
-    def velocities(fi):
+    def velocities(fi, vid=video):
         out = {}
-        for i in range(len(video.rows[fi + f0])):
+        if ablate == 'velocity':
+            return out
+        for i in range(len(vid.rows[fi + f0])):
             prev = [k for k in members[assign[(fi, i)]] if k[0] == fi - 1]
             if prev:
-                out[i] = tuple(video.pos[fi + f0][i] - video.pos[fi - 1 + f0][prev[0][1]])
+                out[i] = tuple(vid.pos[fi + f0][i] - vid.pos[fi - 1 + f0][prev[0][1]])
         return out
+
+    def score(t, g):
+        """-> (reference graph, scores): every view of frames (t, t + g), ablated as asked, averaged."""
+        fi = t - f0
+        gr = pair_graph(video, t, g, velocities(fi))
+        seed = t * 10 + g
+        prep = (lambda x: _shuffled_images(x, seed)) if ablate == 'appearance' else (lambda x: x)
+        graphs = [(prep(gr), None)]
+        for vid in views:
+            other = pair_graph(vid, t, g, velocities(fi, vid))
+            graphs.append((prep(other), _order(gr, other)))
+        s = edge_scores(models, graphs, g, target, prior)
+        if cues:
+            s['p_noapp'] = edge_scores(models, [(_shuffled_images(gr, seed), None)], g, target, prior)['p_same']
+            s['p_novel'] = edge_scores(models, [(pair_graph(video, t, g, {}), None)], g, target, prior)['p_same']
+        return gr, s
 
     for t in frames[:-1]:                                             # round 1: adjacent frames
         fi = t - f0
-        gr = pair_graph(video, t, 1, velocities(fi))
-        s = edge_scores(models, gr, 1, target, prior, video_prior)
+        gr, s = score(t, 1)
         src, dst = gr.candidate_edge_index.numpy()
         dst = dst - gr.n_t
         if divisions and binary:
@@ -94,8 +139,7 @@ def track_video(models, video, target, divisions=False, gap_round=True, link_thr
         starts = [tid for tid, ks in members.items() if ks[0][0] == fj and tid not in parent]
         if not ends or not starts:
             continue
-        gr = pair_graph(video, t, 2, velocities(fi))
-        s = edge_scores(models, gr, 2, target, prior, video_prior)
+        gr, s = score(t, 2)
         src, dst = gr.candidate_edge_index.numpy()
         dst = dst - gr.n_t
         row = {members[tid][-1][1]: r for r, tid in enumerate(ends)}
@@ -120,18 +164,3 @@ def track_video(models, video, target, divisions=False, gap_round=True, link_thr
                 if m == b: parent[d] = a
     return assign, parent
 
-
-def track_video_em(models, video, target, divisions=False, recorder=None, **kw):
-    """Pass 1 scores the video with the network's own output (prior 'none'); em_prior() then estimates the video's
-    class prior per gap from every recorded candidate edge, against the target's reference prior; pass 2 tracks with
-    it. -> (assign, parent, video_prior {gap: [K]})."""
-    first = Recorder(video)
-    track_video(models, video, target, divisions=divisions, recorder=first, prior='none', **kw)
-    e = first.arrays()
-    k = models[0].n_classes
-    q = np.stack([1 - e['p'] - e['p_div'], e['p'], e['p_div']], 1)[:, :k]
-    video_prior = {int(g): em_prior(q[e['g'] == g], reference_prior(models[0], int(g), target)).tolist()
-                   for g in np.unique(e['g'])}
-    assign, parent = track_video(models, video, target, divisions=divisions, recorder=recorder, prior='em',
-                                 video_prior=video_prior, **kw)
-    return assign, parent, video_prior

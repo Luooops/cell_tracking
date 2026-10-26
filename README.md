@@ -7,6 +7,7 @@
 ```text
 models/
   gnn_tracking/        GNN、原训练、两种跟踪求解流程、已有权重
+  gnn_bayesian/        GNN 贝叶斯最终版：三类边（含分裂）、多数据集训练、置信度输出（不改 gnn_tracking）
   trackastra/          原官方预训练调用与导出流程
   motion_tracking/     MotionAssociation、专用 NPZ 数据准备、训练、窗口推理与解码
   classical_tracking/  经典规则追踪基线（无训练，用于对比简单算法与训练模型）与原分割流水线
@@ -133,6 +134,19 @@ python -m models.gnn_tracking.audit_gating --dataset Fluo-N2DL-HeLa --output-roo
 审计输出 `links.csv`（每条 GT 连接是否落在 r(t)·√g 内）、`radius.csv`（每帧 r 及其由 q99/下限/间距上限/回退值哪一项决定）、`anomalies.csv`、`summary.json`。门控半径的计算在 `models/gnn_tracking/gating.py`，`graph.Video.radius` 调用同一函数（数值与重构前逐位一致）。
 
 数据准备唯一主流程为 `utils/prepare_data.py`，来自原 labcelltracker，算法未修改。其默认参数也未修改；若需重建当前带未知身份检测的数据，必须明确给出 `--keep-unlabelled` 和实际 Cellpose 权重、阈值，不要仅凭默认值声称复现现有数据。
+
+### GNN 贝叶斯最终版（models/gnn_bayesian/）
+
+在原 GNN（`models/gnn_tracking`，不改动）上：边的输出改为三类（无关 / 同一细胞 / 分裂），scripta（默认主 GT `scripta_data_refine2`）与 Fluo-N2DL-HeLa 混合训练，**一个模型用于所有数据**：推理直接用网络自己的后验（先验 `none`），阈值由指标代价推出（连续 0.4、分裂 0.5），推理时不依赖“这是哪个数据集”。每口井除 `instance_tracks.csv` / `lineage.json` / `edges.npz` 外还写 `links.csv`（每个输出连接的后验 p、集成分歧 mi、是否不确定）、`tracks_confidence.csv`（每条轨迹全部连接都正确的概率与最弱的一环）和 `metrics.json` 的 `confidence`（预计错连 / 漏连数；概率已校准，预计数接近实际数）。
+
+```powershell
+python -m models.gnn_bayesian.run cv --gpus 0 1 --output-root development/stage3_final/cv_f001        # 12 口开发孔三折折外
+python -m models.gnn_bayesian.run hela --gpus 0 1 --output-root development/stage3_final/hela_f001    # HeLa 留一序列
+python -m models.gnn_bayesian.run cv --retrack --tta --gpus 0 1 --output-root development/stage3_final/cv_f001   # 不训练，重跑跟踪
+python -m models.gnn_bayesian.run final --output-root development/stage3_final/final_f001              # 开发孔 + HeLa 训练，测试孔只跑一次
+```
+
+跟踪选项（训练后或 `--retrack`）：`--tta` 把视频水平、垂直翻转后再各打一次分取平均（测试时增强）；`--ablate appearance|velocity` 线索分析（打乱同帧细胞图像 / 不给速度）；`--cues` 正常跟踪并逐边记录去掉外观、去掉速度后的概率（`p_noapp`、`p_novel`）；`--prior division` 只作分析（用到数据集的分裂先验）。训练选项：`--classes 2` 二分类对照（“连 / 不连”），`--active-bias` 按预测波动加权（已测试，不显著）。`--retrack` 的结果写到 `<输出>/retrack_<先验>[_tta][_no<线索>][_cues]/`，不覆盖已有结果。
 
 ## 验证
 

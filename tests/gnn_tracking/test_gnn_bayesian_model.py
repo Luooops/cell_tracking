@@ -11,7 +11,7 @@ HAS_PYG = importlib.util.find_spec('torch_geometric') is not None
 
 @unittest.skipUnless(HAS_PYG, 'torch_geometric is not installed')
 class TestGnnBayesian(unittest.TestCase):
-    def test_priors_are_smoothed_and_exchanged_per_dataset(self):
+    def test_priors_are_smoothed_and_only_division_is_exchanged(self):
         from models.gnn_bayesian.model import _shift, class_priors
         pri = class_priors({('scripta', 1): [900, 100, 0], ('hela', 1): [700, 250, 50]})
         self.assertGreater(pri['datasets']['scripta'][1][2], 0)
@@ -19,25 +19,12 @@ class TestGnnBayesian(unittest.TestCase):
 
         class M:
             priors, n_classes = pri, 3
-        self.assertLess(_shift(M, 1, 'scripta')[2], -3)            # division much rarer on scripta than in the mix
-        self.assertGreater(_shift(M, 1, 'hela')[2], 0)
-        self.assertEqual(_shift(M, 1, 'unknown').tolist(), [0, 0, 0])
+        self.assertEqual(_shift(M, 1, 'scripta').tolist(), [0, 0, 0])                     # default: none
         only_div = _shift(M, 1, 'scripta', 'division')
         self.assertEqual(only_div[:2].tolist(), [0, 0])               # same : unrelated left to the network
-        self.assertEqual(only_div[2], _shift(M, 1, 'scripta')[2])
-        self.assertEqual(_shift(M, 1, 'scripta', 'none').tolist(), [0, 0, 0])
-
-    def test_em_prior_recovers_the_prior_of_unlabelled_edges(self):
-        from models.gnn_bayesian.model import em_prior
-        rng = np.random.default_rng(0)
-        reference, true = np.array([0.6, 0.38, 0.02]), np.array([0.5, 0.45, 0.05])
-        y = rng.choice(3, 20000, p=true)
-        mu = np.array([[0, 0], [2, 0], [0, 2]])
-        x = mu[y] + rng.normal(size=(20000, 2))
-        q = np.exp(-0.5 * ((x[:, None] - mu[None]) ** 2).sum(-1)) * reference      # posteriors under the reference
-        q /= q.sum(1, keepdims=True)
-        np.testing.assert_allclose(em_prior(q, reference), true, atol=0.01)
-        np.testing.assert_allclose(em_prior(q[:, :2] / q[:, :2].sum(1, keepdims=True), [0.6, 0.4]).sum(), 1)
+        self.assertLess(only_div[2], -3)                              # division much rarer on scripta than in the mix
+        self.assertGreater(_shift(M, 1, 'hela', 'division')[2], 0)
+        self.assertEqual(_shift(M, 1, 'unknown', 'division').tolist(), [0, 0, 0])
 
     def test_active_bias_history_and_capped_weights(self):
         import torch
@@ -60,7 +47,8 @@ class TestGnnBayesian(unittest.TestCase):
     def test_three_way_network_tracks_with_and_without_divisions(self):
         import torch
         from models.gnn_bayesian.model import TrackerGNN3, class_priors, edge_scores
-        from models.gnn_bayesian.track import Recorder, track_video, track_video_em
+        from models.gnn_bayesian.confidence import summarize
+        from models.gnn_bayesian.track import Recorder, _order, track_video
         from models.gnn_tracking.graph import pair_graph
         from models.gnn_tracking.model import DEVICE
         from tests.gnn_tracking.test_gnn_track_recording import synthetic_video
@@ -70,7 +58,7 @@ class TestGnnBayesian(unittest.TestCase):
         for m in models:
             m.priors = class_priors({('syn', 1): [80, 20, 1], ('syn', 2): [80, 20, 1]})
         gr = pair_graph(video, video.frames[0], 1, {})
-        s = edge_scores(models, gr, 1, 'syn')
+        s = edge_scores(models, [(gr, None)], 1, 'syn')
         self.assertTrue(np.all(s['p_same'] + s['p_div'] <= 1 + 1e-6))
         self.assertEqual(s['logits'].shape, (gr.candidate_edge_index.shape[1], 2))
         for divisions in (False, True):
@@ -81,11 +69,25 @@ class TestGnnBayesian(unittest.TestCase):
             self.assertEqual(len(e['p_div']), len(e['p']))
             if not divisions:
                 self.assertEqual(parent, {})
-        assign, parent, video_prior = track_video_em(models, video, 'syn', divisions=True, recorder=Recorder(video))
-        self.assertAlmostEqual(sum(video_prior[1]), 1.0)
+        two = edge_scores(models, [(gr, None), (gr, _order(gr, gr))], 1, 'syn')      # a view identical to the graph
+        np.testing.assert_allclose(two['p_same'], s['p_same'], atol=1e-6)
+        self.assertEqual(two['logits'].shape[1], 2 * len(models))
+        for kw in (dict(ablate='appearance'), dict(ablate='velocity'), dict(cues=True)):
+            rec = Recorder(video)
+            assign, parent = track_video(models, video, 'syn', divisions=True, recorder=rec, **kw)
+            self.assertEqual(len(assign), sum(len(video.rows[t]) for t in video.frames))
+        e = rec.arrays()
+        self.assertEqual(len(e['p_noapp']), len(e['p']))
+        import pandas as pd
+        tracks = pd.DataFrame([dict(frame_index=t, instance_id=int(video.df.loc[r, 'track_id']), track_id=assign[(fi, i)] + 1)
+                               for fi, t in enumerate(video.frames) for i, r in enumerate(video.rows[t])])
+        links, table, summary = summarize(e, tracks)
+        self.assertEqual(len(links), int(e['chosen'].sum()))
+        self.assertTrue(((table.p_all_correct >= 0) & (table.p_all_correct <= 1)).all())
+        self.assertAlmostEqual(summary['expected_false_links'], float((1 - links.p).sum()), places=1)
         binary = [TrackerGNN3(2).to(DEVICE).eval()]
         binary[0].priors = class_priors({('syn', 1): [80, 21], ('syn', 2): [80, 21]})
-        s = edge_scores(binary, gr, 1, 'syn', 'division')
+        s = edge_scores(binary, [(gr, None)], 1, 'syn', 'division')
         self.assertEqual(float(np.abs(s['p_div']).max()), 0.0)
         assign, parent = track_video(binary, video, 'syn', divisions=True, prior='none')
         self.assertEqual(len(assign), sum(len(video.rows[t]) for t in video.frames))
