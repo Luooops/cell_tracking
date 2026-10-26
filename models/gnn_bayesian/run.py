@@ -15,6 +15,8 @@ Experiments of gnn_bayesian (training on server GPUs; evaluation with gnn_tracki
 
 --classes 2 trains the binary ablation 'linked or not' (continuation and mother -> daughter positive; divisions as
 gnn_division: two strong links).
+--active-bias (training only) weights each edge's loss by how much its prediction varied over the epochs
+(train.py, Active Bias).
 --prior (default division, the retrack result) is the prior exchange used to track after training; em estimates
 each video's prior (model.em_prior, two tracking passes, the estimate in metrics.json).
 
@@ -72,12 +74,12 @@ def _track_and_export(models, spec, target, cache, folder_of, extra_report, prio
               + (f"  divisions {len(parent)}" if divisions else ''), flush=True)
 
 
-def _train_ensemble(specs, seeds, cache, paths, label, n_classes=3):
+def _train_ensemble(specs, seeds, cache, paths, label, n_classes=3, active_bias=False):
     from models.gnn_bayesian.model import save
     from models.gnn_bayesian.train import train
     models = []
     for seed, path in zip(seeds, paths):
-        model = train(specs, seed, cache, log=f'{label} seed {seed}', n_classes=n_classes)
+        model = train(specs, seed, cache, log=f'{label} seed {seed}', n_classes=n_classes, active_bias=active_bias)
         path.parent.mkdir(parents=True, exist_ok=True)
         save(model, path)
         models.append(model)
@@ -94,7 +96,7 @@ def _ensemble(args, specs, cache, paths, label):
         return [load_model(p) for p in paths]
     if any(p.exists() for p in paths):
         raise FileExistsError(f'{label} already has checkpoints in {paths[0].parent}')
-    return _train_ensemble(specs, args.seeds, cache, paths, label, args.classes)
+    return _train_ensemble(specs, args.seeds, cache, paths, label, args.classes, args.active_bias)
 
 
 def _fill_cache(args, cache, extra):
@@ -108,7 +110,8 @@ def _split_over_gpus(args):
     key, items = ('--folds', args.folds) if args.command == 'cv' else ('--held-out', args.held_out)
     common = [args.command, '--scripta', args.scripta, '--extra', *args.extra, '--seeds', *map(str, args.seeds),
               '--device', args.device, '--classes', str(args.classes), '--prior', args.prior,
-              '--output-root', str(args.output_root)] + (['--retrack', args.retrack] if args.retrack else [])
+              '--output-root', str(args.output_root)] + (['--retrack', args.retrack] if args.retrack else []) \
+             + (['--active-bias'] if args.active_bias else [])
     children = []
     for i, gpu in enumerate(args.gpus):
         share = items[i::len(args.gpus)]
@@ -133,7 +136,7 @@ def run(args):
     if not config.exists():
         config.write_text(json.dumps(dict(
             model='gnn_bayesian', scripta=args.scripta, data_root=str(scripta['root']), extra=args.extra, extra_videos=extra,
-            seeds=args.seeds, folds=scripta['folds'], classes=args.classes, prior=args.prior, created=datetime.datetime.now().isoformat(timespec='seconds'),
+            seeds=args.seeds, folds=scripta['folds'], classes=args.classes, prior=args.prior, active_bias=args.active_bias, created=datetime.datetime.now().isoformat(timespec='seconds'),
             scope=('3-way edges (unrelated / same / division)' if args.classes == 3 else 'binary edges (same cell or not)')
             + ' trained on scripta + extra datasets; per-dataset class priors'),
             indent=2), encoding='utf-8')
@@ -174,6 +177,7 @@ def main(argv=None):
     parser.add_argument('--seeds', nargs='+', type=int, default=[0, 1, 2])
     parser.add_argument('--device', choices=['auto', 'cpu', 'cuda'], default='auto')
     parser.add_argument('--gpus', nargs='+', type=int, help='Split the folds / held-out sequences over these GPUs')
+    parser.add_argument('--active-bias', action='store_true', help='Weight edges by prediction variance (training)')
     parser.add_argument('--classes', type=int, choices=[2, 3], default=3, help='2: the binary ablation (training only)')
     parser.add_argument('--prior', choices=['division', 'none', 'full', 'em'], default='division',
                         help='Prior exchange used to track after training')

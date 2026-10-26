@@ -39,6 +39,24 @@ class TestGnnBayesian(unittest.TestCase):
         np.testing.assert_allclose(em_prior(q, reference), true, atol=0.01)
         np.testing.assert_allclose(em_prior(q[:, :2] / q[:, :2].sum(1, keepdims=True), [0.6, 0.4]).sum(), 1)
 
+    def test_active_bias_history_and_capped_weights(self):
+        import torch
+        from models.gnn_bayesian.train import AB_CAP, PredictionHistory, active_bias_weights
+        from models.gnn_tracking.model import DEVICE
+        rng = np.random.default_rng(0)
+        qs = rng.dirichlet(np.ones(3), size=(6, 50))
+        hist = PredictionHistory(50, 3)
+        for q in qs:                                                        # one epoch, two shuffled batches
+            order = rng.permutation(50)
+            for part in (order[:20], order[20:]):
+                hist.add(torch.as_tensor(part, device=DEVICE), torch.as_tensor(q[part], dtype=torch.float32, device=DEVICE))
+        u = hist.spread(torch.arange(50, device=DEVICE)).cpu().numpy()
+        np.testing.assert_allclose(u, np.sqrt(qs.var(0, ddof=1).sum(1)), atol=1e-5)
+        spiky = torch.cat([torch.zeros(99, device=DEVICE), torch.tensor([100.0], device=DEVICE)])
+        w = active_bias_weights(spiky, torch.tensor(0.01, device=DEVICE))
+        self.assertLessEqual(float(w.max()), AB_CAP + 1e-6)
+        self.assertAlmostEqual(float(w.mean()), 1.0, places=3)
+
     def test_three_way_network_tracks_with_and_without_divisions(self):
         import torch
         from models.gnn_bayesian.model import TrackerGNN3, class_priors, edge_scores
