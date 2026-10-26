@@ -21,7 +21,13 @@ add-links append the tracker's confident errors of an out-of-fold run on the ref
           round-1 links made between different GT cells with every member above 0.9, then same-cell edges left out
           with every member below 0.1) to an existing review as 'link' items -- is the GT right here? --, drawn and
           edited in the review's own labels; wrong labels are corrected with the page's ID edits. Saved progress is
-          kept. apply of the whole review then writes a new refined dataset (--target data/scripta_data_refine2).
+          kept. apply of the whole review then writes a new refined dataset (--target data/scripta_data_refine3:
+          model-guided items, so a secondary analysis, not the main GT).
+          Several --run (e.g. every method compared) are merged: an error found by more than one run is one item,
+          its 'found_by' lists the runs (not shown on the page); --only false / missed keeps one kind. --redraw
+          draws the panels of link items these runs find again instead of adding items (decisions are kept).
+          A and B are drawn frame by frame: a source label counts only in the frames where its masks belong to the
+          cell in the refined GT.
 
     python -m models.gnn_tracking.audit_handover prepare --dataset scripta_data \
         --output-root development/stage0_evaluation/handover_review_scripta_data
@@ -30,10 +36,11 @@ add-links append the tracker's confident errors of an out-of-fold run on the ref
         --review development/stage0_evaluation/handover_review_scripta_data --decisions decisions.json
     python -m models.gnn_tracking.audit_handover add-links --dataset scripta_data \
         --review development/stage0_evaluation/handover_review_scripta_data_v6 --run-dataset scripta_data_refine \
-        --run development/stage1_calibration/oof_cv_v003_lnk/oof/gnn_tracking
+        --run development/stage1_calibration/oof_cv_v003_lnk/oof/gnn_tracking \
+              development/stage2_bayesian/cv_b001/retrack_none/oof/gnn_tracking --only false
     python -m models.gnn_tracking.audit_handover apply --dataset scripta_data \
         --review development/stage0_evaluation/handover_review_scripta_data_v6 --decisions decisions.json \
-        --target data/scripta_data_refine2
+        --target data/scripta_data_refine3
     python -m models.gnn_tracking.audit_handover refresh --dataset scripta_data \
         --review development/stage0_evaluation/handover_review_scripta_data
 """
@@ -110,12 +117,17 @@ def _crop(image, cx, cy, half):
     return padded[y - half:y + half, x - half:x + half]
 
 
-def _strip(path, show, centres, radius, raws, masks, colors, names, numbered, header, chain=(), half=None):
+def _strip(path, show, centres, radius, raws, masks, colors, names, numbered, header, chain=(), half=None,
+           frame_colors=None, highlight=None):
     """Draw one image strip: a tile per frame of `show`, cropped around centres[f]. Every cell carries a mark the edit
     row can refer to: labels in `colors` outlined in their colour with names[label] above; unlabelled detections in
     `chain` outlined thin red as 'A?'; other known tracks outlined grey with their GT id; other unlabelled detections
     outlined grey and tagged ?1, ?2, ... in order of first appearance (`numbered` is kept for callers, all known
-    tracks are numbered). -> (frames shown, {label: frames visible}, {unlabelled label: tag})."""
+    tracks are numbered). frame_colors {frame: {label: (colour, name)}} replaces colors / names frame by frame (a
+    label not in a frame's entry is drawn as any other track there): a label of the drawn data may belong to a cell in
+    some frames only, or to A in some and B in others (refined relabels). highlight {frame: colour} frames those
+    tiles in that colour and tints their header (the frames an item asks about).
+    -> (frames shown, {label: frames visible}, {unlabelled label: tag})."""
     from PIL import Image, ImageDraw, ImageFont
     from scipy.ndimage import binary_dilation
     from skimage.segmentation import find_boundaries
@@ -132,7 +144,8 @@ def _strip(path, show, centres, radius, raws, masks, colors, names, numbered, he
         labels = np.array(Image.fromarray(_crop(masks[f], *centres[f], half).astype(np.int32)).resize(
             (TILE, TILE), Image.NEAREST))
         edge = find_boundaries(labels, mode='inner')
-        tile[edge & ~np.isin(labels, list(colors))] = OTHER
+        cmap = {l: (colors[l], names[l]) for l in colors} if frame_colors is None else frame_colors.get(f, {})
+        tile[edge & ~np.isin(labels, list(cmap))] = OTHER
         marks = []
         for label in np.unique(labels):
             if label:
@@ -142,9 +155,9 @@ def _strip(path, show, centres, radius, raws, masks, colors, names, numbered, he
                 continue
             region = labels == label
             ys, xs = np.nonzero(region)
-            if label in colors:
-                tile[binary_dilation(edge & region)] = colors[label]
-                marks.append((names[label], colors[label], font, xs.mean() - 4, ys.min() - 17))
+            if label in cmap:
+                tile[binary_dilation(edge & region)] = cmap[label][0]
+                marks.append((cmap[label][1], cmap[label][0], font, xs.mean() - 4, ys.min() - 17))
             elif label in chain:
                 tile[edge & region] = A_COLOR
                 marks.append(('A?', A_COLOR, small, xs.mean() - 8, ys.min() - 14))
@@ -155,6 +168,10 @@ def _strip(path, show, centres, radius, raws, masks, colors, names, numbered, he
                 marks.append((tag, NEIGHBOUR_TEXT, small, xs.mean() - 6, ys.mean() - 6))
         x0 = col * (TILE + GAP)
         canvas.paste(Image.fromarray(tile), (x0, HEADER))
+        if highlight and f in highlight:
+            c = highlight[f]
+            draw.rectangle([x0, 0, x0 + TILE - 1, HEADER - 1], fill=tuple(int(255 - (255 - v) * 0.25) for v in c))
+            draw.rectangle([x0, HEADER, x0 + TILE - 1, HEADER + TILE - 1], outline=c, width=4)
         draw.text((x0 + 4, 3), header(f), fill=(40, 40, 40), font=font)
         for text, color, fnt, x, y in marks:
             draw.text((x0 + x, HEADER + max(y, 0)), text, fill=color, font=fnt, stroke_width=2,
@@ -272,13 +289,21 @@ def add_links(args, wells):
     review_path = args.review / 'candidates.json'
     review = json.loads(review_path.read_text(encoding='utf-8'))
     have = {i['id'] for i in review['items']}
+    by_id = {i['id']: i for i in review['items']}
+    redrawn = 0
     rng = random.Random(args.seed)
     new = {'false': [], 'missed': []}
+    added_now = {}                                             # item id -> item appended by this call
     for well in wells:
-        part = load_answers(args.run, args.run_root, well)
         table = read_track_table(Path(args.run_root) / f'{well}_GT' / 'TRA' / 'man_track.txt')
-        found = ([dict(f, sub='false') for f in confident_false_links(part['edges'], part['relation'], table)] +
-                 [dict(f, sub='missed') for f in confident_missed_links(part['edges'], part['relation'])])
+        found = []                                             # (finding, edges of the run that found it, run index)
+        for k, run in enumerate(args.run):
+            if not (Path(run) / well / 'edges.npz').is_file():
+                continue
+            part = load_answers(run, args.run_root, well)
+            kinds = [('false', confident_false_links(part['edges'], part['relation'], table)),
+                     ('missed', confident_missed_links(part['edges'], part['relation']))]
+            found += [(dict(f, sub=sub), part['edges'], k) for sub, fs in kinds if args.only in (None, sub) for f in fs]
         if not found:
             continue
         frames, raws, masks, objects = load_well(args.data_root, well)
@@ -290,17 +315,34 @@ def add_links(args, wells):
                 to_source[(int(f), int(r))] = int(o)
         lineage = Lineage(table, ())
         cell = lambda label: lineage.cell_of.get(label, label)
-        e = part['edges']
-        for f in found:
+        for f, e, k in found:
             t, a, b, model_b = f['t'], f['a'], f['b'], f.get('model_b', f['b'])
             shown = range(t - CONTEXT, t + CONTEXT + 2)
 
             def members(label, exclude=None):
+                """-> (source labels of this refined cell in the frames shown, {source label: its frames})."""
                 if label is None or cell(label) == exclude:
-                    return []
-                return sorted({o for (fr, r), o in to_source.items() if fr in shown and cell(r) == cell(label)})
+                    return [], {}
+                frames = {}
+                for (fr, r), o in to_source.items():
+                    if fr in shown and cell(r) == cell(label):
+                        frames.setdefault(o, set()).add(fr)
+                return sorted(frames), frames
             sa, sb = to_source[(t, a)], to_source[(t + 1, b)]
             item_id = f"{well}:link:{f['sub']}:{t}:{sa}:{sb}"
+            if item_id in added_now:                           # found by another run of this call as well
+                added_now[item_id]['found_by'].append(str(args.run[k]))
+                continue
+            if args.redraw:
+                old = by_id.get(item_id)
+                if old is not None and old['kind'] == 'link' and item_id not in added_now:
+                    blue = b if f['sub'] == 'false' else model_b
+                    (la, fa), (lb, fb) = members(a), members(blue, exclude=cell(a))
+                    old['frames_shown'], old['visible'], old['tags'] = draw(
+                        t, la, lb, raws, masks, objects, old['radius'], args.review / old['panel'], fa, fb)
+                    old['a_first'] = old['frames_shown'][0]
+                    added_now[item_id] = old; redrawn += 1
+                continue
             if item_id in have:
                 continue
             blue = b if f['sub'] == 'false' else model_b
@@ -308,16 +350,23 @@ def add_links(args, wells):
             item = dict(id=item_id, kind='link', sub=f['sub'], well=well, a_label=sa, a_frame=t, b_label=sb,
                         model_b=None if model_b is None else to_source[(t + 1, model_b)], q=f['q'], cls=f['cls'],
                         radius=round(float(e['gate'][sel][0]) if sel.any() else 100.0, 1), starts=[], neighbours=[],
-                        chain=[], run_labels=dict(a=a, b=b, model_b=model_b))
+                        chain=[], run_labels=dict(a=a, b=b, model_b=model_b), found_by=[str(args.run[k])])
             item['panel'] = f"panels/{well}_link_{f['sub']}_t{t}_{sa}_{sb}.png"
+            (la, fa), (lb, fb) = members(a), members(blue, exclude=cell(a))
             item['frames_shown'], item['visible'], item['tags'] = draw(
-                t, members(a), members(blue, exclude=cell(a)), raws, masks, objects, item['radius'],
-                args.review / item['panel'])
+                t, la, lb, raws, masks, objects, item['radius'], args.review / item['panel'], fa, fb)
             item['a_first'] = item['frames_shown'][0]
             new[f['sub']].append(item)
-            have.add(item_id)
-        print(f"{well}: {sum(f['sub'] == 'false' for f in found)} confident false links, "
-              f"{sum(f['sub'] == 'missed' for f in found)} confident missed links", flush=True)
+            have.add(item_id); added_now[item_id] = item
+        print(f"{well}: {sum(f['sub'] == 'false' for f, _, _ in found)} confident false links, "
+              f"{sum(f['sub'] == 'missed' for f, _, _ in found)} confident missed links (over {len(args.run)} runs, "
+              f"duplicates included)", flush=True)
+    if args.redraw:
+        review_path.write_text(json.dumps(review, indent=1), encoding='utf-8')
+        xy = json.loads((args.review / 'positions.json').read_text(encoding='utf-8'))
+        write_page(args.review, review, xy)
+        print(f"\nredrew {redrawn} link items; open {args.review / 'review.html'} (saved progress is kept)")
+        return 0
     for part in new.values():
         rng.shuffle(part)
     added = new['false'] + new['missed']                     # false links first, each part in random order
@@ -326,7 +375,7 @@ def add_links(args, wells):
         backup.write_text(review_path.read_text(encoding='utf-8'), encoding='utf-8')
     review['items'] += added
     review.setdefault('link_runs', []).append(dict(
-        run=str(Path(args.run).resolve()), dataset=args.run_dataset, added=len(added),
+        runs=[str(Path(r).resolve()) for r in args.run], only=args.only, dataset=args.run_dataset, added=len(added),
         created=datetime.datetime.now().isoformat(timespec='seconds'),
         rule='link items: round-1 links the tracker chose between different GT cells with every ensemble member above '
              '0.9, and round-1 same-cell edges it left out with every member below 0.1, in an out-of-fold run on the '
@@ -443,8 +492,10 @@ def main(argv=None):
             p.add_argument('--review', type=Path, required=True, help='The prepare output folder')
         elif name == 'add-links':
             p.add_argument('--review', type=Path, required=True, help='The review to extend (its prepare folder)')
-            p.add_argument('--run', type=Path, required=True,
-                           help='Out-of-fold folder of a run on --run-dataset (<well>/edges.npz + instance_tracks.csv)')
+            p.add_argument('--run', type=Path, nargs='+', required=True,
+                           help='Out-of-fold folders of runs on --run-dataset (<well>/edges.npz + instance_tracks.csv)')
+            p.add_argument('--only', choices=['false', 'missed'], help='Add only this kind of link item')
+            p.add_argument('--redraw', action='store_true', help='Redraw the panels of the link items found (no new items)')
             p.add_argument('--run-dataset', required=True, help='Refined dataset the run was made and is judged on')
             p.add_argument('--seed', type=int, default=0, help='Shuffle seed of the added items')
         else:
@@ -481,7 +532,7 @@ def main(argv=None):
             args.run_root = resolve_dataset(cfg, base, args.run_dataset, None)['root']
         except FileNotFoundError as exc:
             parser.error(str(exc))
-        wells = sorted(p.parent.name for p in args.run.glob('*/edges.npz'))
+        wells = sorted({p.parent.name for run in args.run for p in run.glob('*/edges.npz')})
         if not wells or not set(wells) <= set(made_on['wells']):
             parser.error(f'the run needs wells of the review: {sorted(set(wells) - set(made_on["wells"]))}')
         if held := sorted(set(wells) & set(spec['held_out'])):

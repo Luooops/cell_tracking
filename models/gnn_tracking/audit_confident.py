@@ -116,10 +116,13 @@ def render(item, well, raws, masks, objects, lineage, radius, path, blue=None):
     return draw(t, members_a, members_b, raws, masks, objects, radius, path)
 
 
-def draw(t, members_a, members_b, raws, masks, objects, radius, path):
-    """The strip of render() for given label sets ('A' red, 'B' blue), in the label space of `masks`."""
+def draw(t, members_a, members_b, raws, masks, objects, radius, path, frames_a=None, frames_b=None):
+    """The strip of render() for given label sets ('A' red, 'B' blue), in the label space of `masks`. frames_a /
+    frames_b {label: frames}, if given, limit each label to the frames in which it belongs to A's / B's cell."""
     show = [f for f in range(t - CONTEXT, t + CONTEXT + 2) if f in raws]
-    pts = np.array([p for f in show for l in members_a + members_b if (p := _position(objects, f, l)) is not None])
+    framed = frames_a is not None
+    pts = np.array([p for f in show for l, fr in [(l, frames_a) for l in members_a] + [(l, frames_b) for l in members_b]
+                    if (not framed or f in fr.get(l, ())) and (p := _position(objects, f, l)) is not None])
     lo, hi = pts.min(0), pts.max(0)
     half = int(np.clip(max(radius * 1.2, (hi - lo).max() / 2 + 60), 48, 320))
     centres = {f: (lo + hi) / 2 for f in show}
@@ -130,7 +133,12 @@ def draw(t, members_a, members_b, raws, masks, objects, radius, path):
 
     def header(f):
         return f'frame {f}' + ('  (t: A)' if f == t else '  (t+1: B)' if f == t + 1 else f'  (t{f - t:+d})')
-    return _strip(path, show, centres, radius, raws, masks, colors, names, set(), header, half=half)
+    frame_colors = None
+    if framed:
+        frame_colors = {f: {**{l: (A_COLOR, 'A') for l in members_a if f in frames_a.get(l, ())},
+                            **{l: (B_COLORS[0], 'B') for l in members_b if f in frames_b.get(l, ())}} for f in show}
+    return _strip(path, show, centres, radius, raws, masks, colors, names, set(), header, half=half,
+                  frame_colors=frame_colors, highlight={t: A_COLOR, t + 1: B_COLORS[0]})
 
 
 PAGE = r"""<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>Confident errors</title>

@@ -604,9 +604,13 @@
     if (isLink(it)) {
       const t = it.a_frame;
       $('meta').innerHTML = it.sub === 'false'
-        ? `<span class="kind link">可疑连接 · 模型连了</span>孔板 ${it.well} · 第 ${t} 帧：模型把 A（轨迹 ${it.a_label}）连到了第 ${t + 1} 帧的 B（轨迹 ${it.b_label}），三个模型的把握 ${it.q.join(' / ')}，但 GT 说它们不是同一个细胞`
-        : `<span class="kind link">可疑连接 · 模型没连</span>孔板 ${it.well} · 第 ${t} 帧：GT 说 A（轨迹 ${it.a_label}）在第 ${t + 1} 帧是轨迹 ${it.b_label}，三个模型都认为不是（把握 ${it.q.join(' / ')}）` +
+        ? `<span class="kind link">可疑连接 · 模型连了</span>孔板 ${it.well} · 第 ${t} 帧：模型把 A（轨迹 ${it.a_label}）连到了第 ${t + 1} 帧的 B（轨迹 ${it.b_label}），三个模型的把握 ${it.q.join(' / ')}，但 GT 说它们不是同一个细胞（图中红框 = 第 ${t} 帧的 A，蓝框 = 第 ${t + 1} 帧的 B）`
+        : `<span class="kind link">可疑连接 · 模型没连</span>孔板 ${it.well} · 第 ${t} 帧：GT 说 A（轨迹 ${it.a_label}）在第 ${t + 1} 帧是轨迹 ${it.b_label}，三个模型都认为不是（把握 ${it.q.join(' / ')}；图中红框 = 第 ${t} 帧，蓝框 = 第 ${t + 1} 帧）` +
           (it.model_b !== null && it.model_b !== undefined ? `；模型把 A 连到了蓝色的 B（轨迹 ${it.model_b}）` : '；模型没有把 A 连到任何细胞');
+      const rl = it.run_labels;                 // the labels in the refined GT the run was judged on
+      if (rl && (rl.a !== it.a_label || rl.b !== it.b_label))
+        $('meta').innerHTML += `<br><b>注意：第一轮审核改过这里的编号。</b>按修正后的 GT，A = 轨迹 ${rl.a}，B = 轨迹 ${rl.b}；` +
+          '上面的编号、图中灰色数字和“修改 ID”用的都是原始编号，图中红 A / 蓝 B 是按修正后的 GT 逐帧画的。';
       $('legend').innerHTML = '红色 <b>A</b> = GT 中 A 这个细胞的所有检测；蓝色 <b>B</b> = 模型把 A 连到的那个细胞（按 GT 的身份）；灰色数字 = 其他轨迹；灰色 <b>?1, ?2, …</b> = 身份未知的检测。所有帧同一个裁剪框。GT 对吗？GT 有误就在下方“修改 ID”里改，再选 2。';
     } else if (isGap(it)) {
       const fr = it.x_frames;
