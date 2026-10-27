@@ -29,7 +29,8 @@ Tracking options (after training, or with --retrack):
 --retrack trains nothing: it loads the checkpoints and tracks again into <out>/retrack_<prior>[_tta][_no<cue>][_cues]/.
 
 Training options: --classes 2 (binary ablation 'linked or not'); --active-bias (weight edges by their prediction
-variance over the epochs; tested, not significant); --constant-lr (no cosine decay, as runs before 2026-10-27).
+variance over the epochs; tested, not significant); --cosine-lr (cosine learning-rate decay; tested in f002, made the
+posterior under-confident on uncertain edges -> not used; the default is the constant learning rate).
 
 --gpus 0 1 fills the cache, trains the missing members one per job ((fold or sequence, seed) pairs, round-robin
 over the GPUs, one child process per GPU, each with its own log), then tracks everything in this process. A member
@@ -123,7 +124,7 @@ def _train_member(args, specs, cache, prefix, seed):
     if path.exists():
         raise FileExistsError(f'{path} exists')
     model = train(specs, seed, cache, log=f'{prefix} seed {seed}', n_classes=args.classes,
-                  active_bias=args.active_bias, cosine=not args.constant_lr)
+                  active_bias=args.active_bias, cosine=args.cosine_lr)
     path.parent.mkdir(parents=True, exist_ok=True)
     save(model, path)
     return model
@@ -156,7 +157,7 @@ def _train_on_gpus(args, todo):
     common = [args.command, '--scripta', args.scripta, '--extra', *args.extra, '--device', args.device,
               '--classes', str(args.classes), '--output-root', str(args.output_root)] \
         + (['--dataset', args.dataset] if args.dataset else []) + (['--active-bias'] if args.active_bias else []) \
-        + (['--constant-lr'] if args.constant_lr else [])
+        + (['--cosine-lr'] if args.cosine_lr else [])
     children = []
     for i, gpu in enumerate(args.gpus):
         share = todo[i::len(args.gpus)]
@@ -184,7 +185,7 @@ def run(args):
             model='gnn_bayesian', command=args.command, dataset=args.dataset, scripta=args.scripta,
             data_root=str(args.scripta_spec['root']), extra=args.extra, extra_videos=extra, seeds=args.seeds,
             folds=args.scripta_spec['folds'], test_wells=args.test_wells, classes=args.classes,
-            active_bias=args.active_bias, cosine_lr=not args.constant_lr,
+            active_bias=args.active_bias, cosine_lr=args.cosine_lr,
             created=datetime.datetime.now().isoformat(timespec='seconds'),
             scope=('3-way edges (unrelated / same / division)' if args.classes == 3 else 'binary edges (linked or not)')
             + ' trained on scripta + extra datasets; tracking options per video in metrics.json'),
@@ -227,7 +228,7 @@ def main(argv=None):
     parser.add_argument('--gpus', nargs='+', type=int, help='Train the members in parallel, one process per GPU')
     parser.add_argument('--classes', type=int, choices=[2, 3], default=3, help='2: the binary ablation (training)')
     parser.add_argument('--active-bias', action='store_true', help='Weight edges by prediction variance (training)')
-    parser.add_argument('--constant-lr', action='store_true', help='No cosine learning-rate decay (training)')
+    parser.add_argument('--cosine-lr', action='store_true', help='Cosine learning-rate decay (training; not used)')
     parser.add_argument('--prior', choices=['none', 'division'], default='none',
                         help="none: the network's own posterior; division: the dataset's division prior (analysis)")
     parser.add_argument('--tta', action='store_true', help='Also score the mirrored video and average')

@@ -2,9 +2,9 @@
 train.py
 ========
 Training of the 3-way network on graphs of several datasets. Graphs, augmentation (3 mirror versions), gaps 1-3,
-teacher-forced velocities, optimiser (Adam, LR), batch size and number of epochs are gnn_tracking/train.py's; the
-learning rate decays to 0 over the epochs along a cosine (cosine=False keeps it constant, as gnn_tracking and the
-runs before 2026-10-27). The loss:
+teacher-forced velocities, optimiser (Adam, constant LR), batch size and number of epochs are gnn_tracking/train.py's.
+cosine=True decays the learning rate to 0 along a cosine instead; tested (f002): lower training loss, but the
+posterior became under-confident on the uncertain edges of held-out wells (more missed links) -> not used. The loss:
     cross-entropy over UNRELATED / SAME / DIVISION for every edge with a known label (no class weights: the
     probabilities stay posteriors under the training mix, used as they are)
   + AUX x the original contrastive appearance loss on the SAME edges.
@@ -85,7 +85,7 @@ def active_bias_weights(u, eps, cap=AB_CAP):
     return w
 
 
-def train(specs, seed, cache, log=None, n_classes=3, active_bias=False, cosine=True):
+def train(specs, seed, cache, log=None, n_classes=3, active_bias=False, cosine=False):
     if log:
         print(f'  {log}: building training graphs for {len(specs)} videos', flush=True)
     graphs, counts = training_graphs(specs, cache, np.random.default_rng(seed))

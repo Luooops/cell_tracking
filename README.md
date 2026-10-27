@@ -137,7 +137,7 @@ python -m models.gnn_tracking.audit_gating --dataset Fluo-N2DL-HeLa --output-roo
 
 ### GNN 贝叶斯最终版（models/gnn_bayesian/）
 
-在原 GNN（`models/gnn_tracking`，不改动）上：边的输出改为三类（无关 / 同一细胞 / 分裂），scripta（默认主 GT `scripta_data_refine2`）与额外数据集（默认 `Fluo-N2DL-HeLa`；`data/` 下任何 CTC 数据集都可用 `--extra` 加入）混合训练，**一个模型用于所有数据**：推理直接用网络自己的后验（先验 `none`），阈值由指标代价推出（连续 0.4、分裂 0.5），推理时不依赖“这是哪个数据集”。训练：三分类交叉熵（不加类别权重）+ 外观对比损失，Adam、学习率按余弦衰减到 0（`--constant-lr` 复现 2026-10-27 之前的固定学习率），40 epoch；集成 5 个成员（种子 0–4）。每个视频除 `instance_tracks.csv` / `lineage.json` / `edges.npz` 外还写 `links.csv`（每个输出连接的后验 p、集成分歧 mi、是否不确定）、`tracks_confidence.csv`（每条轨迹全部连接都正确的概率与最弱的一环）和 `metrics.json` 的 `confidence`（预计错连 / 漏连数；在可评分的连接上与实际数接近）。
+在原 GNN（`models/gnn_tracking`，不改动）上：边的输出改为三类（无关 / 同一细胞 / 分裂），scripta（默认主 GT `scripta_data_refine2`）与额外数据集（默认 `Fluo-N2DL-HeLa`；`data/` 下任何 CTC 数据集都可用 `--extra` 加入）混合训练，**一个模型用于所有数据**：推理直接用网络自己的后验（先验 `none`），阈值由指标代价推出（连续 0.4、分裂 0.5），推理时不依赖“这是哪个数据集”。训练：三分类交叉熵（不加类别权重）+ 外观对比损失，Adam、固定学习率 1e-3、40 epoch（`--cosine-lr` 余弦衰减已测试：训练损失更低，但留出孔上不确定边的概率偏低、漏连增多，不采用）；集成 5 个成员（种子 0–4）。每个视频除 `instance_tracks.csv` / `lineage.json` / `edges.npz` 外还写 `links.csv`（每个输出连接的后验 p、集成分歧 mi、是否不确定）、`tracks_confidence.csv`（每条轨迹全部连接都正确的概率与最弱的一环）和 `metrics.json` 的 `confidence`（预计错连 / 漏连数；在可评分的连接上与实际数接近）。
 
 ```powershell
 python -m models.gnn_bayesian.run cv --tta --gpus 0 1 --output-root development/stage3_final/cv_f002                                   # 12 口开发孔三折折外
