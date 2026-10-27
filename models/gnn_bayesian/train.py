@@ -2,9 +2,11 @@
 train.py
 ========
 Training of the 3-way network on graphs of several datasets. Graphs, augmentation (3 mirror versions), gaps 1-3,
-teacher-forced velocities, optimiser and schedule are gnn_tracking/train.py's. The loss:
+teacher-forced velocities, optimiser (Adam, LR), batch size and number of epochs are gnn_tracking/train.py's; the
+learning rate decays to 0 over the epochs along a cosine (cosine=False keeps it constant, as gnn_tracking and the
+runs before 2026-10-27). The loss:
     cross-entropy over UNRELATED / SAME / DIVISION for every edge with a known label (no class weights: the
-    probabilities stay posteriors under the training mix; model.py exchanges the prior per dataset)
+    probabilities stay posteriors under the training mix, used as they are)
   + AUX x the original contrastive appearance loss on the SAME edges.
 Every model keeps the class counts of its training edges per (dataset, gap) as its priors.
 active_bias=True (Chang, Learned-Miller & McCallum 2017, prediction-variance weighting): every known edge keeps the
@@ -83,7 +85,7 @@ def active_bias_weights(u, eps, cap=AB_CAP):
     return w
 
 
-def train(specs, seed, cache, log=None, n_classes=3, active_bias=False):
+def train(specs, seed, cache, log=None, n_classes=3, active_bias=False, cosine=True):
     if log:
         print(f'  {log}: building training graphs for {len(specs)} videos', flush=True)
     graphs, counts = training_graphs(specs, cache, np.random.default_rng(seed))
@@ -96,6 +98,7 @@ def train(specs, seed, cache, log=None, n_classes=3, active_bias=False):
         print(f'  {log}: {len(graphs)} graphs, division edges per dataset {div}', flush=True)
     history = PredictionHistory(sum(len(g.edge_class) for g in graphs), n_classes) if active_bias else None
     opt = torch.optim.Adam(model.parameters(), lr=LR)
+    schedule = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=EPOCHS) if cosine else None
     t0 = time.time()
     for ep in range(EPOCHS):
         model.train()
@@ -126,6 +129,8 @@ def train(specs, seed, cache, log=None, n_classes=3, active_bias=False):
             loss = loss + AUX * contrastive_loss(model.sim[known], src[known], dst[known], same)
             opt.zero_grad(); loss.backward(); opt.step()
             loss_sum += loss.detach(); n_batches += 1
+        if schedule is not None:
+            schedule.step()
         if DEVICE.type == 'cuda':
             torch.cuda.empty_cache()
         if log:

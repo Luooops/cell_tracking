@@ -137,16 +137,16 @@ python -m models.gnn_tracking.audit_gating --dataset Fluo-N2DL-HeLa --output-roo
 
 ### GNN 贝叶斯最终版（models/gnn_bayesian/）
 
-在原 GNN（`models/gnn_tracking`，不改动）上：边的输出改为三类（无关 / 同一细胞 / 分裂），scripta（默认主 GT `scripta_data_refine2`）与 Fluo-N2DL-HeLa 混合训练，**一个模型用于所有数据**：推理直接用网络自己的后验（先验 `none`），阈值由指标代价推出（连续 0.4、分裂 0.5），推理时不依赖“这是哪个数据集”。每口井除 `instance_tracks.csv` / `lineage.json` / `edges.npz` 外还写 `links.csv`（每个输出连接的后验 p、集成分歧 mi、是否不确定）、`tracks_confidence.csv`（每条轨迹全部连接都正确的概率与最弱的一环）和 `metrics.json` 的 `confidence`（预计错连 / 漏连数；概率已校准，预计数接近实际数）。
+在原 GNN（`models/gnn_tracking`，不改动）上：边的输出改为三类（无关 / 同一细胞 / 分裂），scripta（默认主 GT `scripta_data_refine2`）与额外数据集（默认 `Fluo-N2DL-HeLa`；`data/` 下任何 CTC 数据集都可用 `--extra` 加入）混合训练，**一个模型用于所有数据**：推理直接用网络自己的后验（先验 `none`），阈值由指标代价推出（连续 0.4、分裂 0.5），推理时不依赖“这是哪个数据集”。训练：三分类交叉熵（不加类别权重）+ 外观对比损失，Adam、学习率按余弦衰减到 0（`--constant-lr` 复现 2026-10-27 之前的固定学习率），40 epoch；集成 5 个成员（种子 0–4）。每个视频除 `instance_tracks.csv` / `lineage.json` / `edges.npz` 外还写 `links.csv`（每个输出连接的后验 p、集成分歧 mi、是否不确定）、`tracks_confidence.csv`（每条轨迹全部连接都正确的概率与最弱的一环）和 `metrics.json` 的 `confidence`（预计错连 / 漏连数；在可评分的连接上与实际数接近）。
 
 ```powershell
-python -m models.gnn_bayesian.run cv --gpus 0 1 --output-root development/stage3_final/cv_f001        # 12 口开发孔三折折外
-python -m models.gnn_bayesian.run hela --gpus 0 1 --output-root development/stage3_final/hela_f001    # HeLa 留一序列
-python -m models.gnn_bayesian.run cv --retrack --tta --gpus 0 1 --output-root development/stage3_final/cv_f001   # 不训练，重跑跟踪
-python -m models.gnn_bayesian.run final --output-root development/stage3_final/final_f001              # 开发孔 + HeLa 训练，测试孔只跑一次
+python -m models.gnn_bayesian.run cv --tta --gpus 0 1 --output-root development/stage3_final/cv_f002                                   # 12 口开发孔三折折外
+python -m models.gnn_bayesian.run loso --dataset Fluo-N2DL-HeLa --tta --gpus 0 1 --output-root development/stage3_final/loso_hela_f002   # 额外数据集留一序列
+# unseen --dataset <名称>：训练时完全不见该数据集（需至少两个额外数据集才有意义，目前不用）
+python -m models.gnn_bayesian.run final --tta --gpus 0 1 --output-root development/stage3_final/final_f002                              # 开发孔 + 额外数据训练，测试孔只跑一次
 ```
 
-跟踪选项（训练后或 `--retrack`）：`--tta` 把视频水平、垂直翻转后再各打一次分取平均（测试时增强）；`--ablate appearance|velocity` 线索分析（打乱同帧细胞图像 / 不给速度）；`--cues` 正常跟踪并逐边记录去掉外观、去掉速度后的概率（`p_noapp`、`p_novel`）；`--prior division` 只作分析（用到数据集的分裂先验）。训练选项：`--classes 2` 二分类对照（“连 / 不连”），`--active-bias` 按预测波动加权（已测试，不显著）。`--retrack` 的结果写到 `<输出>/retrack_<先验>[_tta][_no<线索>][_cues]/`，不覆盖已有结果。
+`--gpus` 先把还没训练的成员（“折或序列 × 种子”）轮流分给各块 GPU 并行训练，全部完成后在主进程里统一跟踪；已有的 checkpoint 不会重训。跟踪选项（训练后或 `--retrack`）：`--tta` 把视频水平、垂直翻转后再各打一次分取平均（最终版采用）；`--ablate appearance|velocity` 线索分析（打乱同帧细胞图像 / 不给速度）；`--cues` 正常跟踪并逐边记录去掉外观、去掉速度后的概率；`--prior division` 只作分析（用到数据集的分裂先验）。训练选项：`--classes 2` 二分类对照，`--active-bias` 按预测波动加权（已测试，不显著）。`--retrack` 的结果写到 `<输出>/retrack_<先验>[_tta][_no<线索>][_cues]/`。
 
 ## 验证
 
