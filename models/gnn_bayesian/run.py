@@ -4,7 +4,8 @@ run.py
 Experiments of gnn_bayesian (training on server GPUs; evaluation with gnn_tracking's evaluate_answers / evaluate_ctc).
 One model for every dataset: 3-way edges trained on scripta (default the main GT scripta_data_refine2) + the extra
 datasets (default Fluo-N2DL-HeLa; any CTC dataset under data/ can be added with --extra), the network's own posterior
-(prior 'none'), cost-derived thresholds; nothing at inference depends on the dataset. 5 ensemble members (seeds 0-4).
+(prior 'none'), cost-derived thresholds; nothing at inference depends on the dataset. 3 ensemble members (seeds 0-2;
+5 members were tested in f003: no better, the posterior of the uncertain edges under-confident -> not used).
 
     cv      3-fold cross-validation on the scripta development wells: each fold trained on its 8 training wells PLUS
             every extra sequence; the held-out wells -> <out>/oof/<tracker>/<well>/          (checkpoints fold<k>_)
@@ -36,9 +37,9 @@ posterior under-confident on uncertain edges -> not used; the default is the con
 over the GPUs, one child process per GPU, each with its own log), then tracks everything in this process. A member
 whose checkpoint exists is not trained again; tracked folders that exist are refused.
 
-    python -m models.gnn_bayesian.run cv --tta --gpus 0 1 --output-root development/stage3_final/cv_f002
-    python -m models.gnn_bayesian.run loso --dataset Fluo-N2DL-HeLa --tta --gpus 0 1 --output-root development/stage3_final/loso_hela_f002
-    python -m models.gnn_bayesian.run final --tta --gpus 0 1 --output-root development/stage3_final/final_f002
+    python -m models.gnn_bayesian.run cv --tta --gpus 0 1 --output-root development/stage3_final/cv_f001
+    python -m models.gnn_bayesian.run loso --dataset Fluo-N2DL-HeLa --tta --gpus 0 1 --output-root development/stage3_final/loso_hela_f001
+    python -m models.gnn_bayesian.run final --tta --gpus 0 1 --output-root development/stage3_final/final
 """
 import argparse
 import datetime
@@ -223,7 +224,7 @@ def main(argv=None):
     parser.add_argument('--dataset', help='loso / unseen: the extra dataset held out')
     parser.add_argument('--folds', nargs='+', type=int, default=[0, 1, 2], help='cv: folds to run')
     parser.add_argument('--held-out', nargs='+', help='loso: sequences to hold out (default: every sequence)')
-    parser.add_argument('--seeds', nargs='+', type=int, default=[0, 1, 2, 3, 4])
+    parser.add_argument('--seeds', nargs='+', type=int, default=[0, 1, 2])
     parser.add_argument('--device', choices=['auto', 'cpu', 'cuda'], default='auto')
     parser.add_argument('--gpus', nargs='+', type=int, help='Train the members in parallel, one process per GPU')
     parser.add_argument('--classes', type=int, choices=[2, 3], default=3, help='2: the binary ablation (training)')
