@@ -8,7 +8,9 @@ comparison with the classical tracker is on identical masks.
 
 Trackastra is used as released -- no training on our data. Default configuration = the best of the six we tried on
 the lab wells: model "general_2d", mode "greedy_nodiv" (see README.md). delta_t (Trackastra's own option, default 1)
-adds candidate links from frame t to t+1 .. t+delta_t, i.e. across up to delta_t - 1 missed frames. With divisions
+adds candidate links from frame t to t+1 .. t+delta_t, i.e. across up to delta_t - 1 missed frames; it is passed to
+both Trackastra's prediction and its candidate graph (Trackastra.track 0.5.6 passes it only to the graph, which then
+has no score for any link skipping a frame). With divisions
 (greedy / ilp) the mother of every daughter track is written to lineage.json ({daughter track: mother track}).
 
 Install:  pip install trackastra        (needs torch; the model weights are downloaded on first use)
@@ -99,7 +101,16 @@ def track_sequence(seq_dir, input_dir, output_root, model, mode, copy_masks, ove
 
     # Trackastra: learned association scores between detections of adjacent frames, then its own linker.
     if np.any(masks > 0):
-        graph, _ = model.track(imgs, masks, mode=mode, delta_t=delta_t)
+        # Trackastra.track passes delta_t only to build_graph; its prediction step (predict_windows, default
+        # delta_t=1) keeps no scores for pairs further apart, so without this every link skipping a frame is lost.
+        from functools import partial
+        from trackastra.model import model_api
+        predict_windows = model_api.predict_windows
+        model_api.predict_windows = partial(predict_windows, delta_t=delta_t)
+        try:
+            graph, _ = model.track(imgs, masks, mode=mode, delta_t=delta_t)
+        finally:
+            model_api.predict_windows = predict_windows
     else:
         import networkx as nx
         graph = nx.DiGraph()
