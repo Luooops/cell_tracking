@@ -53,7 +53,7 @@ def run_test(a):
         # pretrained: a released model name, or the folder of a model trained with Trackastra's train.py
         # (model.pt + train_config.yaml)
         source = a.params['pretrained']
-        model = (Trackastra.from_folder(source, device=device) if Path(source).is_dir()
+        model = (Trackastra.from_folder(Path(source), device=device) if Path(source).is_dir()
                  else Trackastra.from_pretrained(source, device=device))
         model._pretrained_name = a.params['pretrained']
     else:
