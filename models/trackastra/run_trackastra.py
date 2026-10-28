@@ -7,7 +7,9 @@ detections of adjacent frames and its own linker turns them into tracks. The res
 comparison with the classical tracker is on identical masks.
 
 Trackastra is used as released -- no training on our data. Default configuration = the best of the six we tried on
-the lab wells: model "general_2d", mode "greedy_nodiv" (see README.md).
+the lab wells: model "general_2d", mode "greedy_nodiv" (see README.md). delta_t (Trackastra's own option, default 1)
+adds candidate links from frame t to t+1 .. t+delta_t, i.e. across up to delta_t - 1 missed frames. With divisions
+(greedy / ilp) the mother of every daughter track is written to lineage.json ({daughter track: mother track}).
 
 Install:  pip install trackastra        (needs torch; the model weights are downloaded on first use)
 
@@ -61,7 +63,7 @@ def find_sequences(predictions_root):
                   if (m.parent / "instance_tracks.csv").is_file() and (m.parent / "summary.json").is_file())
 
 
-def track_sequence(seq_dir, input_dir, output_root, model, mode, copy_masks, overwrite):
+def track_sequence(seq_dir, input_dir, output_root, model, mode, copy_masks, overwrite, delta_t=1):
     seq_dir = Path(seq_dir)
     summary_in = json.loads((seq_dir / "summary.json").read_text(encoding="utf-8"))
     frames = csv_read(seq_dir / "frames.csv")
@@ -97,11 +99,12 @@ def track_sequence(seq_dir, input_dir, output_root, model, mode, copy_masks, ove
 
     # Trackastra: learned association scores between detections of adjacent frames, then its own linker.
     if np.any(masks > 0):
-        graph, _ = model.track(imgs, masks, mode=mode)
+        graph, _ = model.track(imgs, masks, mode=mode, delta_t=delta_t)
     else:
         import networkx as nx
         graph = nx.DiGraph()
     track_of = {}                                         # (position in `frames`, instance label) -> track id
+    lineage = {}                                          # daughter track id -> mother track id
     if mode == "greedy_nodiv":                            # every node has <= 1 predecessor and successor:
         import networkx as nx                             # a track = one connected chain of the solution graph
         for tid, comp in enumerate(nx.weakly_connected_components(graph), start=1):
@@ -109,7 +112,8 @@ def track_sequence(seq_dir, input_dir, output_root, model, mode, copy_masks, ove
                 track_of[(int(graph.nodes[n]["time"]), int(graph.nodes[n]["label"]))] = tid
     elif graph.number_of_nodes():                         # with divisions: CTC convention, daughters get new ids
         from trackastra.tracking import graph_to_ctc
-        _, tracked = graph_to_ctc(graph, masks)
+        table, tracked = graph_to_ctc(graph, masks)       # table: label, t1, t2, parent (0 = none)
+        lineage = {int(r.label): int(r.parent) for r in table.itertuples() if r.parent > 0}
         for fi in range(len(frames)):
             for lab in np.unique(masks[fi]):
                 if lab == 0: continue
@@ -169,12 +173,14 @@ def track_sequence(seq_dir, input_dir, output_root, model, mode, copy_masks, ove
         r["mask_path"] = mask_paths[r["image_name"]]
     csv_write(out_dir / "instance_tracks.csv", rows, columns)
     csv_write(out_dir / "frames.csv", frames, list(frames[0].keys()))
+    if mode != "greedy_nodiv":
+        (out_dir / "lineage.json").write_text(json.dumps(lineage), encoding="utf-8")
 
     import torch, trackastra
     summary = dict(status="complete", input_dir=str(input_dir), sequence_id=sequence_id,
                    tracker="trackastra", masks_from=str(seq_dir.resolve()),
-                   parameters=dict(trackastra_model=model_name(model), mode=mode, copy_masks=copy_masks,
-                                   min_track_length=min_len),
+                   parameters=dict(trackastra_model=model_name(model), mode=mode, delta_t=delta_t,
+                                   copy_masks=copy_masks, min_track_length=min_len),
                    segmentation_parameters=summary_in.get("parameters", {}),
                    model=dict(trackastra=getattr(trackastra, "__version__", "unknown"), torch=torch.__version__,
                               numpy=np.__version__, device=str(getattr(model, "device", "unknown"))),
@@ -200,6 +206,7 @@ def main():
     ap.add_argument("--model", default="general_2d", help="pretrained Trackastra model: general_2d (default) or ctc")
     ap.add_argument("--mode", choices=MODES, default="greedy_nodiv",
                     help="linker: greedy_nodiv (default, no divisions; best on our wells), greedy, ilp")
+    ap.add_argument("--delta-t", type=int, default=1, help="link across up to delta_t - 1 missed frames (default 1)")
     ap.add_argument("--cpu", action="store_true")
     ap.add_argument("--copy-masks", action="store_true", help="also copy the masks into the output folder")
     ap.add_argument("--overwrite", action="store_true")
@@ -220,7 +227,7 @@ def main():
         if out_root in Path(s).resolve().parents:
             continue                                      # never re-process our own outputs
         try:
-            track_sequence(s, args.input_dir, out_root, model, args.mode, args.copy_masks, args.overwrite)
+            track_sequence(s, args.input_dir, out_root, model, args.mode, args.copy_masks, args.overwrite, args.delta_t)
         except (ValueError, FileNotFoundError, FileExistsError) as exc:
             ap.exit(2, f"error in {s}: {exc}\n")
     return 0

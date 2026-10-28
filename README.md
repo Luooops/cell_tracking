@@ -99,7 +99,7 @@ python evaluate.py --output-root outputs/scripta_data/compare_v1 --compare outpu
 
 ### 数据与指标
 
-GNN、Trackastra、经典算法读取同一份 `data/<dataset>/<well>` 原图及 `<well>_GT/TRA` mask。Trackastra 的适配器生成原脚本要求的清单，不执行经典跟踪或重新分割。原始 mask 不重标号、不改写；已知身份只用于监督/评估，未知身份 `>=50000` 仍按原规则处理。
+GNN、Trackastra、经典算法读取同一份 `data/<dataset>/<well>` 原图及 `<well>_GT/TRA` mask。Trackastra 的适配器生成原脚本要求的清单，不执行经典跟踪或重新分割。Trackastra 参数（`config.json` 的 `trackastra.test`）：`pretrained`（`general_2d` / `ctc`）、`mode`（`greedy_nodiv` 不分裂 / `greedy` / `ilp`）、`delta_t`（Trackastra 自带选项，默认 1；候选连接跨 t+1…t+delta_t，即最多跨 delta_t−1 个缺帧）；允许分裂的模式把每条女儿轨迹的母轨迹写入 `lineage.json`，供 `evaluate_ctc` 计算 BC。原始 mask 不重标号、不改写；已知身份只用于监督/评估，未知身份 `>=50000` 仍按原规则处理。
 
 统一 CTC 入口采用原 GNN 的 perfect tracks、id switches、purity 定义，保存 `instance_tracks.csv` 和 `metrics.json`。这不等同于旧 XML 位置匹配评估，也不是官方 TRA/CT/IDF1 实现。旧 Trackastra 评估所需代码保留在 `utils/legacy_*`，原入口仍可用：
 

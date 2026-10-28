@@ -80,7 +80,7 @@ def run_test(a):
                 source = a.destination / 'inputs' / well
                 manifest(source, a.data_root, well, frames, rows)
                 module.track_sequence(source, a.data_root / well, a.destination, model,
-                                          a.params['mode'], False, False)
+                                          a.params['mode'], False, False, a.params.get('delta_t', 1))
                 rows = module.csv_read(destination / 'instance_tracks.csv')
             else:
                 import tifffile
