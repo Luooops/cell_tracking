@@ -118,7 +118,10 @@ python track_eval/perfect_tracks.py --gt "<XML 或 ZIP>" --predictions-root mode
 
 - **不能跨过漏检帧（已由适配器修正）。** 公开版本的 `track()` 只把 `delta_t` 传给连接步骤，预测仍只保留相邻帧的配对分数，
   候选图里因此没有跨帧的边（实测 `delta_t` = 1–4 结果完全相同）。`run_trackastra.py` 现在把 `delta_t` 也传给预测
-  （`predict_windows`）。general_2d 训练时 `delta_cutoff` = 1，跨帧分数未经监督；修正前的结果相当于 `delta_t` = 1。某个细胞在某一帧被 Cellpose 漏检后，前后两段会成为两条轨迹。
+  （`predict_windows`）。general_2d 训练时 `delta_cutoff` = 1，跨帧分数未经监督；修正前的结果相当于 `delta_t` = 1。
+  修正后 `delta_t` = 3 反而更差：训练目标把相隔 2–3 帧的同一细胞也当正样本，greedy 连接不偏好短间隔，
+  于是常常跳过中间帧里存在的同一细胞，原本的相邻帧连接被拆断（scripta 15 孔：微调模型 LNK 0.962 -> 0.627，
+  零样本 0.956 -> 0.950）。比较一律用 `delta_t` = 1。某个细胞在某一帧被 Cellpose 漏检后，前后两段会成为两条轨迹。
   经典算法有 `max_lost` 和 gap closing，这一点上两者不同。
 - **没有用我们的数据训练。** 用实验室数据微调后可能更好，这里没有做。
 - **结果取决于输入的 mask。** 换分割参数或分割模型后需要重新跑。
