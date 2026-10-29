@@ -72,7 +72,9 @@ def run_official(work, weights, repo, python, min_cell_size, modality):
     cwd = Path(repo).resolve() / SCRIPTS
     if not cwd.is_dir():
         raise FileNotFoundError(f'{cwd} not found; pass --set repo="<cell-tracker-gnn checkout>"')
-    env = dict(os.environ, TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD='1')
+    # The scripts import src.* and src_metric_learning.* from the repository root.
+    env = dict(os.environ, TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD='1',
+               PYTHONPATH=os.pathsep.join(filter(None, [str(Path(repo).resolve()), os.environ.get('PYTHONPATH')])))
     work = work.resolve()
     for script, *args in (
             ('preprocess_seq2graph_clean.py', '-cs', str(min_cell_size), '-ii', work / '01',
