@@ -9,6 +9,7 @@ models/
   gnn_tracking/        GNN、原训练、两种跟踪求解流程、已有权重
   gnn_bayesian/        GNN 贝叶斯最终版：三类边（含分裂）、多数据集训练、置信度输出（不改 gnn_tracking）
   trackastra/          原官方预训练调用与导出流程
+  celltrack_gnn/       CellTrack-GNN（ECCV 2022）官方推理脚本的适配器（脚本在其自己的环境中原样运行）
   motion_tracking/     MotionAssociation、专用 NPZ 数据准备、训练、窗口推理与解码
   classical_tracking/  经典规则追踪基线（无训练，用于对比简单算法与训练模型）与原分割流水线
 utils/                 通用数据准备、读取、评估、入口分发、输入输出适配、可视化
@@ -37,6 +38,7 @@ python train.py --model gnn_tracking --version v002 --gpus 0 1        # 多卡�
 python test.py --model gnn_tracking --version pretrained --device cpu
 python test.py --model gnn_tracking --version v001 --weights outputs/scripta_data/gnn_tracking/v001/train/checkpoints
 python test.py --model trackastra --version pretrained
+python test.py --model celltrack_gnn --version seed0 --set repo='"<cell-tracker-gnn>"' --set python='"<ctgnn 环境的 python>"'   # seed1：--weights models/celltrack_gnn/weights/seed1
 python test.py --model classical_tracking --version baseline
 python test.py --model gnn_division --version experimental
 ```
@@ -99,7 +101,7 @@ python evaluate.py --output-root outputs/scripta_data/compare_v1 --compare outpu
 
 ### 数据与指标
 
-GNN、Trackastra、经典算法读取同一份 `data/<dataset>/<well>` 原图及 `<well>_GT/TRA` mask。Trackastra 的适配器生成原脚本要求的清单，不执行经典跟踪或重新分割。Trackastra 参数（`config.json` 的 `trackastra.test`）：`pretrained`（`general_2d` / `ctc`）、`mode`（`greedy_nodiv` 不分裂 / `greedy` / `ilp`）、`delta_t`（Trackastra 自带选项，默认 1；候选连接跨 t+1…t+delta_t，即最多跨 delta_t−1 个缺帧。Trackastra 0.5.6 的 `track()` 只把它传给候选图、不传给预测，跨帧的边因此没有分数；适配器同时传给预测 `predict_windows`。此修正之前的 delta_t>1 结果实际等于 delta_t=1。修正后 delta_t=3 在 scripta 上更差（跳过本帧存在的同一细胞、拆断相邻帧连接），比较用 delta_t=1）；允许分裂的模式把每条女儿轨迹的母轨迹写入 `lineage.json`，供 `evaluate_ctc` 计算 BC。`pretrained` 也可以是用 Trackastra 自己的 `scripts/train.py` 训练出的模型文件夹（含 `model.pt` 与 `train_config.yaml`）。微调用的训练数据：`python -m models.trackastra.prepare_train --output-root development/stage4_trackastra/data` 把 scripta 开发孔（不含测试孔）与额外数据集写成 CTC 序列（原图硬链接；GT 用 `canonical_gt`：缺帧切成单子延续、身份未知 >=50000 删除，因为 Trackastra 无法把检测排除在损失外），并在 `units/` 下按 gnn_bayesian 的 cv / final 写出 `<单元>_train.txt` / `<单元>_val.txt`（验证孔 = 每个训练折的第一口孔，从训练集中取出）。原始 mask 不重标号、不改写；已知身份只用于监督/评估，未知身份 `>=50000` 仍按原规则处理。
+GNN、Trackastra、经典算法读取同一份 `data/<dataset>/<well>` 原图及 `<well>_GT/TRA` mask。Trackastra 的适配器生成原脚本要求的清单，不执行经典跟踪或重新分割。Trackastra 参数（`config.json` 的 `trackastra.test`）：`pretrained`（`general_2d` / `ctc`）、`mode`（`greedy_nodiv` 不分裂 / `greedy` / `ilp`）、`delta_t`（Trackastra 自带选项，默认 1；候选连接跨 t+1…t+delta_t，即最多跨 delta_t−1 个缺帧。Trackastra 0.5.6 的 `track()` 只把它传给候选图、不传给预测，跨帧的边因此没有分数；适配器同时传给预测 `predict_windows`。此修正之前的 delta_t>1 结果实际等于 delta_t=1。修正后 delta_t=3 在 scripta 上更差（跳过本帧存在的同一细胞、拆断相邻帧连接），比较用 delta_t=1）；允许分裂的模式把每条女儿轨迹的母轨迹写入 `lineage.json`，供 `evaluate_ctc` 计算 BC。`pretrained` 也可以是用 Trackastra 自己的 `scripts/train.py` 训练出的模型文件夹（含 `model.pt` 与 `train_config.yaml`）。微调用的训练数据：`python -m models.trackastra.prepare_train --output-root development/stage4_trackastra/data` 把 scripta 开发孔（不含测试孔）与额外数据集写成 CTC 序列（原图硬链接；GT 用 `canonical_gt`：缺帧切成单子延续、身份未知 >=50000 删除，因为 Trackastra 无法把检测排除在损失外），并在 `units/` 下按 gnn_bayesian 的 cv / final 写出 `<单元>_train.txt` / `<单元>_val.txt`（验证孔 = 每个训练折的第一口孔，从训练集中取出）。原始 mask 不重标号、不改写；已知身份只用于监督/评估，未知身份 `>=50000` 仍按原规则处理。CellTrack-GNN（`models/celltrack_gnn/run_celltrack_gnn.py`）：权重在 `models/celltrack_gnn/weights/seed0|seed1`（默认 seed0，`--weights` 换另一个；不进 git，与代码一起拷到服务器），每个文件夹含 `metric_learning/all_params.pth`、`gnn/checkpoints/` 下唯一的 `*.ckpt`、`gnn/.hydra/config.yaml`）；参数 `repo`（官方仓库，脚本在 `src/inference`）、`python`（官方环境）、`min_cell_size`（默认 20）、`modality`（`2D`）。每孔在 `<输出>/work/<孔>/` 下建官方输入（原图硬链接、检测 mask 复制，因为预处理会原地改写 mask），依次运行 `preprocess_seq2graph_clean.py`、`inference_clean.py`、`postprocess_clean.py`；每个检测取覆盖其像素最多的结果编号为 `track_id`（被官方清理掉的检测记为单检测轨迹，数量写入 `summary.json`），`res_track.txt` 的父轨迹写入 `lineage.json`，供 `evaluate_ctc` 使用。
 
 统一 CTC 入口采用原 GNN 的 perfect tracks、id switches、purity 定义，保存 `instance_tracks.csv` 和 `metrics.json`。这不等同于旧 XML 位置匹配评估，也不是官方 TRA/CT/IDF1 实现。旧 Trackastra 评估所需代码保留在 `utils/legacy_*`，原入口仍可用：
 

@@ -240,3 +240,6 @@ cellpose_model/
 
 # Claude Code
 CLAUDE.md
+
+# CellTrack-GNN trained weights (copied to the server, not versioned)
+models/celltrack_gnn/weights/

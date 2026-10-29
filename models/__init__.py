@@ -5,6 +5,7 @@ MODEL_MODULES = {
     'gnn_tracking': 'models.gnn_tracking.track',
     'gnn_division': 'models.gnn_tracking.track_division',
     'trackastra': 'models.trackastra.run_trackastra',
+    'celltrack_gnn': 'models.celltrack_gnn.run_celltrack_gnn',
     'motion_tracking': 'models.motion_tracking.model',
     'classical_tracking': 'models.classical_tracking.tracking_v0',
 }

@@ -44,6 +44,7 @@
       "test": {"gap_round": true, "link_thresh": 0.5, "gap_thresh": 0.9, "prior_correction": false, "record_edges": false}
     },
     "trackastra": {"test": {"pretrained": "general_2d", "mode": "greedy_nodiv", "delta_t": 1}},
+    "celltrack_gnn": {"weights": "models/celltrack_gnn/weights/seed0", "test": {"repo": "", "python": "python", "min_cell_size": 20, "modality": "2D"}},
     "classical_tracking": {
       "test": {"max_distance": 45, "max_area_ratio": 1.8, "max_shape_ratio": 1.8,
         "max_lost": 3, "area_weight": 5, "shape_weight": 3, "iou_weight": 2,

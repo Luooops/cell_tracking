@@ -56,6 +56,10 @@ def run_test(a):
         model = (Trackastra.from_folder(Path(source), device=device) if Path(source).is_dir()
                  else Trackastra.from_pretrained(source, device=device))
         model._pretrained_name = a.params['pretrained']
+    elif a.model == 'celltrack_gnn':
+        if a.weights is None:
+            raise ValueError('celltrack_gnn needs --weights <trained model folder>')
+        model = module.find_weights(a.weights)
     else:
         model = None
     save_config(a)
@@ -86,6 +90,10 @@ def run_test(a):
                 module.track_sequence(source, a.data_root / well, a.destination, model,
                                           a.params['mode'], False, False, a.params.get('delta_t', 1))
                 rows = module.csv_read(destination / 'instance_tracks.csv')
+            elif a.model == 'celltrack_gnn':
+                # The official scripts run unchanged in their own environment on a copy of the inputs.
+                rows = module.track_sequence(sequence(a.data_root, well), rows, a.destination / 'work' / well,
+                                             destination, model, **a.params)
             else:
                 import tifffile
                 from models.classical_tracking.tracking_v0 import extract_detections_from_mask
