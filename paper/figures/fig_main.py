@@ -9,7 +9,7 @@ import style
 
 PAIRED = ['ours', 'ta_ft', 'ta_zs']
 TEST = ['ours', 'binary', 'v003', 'ta_ft', 'ta_zs', 'ctgnn0', 'ctgnn1', 'classical']
-SHORT = {'ours': 'Ours', 'binary': 'Ours, binary', 'v003': 'GNN v003', 'ta_ft': 'TA ft', 'ta_zs': 'TA zs',
+SHORT = {'ours': 'GapLink', 'binary': 'GapLink, binary', 'v003': 'GNN, Scripta', 'ta_ft': 'TA ft', 'ta_zs': 'TA zs',
          'ctgnn0': 'CT-GNN s0', 'ctgnn1': 'CT-GNN s1', 'classical': 'Classical'}
 
 

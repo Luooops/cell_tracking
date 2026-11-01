@@ -115,7 +115,7 @@ def cell_crops(image, mask, labels):
 
 # ---------------------------------------------------------------- panels
 def panel_a(fig, ax):
-    title(ax, 0.5, H - 3.5, 'a', 'Frame-pair graph')
+    title(ax, 0.5, H - 3.5, 'a', 'Frame-gap graph ($t$, $t+g$)')
     (im0, m0), (im1, m1) = frame(T), frame(T + 1)
     for k, (im, m, c, name) in enumerate(((im0, m0, C_T, 'frame $t$'), (im1, m1, C_N, 'frame $t{+}g$'))):
         a = inset(fig, 1.0 + k * 20.5, 46.5, 19.5, 19.5)
@@ -245,7 +245,7 @@ def panel_b(fig, ax, x0):
     ax.text(x0 + 1.2, 7.9, 'Training', fontsize=5.6, weight='bold', va='center')
     ax.text(x0 + 10.0, 7.9, '$\\mathcal{L}=\\mathrm{CE}_{3\\text{-way}}$ (no class weights)'
             ' $+\\,\\lambda\\,\\mathrm{InfoNCE}(s_{ij}/\\tau)$', fontsize=5.0, va='center')
-    ax.text(x0 + 1.2, 4.1, 'GT velocities, mirrored videos, unknown IDs masked, scripta + HeLa jointly',
+    ax.text(x0 + 1.2, 4.1, 'GT velocities, mirrored videos, unknown IDs masked, Scripta + HeLa jointly',
             fontsize=4.8, va='center', color=SOFT)
     return xh + 13.0
 
@@ -278,7 +278,7 @@ def panel_c(ax, x0):
 
 
 def panel_d(ax, x0):
-    title(ax, x0, H - 3.5, 'd', 'Two-round assignment')
+    title(ax, x0, H - 3.5, 'd', 'Cross-frame linking')
     cols = [x0 + 4.0, x0 + 15.0, x0 + 26.0]
     ys = [61.0, 55.0, 49.0, 43.0]
     for c, name in zip(cols, ('$t$', '$t{+}1$', '$t{+}2$')):
@@ -296,7 +296,7 @@ def panel_d(ax, x0):
     ax.add_line(plt.Line2D([lx, lx + 3], [38.6] * 2, color=CLS['same'], lw=0.9))
     ax.text(lx + 3.6, 38.6, 'round 1, $g$=1', va='center', fontsize=5.0)
     ax.add_line(plt.Line2D([lx + 17, lx + 20], [38.6] * 2, color=CLS['same'], lw=0.9, ls=(0, (2.2, 1.2))))
-    ax.text(lx + 20.6, 38.6, 'round 2, $g$=2', va='center', fontsize=5.0)
+    ax.text(lx + 20.6, 38.6, 'check, $g$=2', va='center', fontsize=5.0)
     ax.add_line(plt.Line2D([lx, lx + 3], [35.4] * 2, color=CLS['division'], lw=0.9))
     ax.text(lx + 3.6, 35.4, 'division (round 1)', va='center', fontsize=5.0)
     box(ax, x0, 17.5, 33.5, 14.8, '', fc=FILL)

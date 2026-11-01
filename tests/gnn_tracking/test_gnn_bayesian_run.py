@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from models.gnn_bayesian.run import units
+from models.gnn_bayesian.run import extra_sequences, units
 
 FOLDS = [['a1', 'a2'], ['b1', 'b2'], ['c1', 'c2']]
 TEST = ['t1', 't2']
@@ -25,11 +25,15 @@ class TestUnits(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def plan(self, command, dataset=None, held_out=None):
-        args = argparse.Namespace(command=command, scripta='scr', dataset=dataset, held_out=held_out, folds=[0, 1, 2],
+    def args(self, command, dataset=None, held_out=None, extra_test=None, unseen=()):
+        return argparse.Namespace(command=command, scripta='scr', dataset=dataset, held_out=held_out, folds=[0, 1, 2],
                                   scripta_spec=dict(folds=FOLDS), dev_wells=[w for f in FOLDS for w in f],
-                                  test_wells=TEST, extra_roots=self.roots, dest=Path('out'))
-        return units(args, self.extra)
+                                  test_wells=TEST, extra=['hela', 'sim'], extra_roots=self.roots,
+                                  extra_test=extra_test or {'hela': [], 'sim': []}, unseen=list(unseen),
+                                  unseen_roots={d: self.roots[d] for d in unseen}, dest=Path('out'))
+
+    def plan(self, command, dataset=None, held_out=None):
+        return units(self.args(command, dataset, held_out), self.extra)
 
     def test_no_command_but_final_sees_a_test_well(self):
         for command, dataset in (('cv', None), ('loso', 'sim'), ('unseen', 'sim')):
@@ -56,6 +60,28 @@ class TestUnits(unittest.TestCase):
         self.assertFalse([s for s in specs if s.startswith('sim/')])
         self.assertEqual([t[0] for t in track], ['sim/01', 'sim/02'])
         self.assertEqual(str(track[0][2]('gnn_tracking')), str(Path('out') / 'unseen_sim' / 'gnn_tracking'))
+
+    def test_declared_test_sequences_of_an_extra_dataset_only_tracked_by_final(self):
+        args = self.args('cv', extra_test={'hela': [], 'sim': ['02']})
+        extra = extra_sequences(args)
+        self.assertEqual(extra, ['hela/01', 'hela/02', 'sim/01'])
+        for _, _, specs, track in units(args, extra):
+            self.assertNotIn('sim/02', specs + [t[0] for t in track])
+        args.command = 'final'
+        (_, _, specs, track), = units(args, extra)
+        self.assertNotIn('sim/02', specs)
+        self.assertEqual([t[0] for t in track], ['scr/t1', 'scr/t2', 'sim/02'])
+        self.assertEqual(str(track[-1][2]('gnn_division')), str(Path('out') / 'sim' / 'gnn_division'))
+
+    def test_final_tracks_unseen_datasets_without_training_on_them(self):
+        args = self.args('final', unseen=['hela'])
+        args.extra, args.extra_roots = ['sim'], {'sim': self.roots['sim']}
+        args.extra_test = {'sim': []}
+        extra = extra_sequences(args)
+        (_, _, specs, track), = units(args, extra)
+        self.assertFalse([s for s in specs if s.startswith('hela/')])
+        self.assertEqual([t[0] for t in track], ['scr/t1', 'scr/t2', 'hela/01', 'hela/02'])
+        self.assertEqual(str(track[-1][2]('gnn_tracking')), str(Path('out') / 'unseen_hela' / 'gnn_tracking'))
 
 
 if __name__ == '__main__':

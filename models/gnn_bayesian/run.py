@@ -15,7 +15,12 @@ datasets (default Fluo-N2DL-HeLa; any CTC dataset under data/ can be added with 
             sequence of D tracked -> <out>/unseen_<D>/<tracker>/<sequence>/                  (checkpoints unseen_<D>_)
     final   every scripta development well + every extra sequence; the scripta test wells, once
             -> <out>/test/<tracker>/<well>/                                                  (checkpoints final_)
+            also the declared test sequences of the extra datasets -> <out>/<D>/<tracker>/<sequence>/, and with
+            --unseen U every sequence of U (never trained on) -> <out>/unseen_<U>/<tracker>/<sequence>/
     cache   fill <out>/cache with every video used (run it once before starting several processes on one root).
+
+An extra dataset with test_wells in config.json (DynamicNuclearNet: its official test videos) never trains on them;
+"every extra sequence" above means every other sequence (DynamicNuclearNet: train + val).
 
 Trackers: gnn_tracking (no divisions) and gnn_division (divisions on p_division). Every tracked video gets
 instance_tracks.csv, lineage.json (divisions), edges.npz, links.csv and tracks_confidence.csv (confidence.py) and
@@ -40,6 +45,7 @@ whose checkpoint exists is not trained again; tracked folders that exist are ref
     python -m models.gnn_bayesian.run cv --tta --gpus 0 1 --output-root development/stage3_final/cv_f001
     python -m models.gnn_bayesian.run loso --dataset Fluo-N2DL-HeLa --tta --gpus 0 1 --output-root development/stage3_final/loso_hela_f001
     python -m models.gnn_bayesian.run final --tta --gpus 0 1 --output-root development/stage3_final/final
+    python -m models.gnn_bayesian.run final --extra DynamicNuclearNet --unseen Fluo-N2DL-HeLa --tta --gpus 0 1         --output-root development/stage6_dnn/final
 """
 import argparse
 import datetime
@@ -79,7 +85,15 @@ def units(args, extra):
                  [(f'{d}/{seq}', d, lambda name, d=d: out / f'unseen_{d}' / name)
                   for seq in ctc_sequences(args.extra_roots[d])])]
     return [('final', 'final', dev + extra,
-             [(f'{scripta}/{w}', scripta, lambda name: out / 'test' / name) for w in args.test_wells])]
+             [(f'{scripta}/{w}', scripta, lambda name: out / 'test' / name) for w in args.test_wells]
+             + [(f'{d}/{seq}', d, lambda name, d=d: out / d / name) for d in args.extra for seq in args.extra_test[d]]
+             + [(f'{d}/{seq}', d, lambda name, d=d: out / f'unseen_{d}' / name)
+                for d in args.unseen for seq in ctc_sequences(args.unseen_roots[d])])]
+
+
+def extra_sequences(args):
+    """Training sequences of the extra datasets: every sequence except a dataset's declared test sequences."""
+    return [f'{d}/{s}' for d in args.extra for s in ctc_sequences(args.extra_roots[d]) if s not in args.extra_test[d]]
 
 
 def _track_and_export(args, models, spec, target, cache, folder_of, extra_report):
@@ -156,6 +170,7 @@ def _fill_cache(cache, specs):
 def _train_on_gpus(args, todo):
     """todo: [(unit id, prefix, seed)] members still to train -> one child per GPU, each training its share."""
     common = [args.command, '--scripta', args.scripta, '--extra', *args.extra, '--device', args.device,
+              *(['--unseen', *args.unseen] if args.unseen else []),
               '--classes', str(args.classes), '--output-root', str(args.output_root)] \
         + (['--dataset', args.dataset] if args.dataset else []) + (['--active-bias'] if args.active_bias else []) \
         + (['--cosine-lr'] if args.cosine_lr else [])
@@ -178,13 +193,14 @@ def run(args):
     out, cache = args.output_root, args.output_root / 'cache'
     out.mkdir(parents=True, exist_ok=True)
     args.dest = out / f'retrack_{_tag(args)}' if args.retrack else out
-    extra = [f'{d}/{s}' for d in args.extra for s in ctc_sequences(args.extra_roots[d])]
+    extra = extra_sequences(args)
     plan = units(args, extra)
     config = out / 'config.json'
     if not config.exists():
         config.write_text(json.dumps(dict(
             model='gnn_bayesian', command=args.command, dataset=args.dataset, scripta=args.scripta,
-            data_root=str(args.scripta_spec['root']), extra=args.extra, extra_videos=extra, seeds=args.seeds,
+            data_root=str(args.scripta_spec['root']), extra=args.extra, extra_videos=extra,
+            extra_test={d: v for d, v in args.extra_test.items() if v}, unseen=args.unseen, seeds=args.seeds,
             folds=args.scripta_spec['folds'], test_wells=args.test_wells, classes=args.classes,
             active_bias=args.active_bias, cosine_lr=args.cosine_lr,
             created=datetime.datetime.now().isoformat(timespec='seconds'),
@@ -222,6 +238,8 @@ def main(argv=None):
     parser.add_argument('--extra', nargs='+', default=['Fluo-N2DL-HeLa'],
                         help='Datasets added to every training')
     parser.add_argument('--dataset', help='loso / unseen: the extra dataset held out')
+    parser.add_argument('--unseen', nargs='+', default=[], help='final: also track every sequence of these datasets '
+                        '(not in --extra, so never trained on)')
     parser.add_argument('--folds', nargs='+', type=int, default=[0, 1, 2], help='cv: folds to run')
     parser.add_argument('--held-out', nargs='+', help='loso: sequences to hold out (default: every sequence)')
     parser.add_argument('--seeds', nargs='+', type=int, default=[0, 1, 2])
@@ -248,13 +266,20 @@ def main(argv=None):
     if set(args.dev_wells) & set(args.test_wells):
         parser.error('test wells appear in the folds')
     try:
-        args.extra_roots = {d: resolve_dataset(cfg, base, d, None)['root'] for d in args.extra}
+        specs = {d: resolve_dataset(cfg, base, d, None) for d in args.extra + args.unseen}
     except FileNotFoundError as exc:
-        parser.error(f'{exc} (download it, or leave it out with --extra)')
+        parser.error(f'{exc} (download it, or leave it out with --extra / --unseen)')
+    args.extra_roots = {d: specs[d]['root'] for d in args.extra}
+    args.extra_test = {d: specs[d]['held_out'] for d in args.extra}
+    args.unseen_roots = {d: specs[d]['root'] for d in args.unseen}
+    if set(args.unseen) & set(args.extra):
+        parser.error('--unseen datasets must not be in --extra')
+    if args.unseen and args.command != 'final':
+        parser.error('--unseen is for final (loso / unseen hold data out with --dataset)')
     if args.command in ('loso', 'unseen'):
         if args.dataset not in args.extra:
             parser.error(f'{args.command} needs --dataset, one of --extra {args.extra}')
-        sequences = ctc_sequences(args.extra_roots[args.dataset])
+        sequences = [s for s in ctc_sequences(args.extra_roots[args.dataset]) if s not in args.extra_test[args.dataset]]
         args.held_out = args.held_out or sequences
         if missing := sorted(set(args.held_out) - set(sequences)):
             parser.error(f'{args.dataset} has no sequences {missing}')

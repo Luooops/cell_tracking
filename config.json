@@ -21,6 +21,10 @@
         ["r15c12", "r12c13", "r07c02", "r09c01"],
         ["r13c12", "r16c13", "r09c09", "r14c03"]]
     },
+    "DynamicNuclearNet": {
+      "root": "data/DynamicNuclearNet",
+      "test_wells": ["test07", "test08", "test09", "test10", "test11"]
+    },
     "scripta_data_refine": {
       "root": "data/scripta_data_refine",
       "test_wells": ["r16c02", "r01c20", "r07c07"],
