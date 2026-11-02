@@ -15,6 +15,10 @@ extra pass); from epoch AB_WARMUP on, its cross-entropy is weighted by w = u + m
 variances). The weight uses no label, so the posterior the loss aims at is unchanged; edges the network is always
 sure of (often GT errors when it is surely 'wrong') keep a low weight. Per batch w is scaled to mean 1 with no
 weight above AB_CAP. Off by default.
+stable=True (for training mixes with dense videos, e.g. DynamicNuclearNet, where an earlier run diverged to NaN):
+the total gradient norm is clipped at CLIP, and a step whose loss or gradient norm is not finite is skipped (no update,
+no Adam state change). Off by default, so the models trained so far are reproduced exactly. Every epoch logs the
+median / max gradient norm (before clipping) and the skipped steps.
 n_classes=2 is the binary ablation 'linked or not': SAME and DIVISION are both positive (a daughter is a link of its
 mother), so gnn_division's solver can divide on two strong links; same data, augmentation and schedule.
 """
@@ -32,6 +36,8 @@ from models.gnn_bayesian.data import SAME, UNRELATED, edge_classes, load, split
 from models.gnn_bayesian.model import TrackerGNN3, class_priors
 
 AB_WARMUP, AB_CAP = 10, 3.0                 # fixed before the experiment (not tuned)
+CLIP = 5.0                                  # stable=True; fixed before the experiment: ~2x the median gradient norm of
+                                            # the RAW264.7-only run (2.0-2.8), so only the outlier steps are cut
 
 
 def training_graphs(specs, cache, rng):
@@ -85,7 +91,7 @@ def active_bias_weights(u, eps, cap=AB_CAP):
     return w
 
 
-def train(specs, seed, cache, log=None, n_classes=3, active_bias=False, cosine=False):
+def train(specs, seed, cache, log=None, n_classes=3, active_bias=False, cosine=False, stable=False):
     if log:
         print(f'  {log}: building training graphs for {len(specs)} videos', flush=True)
     graphs, counts = training_graphs(specs, cache, np.random.default_rng(seed))
@@ -95,14 +101,16 @@ def train(specs, seed, cache, log=None, n_classes=3, active_bias=False, cosine=F
     model.priors = class_priors({k: merge(v).tolist() for k, v in counts.items()})
     if log:
         div = {d: int(sum(c[2] for (dd, g), c in counts.items() if dd == d)) for d in {d for d, _ in counts}}
-        print(f'  {log}: {len(graphs)} graphs, division edges per dataset {div}', flush=True)
+        edges = {d: int(sum(c.sum() for (dd, g), c in counts.items() if dd == d)) for d in div}
+        print(f'  {log}: {len(graphs)} graphs, known edges per dataset {edges}, division edges per dataset {div}',
+              flush=True)
     history = PredictionHistory(sum(len(g.edge_class) for g in graphs), n_classes) if active_bias else None
     opt = torch.optim.Adam(model.parameters(), lr=LR)
     schedule = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=EPOCHS) if cosine else None
     t0 = time.time()
     for ep in range(EPOCHS):
         model.train()
-        loss_sum, n_batches = torch.zeros((), device=DEVICE), 0
+        loss_sum, n_batches, norms, skipped = torch.zeros((), device=DEVICE), 0, [], 0
         weighting = active_bias and ep >= AB_WARMUP
         if weighting:
             seen = history.n >= 2
@@ -127,7 +135,16 @@ def train(specs, seed, cache, log=None, n_classes=3, active_bias=False, cosine=F
             src, dst = b.candidate_edge_index
             same = b.edge_class[known] == SAME                       # appearance loss on continuations only
             loss = loss + AUX * contrastive_loss(model.sim[known], src[known], dst[known], same)
-            opt.zero_grad(); loss.backward(); opt.step()
+            opt.zero_grad(); loss.backward()
+            if stable:
+                norm = torch.nn.utils.clip_grad_norm_(model.parameters(), CLIP)
+            else:                                                    # only measured: the gradients stay as they are
+                norm = torch.stack([p.grad.detach().norm() for p in model.parameters() if p.grad is not None]).norm()
+            norms.append(norm.detach())
+            if stable and not (torch.isfinite(loss) and torch.isfinite(norm)):
+                opt.zero_grad(); skipped += 1
+                continue
+            opt.step()
             loss_sum += loss.detach(); n_batches += 1
         if schedule is not None:
             schedule.step()
@@ -135,7 +152,9 @@ def train(specs, seed, cache, log=None, n_classes=3, active_bias=False, cosine=F
             torch.cuda.empty_cache()
         if log:
             elapsed = (time.time() - t0) / 60
-            print(f'  {log}: epoch {ep + 1} / {EPOCHS}  loss {float(loss_sum) / n_batches:.4f}  '
+            g = torch.stack(norms).float().cpu()
+            print(f'  {log}: epoch {ep + 1} / {EPOCHS}  loss {float(loss_sum) / max(n_batches, 1):.4f}  '
+                  f'grad norm median {float(g.median()):.2f} max {float(g.max()):.2f}  skipped {skipped}  '
                   f'({elapsed:.1f} min, ~{elapsed / (ep + 1) * (EPOCHS - ep - 1):.1f} min left)'
                   + (f'  active bias: eps {float(eps):.4f}, max w {w_max:.2f}, capped {w_capped}' if weighting else ''),
                   flush=True)

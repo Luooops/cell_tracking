@@ -20,6 +20,9 @@ datasets (default Fluo-N2DL-HeLa; any CTC dataset under data/ can be added with 
     transfer  the extra datasets only, no scripta (a model that has never seen scripta, so it cannot tell scripta has
             no divisions); every scripta well tracked: development wells -> <out>/dev/<tracker>/<well>/, test wells
             -> <out>/test/<tracker>/<well>/ (analysis: false divisions; nothing is tuned on them) (checkpoints transfer_)
+            --track-videos D/seq ... also tracks these, never trained on -> <out>/<D>/<tracker>/<sequence>/
+--train-videos D/seq ... (any command) trains on these extra sequences only instead of every one (e.g. one cell line
+of a dataset). --stable (training) clips the gradient norm and skips non-finite steps (train.py).
     cache   fill <out>/cache with every video used (run it once before starting several processes on one root).
 
 An extra dataset with test_wells in config.json (DynamicNuclearNet: its official test videos) never trains on them;
@@ -49,6 +52,10 @@ whose checkpoint exists is not trained again; tracked folders that exist are ref
     python -m models.gnn_bayesian.run loso --dataset Fluo-N2DL-HeLa --tta --gpus 0 1 --output-root development/stage3_final/loso_hela_f001
     python -m models.gnn_bayesian.run final --tta --gpus 0 1 --output-root development/stage3_final/final
     python -m models.gnn_bayesian.run transfer --tta --gpus 0 1 2 --output-root development/stage6_evidence/hela_only
+    python -m models.gnn_bayesian.run transfer --extra DynamicNuclearNet --train-videos DynamicNuclearNet/train60 ...
+        --track-videos DynamicNuclearNet/val17 ... --tta --gpus 0 1 2 --output-root development/stage6_evidence/raw_only
+    python -m models.gnn_bayesian.run cv --folds 0 --extra DynamicNuclearNet --train-videos DynamicNuclearNet/train60 ...
+        --stable --tta --gpus 0 1 2 --output-root development/stage7_raw/pilot_cv
     python -m models.gnn_bayesian.run final --extra DynamicNuclearNet --unseen Fluo-N2DL-HeLa --tta --gpus 0 1         --output-root development/stage6_dnn/final
 """
 import argparse
@@ -91,7 +98,9 @@ def units(args, extra):
     if args.command == 'transfer':
         return [('transfer', 'transfer', list(extra),
                  [(f'{scripta}/{w}', scripta, lambda name: out / 'dev' / name) for w in args.dev_wells]
-                 + [(f'{scripta}/{w}', scripta, lambda name: out / 'test' / name) for w in args.test_wells])]
+                 + [(f'{scripta}/{w}', scripta, lambda name: out / 'test' / name) for w in args.test_wells]
+                 + [(spec, spec.split('/')[0], lambda name, d=spec.split('/')[0]: out / d / name)
+                    for spec in getattr(args, 'track_videos', None) or []])]
     return [('final', 'final', dev + extra,
              [(f'{scripta}/{w}', scripta, lambda name: out / 'test' / name) for w in args.test_wells]
              + [(f'{d}/{seq}', d, lambda name, d=d: out / d / name) for d in args.extra for seq in args.extra_test[d]]
@@ -100,8 +109,11 @@ def units(args, extra):
 
 
 def extra_sequences(args):
-    """Training sequences of the extra datasets: every sequence except a dataset's declared test sequences."""
-    return [f'{d}/{s}' for d in args.extra for s in ctc_sequences(args.extra_roots[d]) if s not in args.extra_test[d]]
+    """Training sequences of the extra datasets: every sequence except a dataset's declared test sequences
+    (only those of --train-videos when it is given)."""
+    every = [f'{d}/{s}' for d in args.extra for s in ctc_sequences(args.extra_roots[d]) if s not in args.extra_test[d]]
+    chosen = getattr(args, 'train_videos', None)
+    return [s for s in every if s in chosen] if chosen else every
 
 
 def _track_and_export(args, models, spec, target, cache, folder_of, extra_report):
@@ -147,7 +159,7 @@ def _train_member(args, specs, cache, prefix, seed):
     if path.exists():
         raise FileExistsError(f'{path} exists')
     model = train(specs, seed, cache, log=f'{prefix} seed {seed}', n_classes=args.classes,
-                  active_bias=args.active_bias, cosine=args.cosine_lr)
+                  active_bias=args.active_bias, cosine=args.cosine_lr, stable=args.stable)
     path.parent.mkdir(parents=True, exist_ok=True)
     save(model, path)
     return model
@@ -179,9 +191,11 @@ def _train_on_gpus(args, todo):
     """todo: [(unit id, prefix, seed)] members still to train -> one child per GPU, each training its share."""
     common = [args.command, '--scripta', args.scripta, '--extra', *args.extra, '--device', args.device,
               *(['--unseen', *args.unseen] if args.unseen else []),
+              *(['--train-videos', *args.train_videos] if args.train_videos else []),
+              *(['--track-videos', *args.track_videos] if args.track_videos else []),
               '--classes', str(args.classes), '--output-root', str(args.output_root)] \
         + (['--dataset', args.dataset] if args.dataset else []) + (['--active-bias'] if args.active_bias else []) \
-        + (['--cosine-lr'] if args.cosine_lr else [])
+        + (['--cosine-lr'] if args.cosine_lr else []) + (['--stable'] if args.stable else [])
     children = []
     for i, gpu in enumerate(args.gpus):
         share = todo[i::len(args.gpus)]
@@ -208,9 +222,10 @@ def run(args):
         config.write_text(json.dumps(dict(
             model='gnn_bayesian', command=args.command, dataset=args.dataset, scripta=args.scripta,
             data_root=str(args.scripta_spec['root']), extra=args.extra, extra_videos=extra,
-            extra_test={d: v for d, v in args.extra_test.items() if v}, unseen=args.unseen, seeds=args.seeds,
+            extra_test={d: v for d, v in args.extra_test.items() if v}, unseen=args.unseen,
+            track_videos=args.track_videos or [], seeds=args.seeds,
             folds=args.scripta_spec['folds'], test_wells=args.test_wells, classes=args.classes,
-            active_bias=args.active_bias, cosine_lr=args.cosine_lr,
+            active_bias=args.active_bias, cosine_lr=args.cosine_lr, stable=args.stable,
             created=datetime.datetime.now().isoformat(timespec='seconds'),
             scope=('3-way edges (unrelated / same / division)' if args.classes == 3 else 'binary edges (linked or not)')
             + ' trained on scripta + extra datasets; tracking options per video in metrics.json'),
@@ -248,6 +263,8 @@ def main(argv=None):
     parser.add_argument('--dataset', help='loso / unseen: the extra dataset held out')
     parser.add_argument('--unseen', nargs='+', default=[], help='final: also track every sequence of these datasets '
                         '(not in --extra, so never trained on)')
+    parser.add_argument('--train-videos', nargs='+', help='Train on these extra sequences only (D/seq)')
+    parser.add_argument('--track-videos', nargs='+', help='transfer: also track these sequences (D/seq, not trained on)')
     parser.add_argument('--folds', nargs='+', type=int, default=[0, 1, 2], help='cv: folds to run')
     parser.add_argument('--held-out', nargs='+', help='loso: sequences to hold out (default: every sequence)')
     parser.add_argument('--seeds', nargs='+', type=int, default=[0, 1, 2])
@@ -256,6 +273,8 @@ def main(argv=None):
     parser.add_argument('--classes', type=int, choices=[2, 3], default=3, help='2: the binary ablation (training)')
     parser.add_argument('--active-bias', action='store_true', help='Weight edges by prediction variance (training)')
     parser.add_argument('--cosine-lr', action='store_true', help='Cosine learning-rate decay (training; not used)')
+    parser.add_argument('--stable', action='store_true', help='Clip the gradient norm and skip non-finite steps '
+                        '(training; for mixes with dense videos)')
     parser.add_argument('--prior', choices=['none', 'division'], default='none',
                         help="none: the network's own posterior; division: the dataset's division prior (analysis)")
     parser.add_argument('--tta', action='store_true', help='Also score the mirrored video and average')
@@ -291,6 +310,18 @@ def main(argv=None):
         args.held_out = args.held_out or sequences
         if missing := sorted(set(args.held_out) - set(sequences)):
             parser.error(f'{args.dataset} has no sequences {missing}')
+    if args.track_videos and args.command != 'transfer':
+        parser.error('--track-videos is for transfer')
+    if args.train_videos:
+        if missing := sorted(set(args.train_videos) - set(extra_sequences(argparse.Namespace(**{
+                **vars(args), 'train_videos': None})))):
+            parser.error(f'not training sequences of --extra: {missing}')
+    if args.track_videos:
+        if bad := sorted(s for s in args.track_videos if s.split('/')[0] not in args.extra
+                         or s.split('/')[1] not in ctc_sequences(args.extra_roots[s.split('/')[0]])):
+            parser.error(f'--track-videos must be sequences of --extra: {bad}')
+        if seen := sorted(set(args.track_videos) & set(extra_sequences(args))):
+            parser.error(f'--track-videos are trained on: {seen}')
     if args.command == 'final' and not args.test_wells:
         parser.error('final needs test wells in config.json')
     stage = {'cache': 'cache', 'cv': 'cv_folds' + ''.join(map(str, args.folds)), 'loso': f'loso_{args.dataset}',

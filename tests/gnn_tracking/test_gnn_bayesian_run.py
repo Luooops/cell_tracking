@@ -81,6 +81,25 @@ class TestUnits(unittest.TestCase):
         self.assertEqual(str(track[0][2]('gnn_division')), str(Path('out') / 'dev' / 'gnn_division'))
         self.assertEqual(str(track[-1][2]('gnn_division')), str(Path('out') / 'test' / 'gnn_division'))
 
+    def test_transfer_trains_on_chosen_videos_and_tracks_the_others(self):
+        args = self.args('transfer', extra_test={'hela': [], 'sim': ['02']})
+        args.train_videos, args.track_videos = ['sim/01'], ['hela/01', 'sim/02']
+        extra = extra_sequences(args)
+        self.assertEqual(extra, ['sim/01'])
+        (_, _, specs, track), = units(args, extra)
+        self.assertEqual(specs, ['sim/01'])
+        self.assertEqual([t[0] for t in track][-2:], ['hela/01', 'sim/02'])
+        self.assertEqual([t[1] for t in track][-2:], ['hela', 'sim'])
+        self.assertEqual(str(track[-1][2]('gnn_division')), str(Path('out') / 'sim' / 'gnn_division'))
+
+    def test_cv_with_chosen_videos_trains_on_them_and_tracks_scripta_only(self):
+        args = self.args('cv')
+        args.train_videos = ['sim/01', 'sim/02']
+        extra = extra_sequences(args)
+        for k, (_, _, specs, track) in enumerate(units(args, extra)):
+            self.assertEqual([s for s in specs if not s.startswith('scr/')], ['sim/01', 'sim/02'])
+            self.assertEqual([t[0] for t in track], [f'scr/{w}' for w in FOLDS[k]])
+
     def test_final_tracks_unseen_datasets_without_training_on_them(self):
         args = self.args('final', unseen=['hela'])
         args.extra, args.extra_roots = ['sim'], {'sim': self.roots['sim']}
