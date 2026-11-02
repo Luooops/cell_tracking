@@ -24,7 +24,7 @@ import style
 from utils.ctc import sequence
 from utils.lineage import UNKNOWN_OFFSET, read_lineage
 
-ROWS = [('gt', 'Ground truth'), ('ours', 'GapLink'), ('ta_ft', 'Trackastra ft')]
+ROWS = [('gt', 'Ground truth'), ('ours', 'ProGCT'), ('ta_ft', 'Trackastra ft')]
 FRAMES = 4                  # shown frames t0 .. t0+3
 CROP = (300, 450)           # rows, cols (pixels)
 EDGE_WIDTH = 4             # contour width (pixels of the 2160 x 2160 image)
@@ -200,7 +200,7 @@ def main():
                 ax.set_ylabel(title, fontsize=7)
     handles = [plt.Line2D([], [], ls='', marker='x', ms=5, mew=1.4, color='#FF2020', label='false link'),
                plt.Line2D([], [], ls='', marker='o', ms=6, mfc='none', mew=1.2, color='#FF2020', label='missed link'),
-               plt.Line2D([], [], ls='', marker='$p$', ms=5, color='#C9A800', label='uncertain link of GapLink (p)')]
+               plt.Line2D([], [], ls='', marker='$p$', ms=5, color='#C9A800', label='uncertain link of ProGCT (p)')]
     fig.legend(handles=handles, loc='lower center', ncol=3, bbox_to_anchor=(0.53, 0.0))
 
     lines = [f'Figure 4. Test well {well}, frames {frames[0]}-{frames[-1]}, crop rows {y0}-{y0 + CROP[0]}, '

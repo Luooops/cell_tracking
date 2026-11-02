@@ -11,7 +11,7 @@ import style
 
 PAIRED = ['ours', 'ta_ft_div', 'ta_zs_div', 'ta_ft', 'ta_zs']
 TEST = ['ours', 'binary', 'ta_ft_div', 'ta_zs_div', 'ta_ft', 'ta_zs', 'ctgnn0', 'ctgnn1', 'classical']
-SHORT = {'ours': 'GapLink', 'binary': 'GapLink, binary', 'ta_ft_div': 'TA ft', 'ta_zs_div': 'TA zs', 'ta_ft': 'TA ft‡',
+SHORT = {'ours': 'ProGCT', 'binary': 'ProGCT, binary', 'ta_ft_div': 'TA ft', 'ta_zs_div': 'TA zs', 'ta_ft': 'TA ft‡',
          'ta_zs': 'TA zs‡', 'ctgnn0': 'CT-GNN s0', 'ctgnn1': 'CT-GNN s1', 'classical': 'Classical‡'}
 
 

@@ -26,7 +26,7 @@ GROUPS = [('hela', MOTHER_DAUGHTER, 'HeLa, mother-daughter', '#C8553D', '-'),
           ('scripta', SAME_CELL, 'Scripta, same cell', '#3B6FB6', '-'),
           ('scripta_t1', SAME_CELL, 'Scripta, same cell,\nmodel trained on HeLa only', '#7FA7D9', '--')]
 COUNTED = ['ours', 't1', 'binary', 'ta_ft_div', 'ta_zs_div', 'ctgnn0', 'ctgnn1']
-SHORT = {'ours': 'GapLink', 't1': 'GapLink,\nHeLa only', 'binary': 'GapLink,\nbinary', 'ta_ft_div': 'TA ft',
+SHORT = {'ours': 'ProGCT', 't1': 'ProGCT,\nHeLa only', 'binary': 'ProGCT,\nbinary', 'ta_ft_div': 'TA ft',
          'ta_zs_div': 'TA zs', 'ctgnn0': 'CT-GNN s0', 'ctgnn1': 'CT-GNN s1'}
 THRESHOLD = 0.5                    # the division threshold of the tracker (track.DIV_THRESH)
 

@@ -15,8 +15,8 @@ GRID = '#E6E6E6'
 
 # label, colour (fixed for every figure)
 METHODS = {
-    'ours': ('GapLink', '#3B6FB6'),
-    'binary': ('GapLink, binary', '#8FB3E3'),
+    'ours': ('ProGCT', '#3B6FB6'),
+    'binary': ('ProGCT, binary', '#8FB3E3'),
     # Trackastra links with or without divisions as the user chooses: 'div' = greedy (divisions allowed, not told
     # whether the data has any: the setting of our model); no div. = greedy_nodiv (told that scripta has none)
     'ta_ft_div': ('Trackastra ft', '#C2452D'),
@@ -29,7 +29,7 @@ METHODS = {
     'ctgnn0': ('CellTrack-GNN s0', '#9C7FCB'),
     'ctgnn1': ('CellTrack-GNN s1', '#C5B3E6'),
     'classical': ('Classical', '#A6A6A6'),
-    't1': ('GapLink, HeLa only', '#7FA7D9'),
+    't1': ('ProGCT, HeLa only', '#7FA7D9'),
     'noapp': ('No appearance', '#A8D8C0'),
     'novel': ('No velocity', '#F0B8C0'),
     'base': ('No TTA', '#B8C9E8'),
