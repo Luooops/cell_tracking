@@ -96,6 +96,11 @@ def centroids(mask):
     return out
 
 
+def centroids_full(mask):
+    """{label: (x, y)} of every cell of the frame (full-frame pixels)."""
+    return {r.label: (r.centroid[1], r.centroid[0]) for r in regionprops(mask)}
+
+
 def all_positions():
     pos = {}
     for t in range(T - 4, T + 6):
@@ -128,47 +133,61 @@ def panel_a(fig, ax):
     ax.text(13.2, 39.5, 'velocities: GT (training),\nown links so far (inference)', fontsize=4.8,
             color=SOFT, va='center', style='italic', linespacing=1.1)
 
-    # graph of the same window: nodes at the real centroids, candidate edges inside the real gating radius
+    # graph around ONE cell i of frame t (real centroids, real gating radius): its candidate edges to the frame-(t+g)
+    # cells inside r*sqrt(g), its same-frame kNN context; every other cell faded, without edges
     frames, pos = all_positions()
     r = gating_radius(frames, pos, T)[0]
-    p0, p1 = centroids(m0), centroids(m1)
-    s, X0, Y0, S = BOX[2], 1.5, 4.6, 38.5        # window -> canvas: x mm = X0 + px / s * S (y flipped)
-    to = lambda p: (X0 + p[0] / s * S, Y0 + S * 0.85 - p[1] / s * S * 0.85)
-    ax.add_patch(Rectangle((X0, Y0), S, S * 0.85, fc='white', ec=GRIDC, lw=0.4, zorder=1))
-    l0, l1 = list(p0), list(p1)
-    q0, q1 = np.array([p0[k] for k in l0]), np.array([p1[k] for k in l1])
-    for q, offset in ((q0, 0), (q1, 1)):          # same-frame kNN context edges (k = 4 in the model; 2 drawn)
-        _, idx = cKDTree(q).query(q, k=3)
-        for i, js in enumerate(idx):
-            for j in js[1:]:
-                ax.add_line(plt.Line2D(*zip(to(q[i]), to(q[j])), color='#C9C9C9', lw=0.35, ls=(0, (1.5, 1.2)),
-                                       zorder=2))
-    focus = int(np.argmin(np.hypot(*(q0 - s / 2).T)))
-    for i in range(len(q0)):
-        d = np.hypot(*(q1 - q0[i]).T)
-        for j in np.where(d < r)[0]:
-            same = l0[i] == l1[j]
-            hl = i == focus
-            ax.add_line(plt.Line2D(*zip(to(q0[i]), to(q1[j])), color=INK if hl else '#8C8C8C',
-                                   lw=0.75 if hl else 0.45, zorder=3, alpha=1 if (hl or same) else 0.8))
-    c = to(q0[focus])
-    ax.add_patch(Circle(c, r / s * S * 0.92, fc='none', ec=C_T, lw=0.5, ls=(0, (2, 1.2)), zorder=2))
-    R, ang = r / s * S * 0.92, np.deg2rad(250)
-    tip = (c[0] + R * np.cos(ang), c[1] + R * np.sin(ang))
-    ax.add_line(plt.Line2D([c[0], tip[0]], [c[1], tip[1]], color=C_T, lw=0.5, zorder=4))
-    ax.text(tip[0] - 0.6, tip[1] + 2.2, r'$r\sqrt{g}$', fontsize=6, color=C_T, zorder=6, ha='right', va='center',
-            bbox=dict(fc='white', ec='none', pad=0.2))
-    for q, col, fc in ((q0, C_T, C_T), (q1, C_N, 'white')):
-        for p in q:
-            ax.add_patch(Circle(to(p), 0.85, fc=fc, ec=col, lw=0.7, zorder=4))
-    # legend
-    ly = 1.3
-    ax.add_patch(Circle((2.5, ly + 0.3), 0.7, fc=C_T, ec=C_T, lw=0.6)); ax.text(3.7, ly + 0.3, '$t$', va='center', fontsize=5.5)
-    ax.add_patch(Circle((7.0, ly + 0.3), 0.7, fc='white', ec=C_N, lw=0.6)); ax.text(8.2, ly + 0.3, '$t{+}g$', va='center', fontsize=5.5)
-    ax.add_line(plt.Line2D([13.5, 16.5], [ly + 0.3] * 2, color='#8C8C8C', lw=0.5))
-    ax.text(17.1, ly + 0.3, 'candidate', va='center', fontsize=5.5)
-    ax.add_line(plt.Line2D([27.5, 30.5], [ly + 0.3] * 2, color='#C9C9C9', lw=0.5, ls=(0, (1.5, 1.2))))
-    ax.text(31.1, ly + 0.3, 'kNN context', va='center', fontsize=5.5)
+    f0, f1 = centroids_full(m0), centroids_full(m1)
+    y0, x0, s = BOX
+    centre = np.array([x0 + s / 2, y0 + s / 2])
+    focus = min(f0, key=lambda k: np.hypot(*(np.array(f0[k]) - centre)))
+    pi = np.array(f0[focus])
+    half = 1.75 * r                                     # shown square: focal cell +- half (pixels)
+    X0, Y0, S = 1.5, 5.0, 28.0                         # canvas square (mm)
+    to = lambda p: (X0 + (p[0] - pi[0] + half) / (2 * half) * S, Y0 + (pi[1] - p[1] + half) / (2 * half) * S)
+    inside = lambda p: max(abs(p[0] - pi[0]), abs(p[1] - pi[1])) < half * 0.95
+    ax.add_patch(Rectangle((X0, Y0), S, S, fc='white', ec=GRIDC, lw=0.4, zorder=1))
+    others0 = {k: p for k, p in f0.items() if k != focus and inside(p)}
+    shown1 = {k: p for k, p in f1.items() if inside(p)}
+    cand = [k for k, p in shown1.items() if np.hypot(*(np.array(p) - pi)) < r]
+    rad = r / (2 * half) * S
+    c = to(pi)
+    ax.add_patch(Circle(c, rad, fc='#EEF3FA', ec=C_T, lw=0.6, ls=(0, (2.5, 1.2)), zorder=1.5))
+    # kNN context of i in frame t (the model uses k = 4 in each frame)
+    near = sorted(others0, key=lambda k: np.hypot(*(np.array(others0[k]) - pi)))[:4]
+    for k in near:
+        ax.add_line(plt.Line2D(*zip(c, to(others0[k])), color='#9E9E9E', lw=0.5, ls=(0, (1.5, 1.2)), zorder=2))
+    for k in cand:
+        arrow(ax, c, to(shown1[k]), color=INK, lw=0.8, ms=4.5, z=3)
+    for k, p in others0.items():
+        ax.add_patch(Circle(to(p), 0.9, fc='#AFC4E3', ec='#AFC4E3', lw=0.6, zorder=4))
+    for k, p in shown1.items():
+        on = k in cand
+        ax.add_patch(Circle(to(p), 1.05 if on else 0.9, fc='white', ec=C_N if on else '#A8D5CF', lw=0.9 if on else 0.6,
+                            zorder=4))
+    ax.add_patch(Circle(c, 1.3, fc=C_T, ec=C_T, lw=0.6, zorder=5))
+    ax.text(c[0] - 1.6, c[1] + 1.4, '$i$', fontsize=6.5, color=C_T, ha='right', zorder=6, weight='bold')
+    # radius marker
+    ang = np.deg2rad(195)
+    tip = (c[0] + rad * np.cos(ang), c[1] + rad * np.sin(ang))
+    ax.add_line(plt.Line2D([c[0], tip[0]], [c[1], tip[1]], color=C_T, lw=0.5, zorder=3))
+    ax.text((c[0] + tip[0]) / 2 - 0.5, (c[1] + tip[1]) / 2 - 1.7, r'$r\sqrt{g}$', fontsize=5.5, color=C_T, zorder=6,
+            ha='center', va='center', bbox=dict(fc='#EEF3FA', ec='none', pad=0.1))
+    # key to the right of the square
+    kx, ky = X0 + S + 1.4, Y0 + S - 2.0
+    items = [(lambda y: ax.add_patch(Circle((kx + 0.9, y), 1.0, fc=C_T, ec=C_T, lw=0.6)), 'cell $i$ ($t$)'),
+             (lambda y: ax.add_patch(Circle((kx + 0.9, y), 0.85, fc='white', ec=C_N, lw=0.8)), 'cells ($t{+}g$)'),
+             (lambda y: arrow(ax, (kx, y), (kx + 2.0, y), color=INK, lw=0.8, ms=4), 'candidate\nedges'),
+             (lambda y: ax.add_line(plt.Line2D([kx, kx + 2.0], [y, y], color='#9E9E9E', lw=0.5, ls=(0, (1.5, 1.2)))),
+              'kNN\ncontext')]
+    for k, (draw, text) in enumerate(items):
+        y = ky - (0, 4.2, 8.4, 14.0)[k]
+        draw(y)
+        multi = '\n' in text
+        ax.text(kx + 2.6, y + (1.0 if multi else 0), text, fontsize=4.8, va='top' if multi else 'center',
+                linespacing=1.1)
+    ax.text(X0 + S / 2, Y0 - 1.0, 'one cell shown; built for every cell', ha='center', va='top', fontsize=4.8,
+            color=SOFT, style='italic')
     return r
 
 
@@ -328,14 +347,15 @@ def main():
     panel_d(ax, xd)
     for x in (xb - 1.5, xc - 1.0, xd - 1.8):
         ax.add_line(plt.Line2D([x, x], [1.5, H - 1.5], color=GRIDC, lw=0.4))
-    arrow(ax, (41.0, 28.0), (xb - 0.3, 28.0), lw=0.9, ms=6)                     # graph -> network
+    arrow(ax, (41.4, 57.0), (xb - 0.3, 57.0), lw=0.9, ms=6)                     # graph -> network
     arrow(ax, (end_b - 4.0, 43.0), (xc + 1.6, 44.2), lw=0.9, ms=6)              # edge posteriors -> averaging
     arrow(ax, (end_c - 1.0, 28.0), (xd - 0.3, 25.0), lw=0.9, ms=6)              # averaged posterior -> solver
 
     legend = f"""Figure 0. Method overview (schematic; image, detections and gating radius real).
 a: scripta refine2, dev well {WELL}, frames {T} and {T + 1}, window rows {BOX[0]}-{BOX[0] + BOX[2]}, cols {BOX[1]}-{BOX[1] + BOX[2]};
    candidate edges = pairs closer than the adaptive gating radius r = {r:.1f} px (g = 1; r*sqrt(g) for gaps);
-   dotted = same-frame nearest neighbours (the model uses k = 4, 2 are drawn). Highlighted: the candidates of one cell.
+   the graph is drawn around one cell i only: its candidate edges (arrows) to the frame-(t+g) cells inside r, and its
+   4 same-frame nearest neighbours (dotted, kNN context); other cells faded. The model builds this for every cell.
 b: TrackerGNN3 (models/gnn_bayesian/model.py on models/gnn_tracking/model.py): AppearanceNet 3 conv blocks -> 32-d unit
    embedding; node features 8 + 32; edge features 13 geometric + 3 appearance; 2 attention layers, 4 heads, hidden 64;
    edge MLP -> softmax over unrelated / same / division. Loss: cross-entropy without class weights + contrastive
