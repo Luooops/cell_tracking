@@ -5,7 +5,7 @@ import data
 import style
 
 OURS = '\\method{}'                 # method and dataset names are macros of the paper's preamble
-TEST = [('ours', OURS), ('binary', OURS + ', binary'),
+TEST = [('ours', OURS), ('binary', OURS + ', binary'), ('ta_ft_div', 'Trackastra ft'), ('ta_zs_div', 'Trackastra zs'),
         ('ta_ft', 'Trackastra ft$^\\ddagger$'), ('ta_zs', 'Trackastra zs$^\\ddagger$'),
         ('ctgnn0', 'CellTrack-GNN s0'), ('ctgnn1', 'CellTrack-GNN s1'), ('classical', 'Classical$^\\ddagger$')]
 # the short names (ft fine-tuned, zs zero-shot, s0/s1 training seeds) keep the tables inside one column
@@ -31,6 +31,34 @@ def table(rows, columns, caption, label, lead=('Method',), colsep=4):
     return '\n'.join(out)
 
 
+def divmode():
+    """Test wells, each method linked without and with divisions (ours: its two tracking modes, which give the same
+    result; Trackastra: greedy_nodiv and greedy), and the false divisions with divisions allowed."""
+    keys = [('ours', 'ours_nodiv', OURS), ('binary', 'binary_nodiv', OURS + ', binary'),
+            ('ta_ft_div', 'ta_ft', 'Trackastra ft'), ('ta_zs_div', 'ta_zs', 'Trackastra zs')]
+    cols = [('LNK0', 'LNK', None, max, 4), ('CT0', 'CT', None, max, 3), ('LNK1', 'LNK', None, max, 4),
+            ('CT1', 'CT', None, max, 3), ('div', 'Div.', None, min, 0)]
+    rows = []
+    for div, nodiv, name in keys:
+        told, free = (data.scripta_wells(k, data.TEST_WELLS) for k in (nodiv, div))
+        rows.append((name, dict(LNK0=told.LNK.mean(), CT0=told.CT.mean(), LNK1=free.LNK.mean(), CT1=free.CT.mean(),
+                                div=data.test_divisions(div)['divisions'])))
+    text = table(rows, cols, '\\textbf{Telling the tracker that there are no divisions} (\\ds{} test wells, no divisions '
+                 'in the ground truth). No divisions: our no-division tracking mode; Trackastra '
+                 '\\texttt{greedy\\_nodiv}. Divisions allowed: our division mode; Trackastra \\texttt{greedy}. Div.: '
+                 'false divisions with divisions allowed. ' + OURS + ' gives the same result either way, so it '
+                 'needs no division switch.', 'tab:divmode')
+    return text.replace(' & LNK & CT & LNK & CT & Div. \\\\',
+                        ' & \\multicolumn{2}{c}{No divisions} & \\multicolumn{3}{c}{Divisions allowed} \\\\\n'
+                        '\\cmidrule(lr){2-3}\\cmidrule(lr){4-6}\nMethod & LNK & CT & LNK & CT & Div. \\\\', 1) \
+        .replace('Method & \\multicolumn', ' & \\multicolumn', 1)
+
+
+def tex_p(p):
+    mantissa, exponent = f'{p:.1e}'.split('e')
+    return f'{mantissa}\\times10^{{{int(exponent)}}}'
+
+
 def summary(t, columns):
     return {c: (t[c].mean() if how == 'mean' else t[c].sum()) for c, _, how, _, _ in columns}
 
@@ -46,22 +74,32 @@ def main():
                        'summed over wells. Div.: false divisions (a mother with exactly two daughters; the ground '
                        f'truth has none); CellTrack-GNN also gives {divisions["ctgnn0"]["invalid"]} / '
                        f'{divisions["ctgnn1"]["invalid"]} mothers three or more daughters. ' + OURS + ' is never '
-                       'told whether a dataset has divisions. $^\\ddagger$Run without divisions (Trackastra '
+                       'told whether a dataset has divisions; unmarked Trackastra rows link with divisions allowed '
+                       '(\\texttt{greedy}), the same setting. $^\\ddagger$Told that there are no divisions (Trackastra '
                        '\\texttt{greedy\\_nodiv}; the classical tracker never divides). ft: fine-tuned; zs: zero-shot; '
                        's0, s1: training seeds.', 'tab:test', colsep=3))
-    keys = [('ours', OURS), ('ta_ft', 'Trackastra fine-tuned'), ('ta_zs', 'Trackastra zero-shot')]
+    keys = [('ours', OURS), ('ta_ft_div', 'Trackastra fine-tuned'), ('ta_zs_div', 'Trackastra zero-shot'),
+            ('ta_ft', 'Trackastra fine-tuned$^\\ddagger$'), ('ta_zs', 'Trackastra zero-shot$^\\ddagger$')]
     cols15 = [c for c in COLUMNS if c[0] != 'AOGM_EC']
-    rows = [(name, summary(data.scripta_wells(k, data.all_wells()), cols15)) for k, name in keys]
-    parts.append(table(rows, cols15, 'All 15 \\ds{} wells: 12 development wells out-of-fold (3 folds) and the 3 test '
-                       'wells with the final models. Ours is higher than both Trackastra variants in LNK and CT on '
-                       'every well (Wilcoxon $p = 6\\times10^{-5}$).', 'tab:all15'))
+    wells = data.all_wells()
+    rows = [(name, {**summary(data.scripta_wells(k, wells), cols15), 'div': data.scripta_divisions(k, wells)['divisions']})
+            for k, name in keys]
+    worst = {m: max(data.paired(data.scripta_wells('ours', wells)[m], data.scripta_wells(k, wells)[m])['p']
+                    for k, _ in keys[1:]) for m in ('LNK', 'CT')}
+    parts.append(table(rows, cols15 + [DIV], 'All 15 \\ds{} wells: 12 development wells out-of-fold (3 folds) and the '
+                       '3 test wells with the final models. Div.: false divisions. Ours is higher than all four '
+                       'Trackastra variants in LNK and CT on every well (Wilcoxon, largest '
+                       f'$p = {tex_p(worst["LNK"])}$ / ${tex_p(worst["CT"])}$). Unmarked: divisions allowed '
+                       '(\\texttt{greedy}); $^\\ddagger$told that there are no divisions (\\texttt{greedy\\_nodiv}).',
+                       'tab:all15'))
     hela_cols = [('LNK', 'LNK', 'mean', max, 3), ('CT', 'CT', 'mean', max, 3), ('BC(0)', 'BC', 'mean', max, 3),
                  ('div_recall', 'Recall', 'mean', max, 3), ('fp_div(0)', 'FP', 'sum', min, 0)]
     rows = []
-    for k, name in (('ours', OURS), ('ta_zs', 'Trackastra zs'), ('ta_zs_ctc', 'Trackastra ctc$^\\dagger$')):
+    for k, name in (('ours', OURS), ('ta_zs_div', 'Trackastra zs'), ('ta_zs_ctc', 'Trackastra ctc$^\\dagger$')):
         t = data.hela_wells(k)
         for seq in t.index:
             rows.append((f'{name} & {seq}', {c: t.loc[seq, c] for c, *_ in hela_cols}))
+    parts.append(divmode())
     parts.append(table(rows, hela_cols, 'Fluo-N2DL-HeLa, per sequence (Seq.). BC and division recall at tolerance 0; '
                        'FP: false divisions. ' + OURS + ': trained on \\ds{} and the other sequence (LOSO). '
                        'Trackastra zs: \\texttt{general\\_2d}, not trained on HeLa. '

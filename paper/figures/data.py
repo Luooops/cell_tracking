@@ -29,10 +29,15 @@ CTC_ROWS = {
     'ours': [('C ours final (division mode)', 'test'), ('ours f001 + TTA (OOF, division mode)', 'dev_oof')],
     'ta_ft': [('F Trackastra fine-tuned', 'test'), ('Trackastra fine-tuned (OOF)', 'dev_oof')],
     'ta_zs': [('E Trackastra zero-shot general_2d', None)],
+    'ta_ft_div': [('F Trackastra fine-tuned (greedy)', 'test'), ('Trackastra fine-tuned (OOF, greedy)', 'dev_oof')],
+    'ta_zs_div': [('E Trackastra zero-shot general_2d (greedy)', None)],
+    't1': [('T1 ours trained on HeLa only', None)],
     'ta_zs_ctc': [('Trackastra zero-shot ctc', None)],
     'ta_ft_dt3': [('Trackastra ft_final delta_t 3', 'test')] + [(f'Trackastra ft_fold{k} delta_t 3', 'dev_oof') for k in range(3)],
     'ta_zs_dt3': [('Trackastra zs_general_2d delta_t 3', None)],
     'binary': [('B binary edges (division mode)', 'test')],
+    'binary_nodiv': [('B binary edges', 'test')],               # the no-division mode (only for tab:divmode)
+    'ours_nodiv': [('C ours final', 'test')],
     'classical': [('D classical', 'test')],
     'ctgnn0': [('G CellTrack-GNN seed0', 'test')],
     'ctgnn1': [('G CellTrack-GNN seed1', 'test')],
@@ -42,7 +47,8 @@ CTC_ROWS = {
 }
 HELA_ROWS = {
     'ours': 'ours LOSO + TTA', 'base': 'ours LOSO, no TTA', 'noapp': 'ours LOSO, noappearance',
-    'novel': 'ours LOSO, novelocity', 'ta_zs': 'Trackastra zero-shot general_2d', 'ta_zs_ctc': 'Trackastra zero-shot ctc',
+    'novel': 'ours LOSO, novelocity', 'ta_zs_div': 'Trackastra zero-shot general_2d',   # HeLa runs: greedy
+    'ta_zs_ctc': 'Trackastra zero-shot ctc',
 }
 
 # method key -> folders of per-well track outputs (<folder>/<well>/instance_tracks.csv), first match wins
@@ -51,6 +57,9 @@ TRACKS = {
     'ours': ['scripta/C_ours_final/division', 'scripta/ours_cv_oof_tta/division'],
     'ta_ft': ['scripta/F_trackastra_ft/final/tracks'] + [f'scripta/F_trackastra_ft/fold{k}/tracks' for k in range(3)],
     'ta_zs': ['scripta/E_trackastra_zs_general_2d/tracks'],
+    'ta_ft_div': ['scripta/F_trackastra_ft_greedy/final/tracks'] + [f'scripta/F_trackastra_ft_greedy/fold{k}/tracks' for k in range(3)],
+    'ta_zs_div': ['scripta/E_trackastra_zs_general_2d_greedy/tracks'],
+    't1': ['scripta/T1_hela_only/test/division', 'scripta/T1_hela_only/dev/division'],
     'ta_ft_dt3': [f'{_DT3}/ft_final/tracks'] + [f'{_DT3}/ft_fold{k}/tracks' for k in range(3)],
     'ta_zs_dt3': [f'{_DT3}/zs_general_2d/tracks'],
 }
@@ -111,6 +120,8 @@ def track_folder(key, well):
 TEST_FOLDERS = {
     'ours': 'scripta/C_ours_final/division', 'binary': 'scripta/B_ours_binary/division',
     'ta_ft': 'scripta/F_trackastra_ft/final/tracks', 'ta_zs': 'scripta/E_trackastra_zs_general_2d/tracks',
+    'ta_ft_div': 'scripta/F_trackastra_ft_greedy/final/tracks', 'ta_zs_div': 'scripta/E_trackastra_zs_general_2d_greedy/tracks',
+    't1': 'scripta/T1_hela_only/test/division',
     'ctgnn0': 'scripta/G_celltrack_gnn/seed0/tracks', 'ctgnn1': 'scripta/G_celltrack_gnn/seed1/tracks',
     'classical': 'scripta/D_classical/tracks',
 }
@@ -126,6 +137,14 @@ def division_events(folder):
         return dict(divisions=0, invalid=0)
     children = Counter(json.loads(path.read_text(encoding='utf-8')).values()).values()
     return dict(divisions=sum(n == 2 for n in children), invalid=sum(n >= 3 for n in children))
+
+
+def scripta_divisions(key, wells):
+    """Divisions summed over the given scripta wells, from the folders of TRACKS (all of them false)."""
+    total = Counter()
+    for well in wells:
+        total.update(division_events(track_folder(key, well)))
+    return dict(divisions=total['divisions'], invalid=total['invalid'])
 
 
 def test_divisions(key):

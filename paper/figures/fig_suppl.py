@@ -51,7 +51,7 @@ def ablation():
 
 
 def hela():
-    keys = ['ours', 'ta_zs', 'ta_zs_ctc']
+    keys = ['ours', 'ta_zs_div', 'ta_zs_ctc']
     metrics = [('LNK', 'LNK'), ('CT', 'CT'), ('BC(0)', 'BC(0)'), ('div_recall', 'Division recall')]
     fig, ax = plt.subplots(figsize=(style.COLUMN, 50 * style.MM))
     fig.subplots_adjust(left=0.12, right=0.99, bottom=0.27, top=0.95)

@@ -17,14 +17,19 @@ GRID = '#E6E6E6'
 METHODS = {
     'ours': ('GapLink', '#3B6FB6'),
     'binary': ('GapLink, binary', '#8FB3E3'),
-    'ta_ft': ('Trackastra ft', '#E07B39'),
-    'ta_zs': ('Trackastra zs', '#F2B880'),
+    # Trackastra links with or without divisions as the user chooses: 'div' = greedy (divisions allowed, not told
+    # whether the data has any: the setting of our model); no div. = greedy_nodiv (told that scripta has none)
+    'ta_ft_div': ('Trackastra ft', '#C2452D'),
+    'ta_zs_div': ('Trackastra zs', '#EE9A86'),
+    'ta_ft': ('Trackastra ft, no div.', '#E07B39'),
+    'ta_zs': ('Trackastra zs, no div.', '#F2B880'),
     'ta_ft_dt3': ('Trackastra ft, $\\Delta t$=3', '#B5541E'),
     'ta_zs_dt3': ('Trackastra zs, $\\Delta t$=3', '#D9965A'),
     'ta_zs_ctc': ('Trackastra ctc', '#F7D9B8'),
     'ctgnn0': ('CellTrack-GNN s0', '#9C7FCB'),
     'ctgnn1': ('CellTrack-GNN s1', '#C5B3E6'),
     'classical': ('Classical', '#A6A6A6'),
+    't1': ('GapLink, HeLa only', '#7FA7D9'),
     'noapp': ('No appearance', '#A8D8C0'),
     'novel': ('No velocity', '#F0B8C0'),
     'base': ('No TTA', '#B8C9E8'),
