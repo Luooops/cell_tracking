@@ -51,19 +51,20 @@ def ablation():
 
 
 def hela():
-    keys = ['ours', 'ta_zs_div', 'ta_zs_ctc']
+    keys = ['ours', 'ta_ft_div', 'ta_zs_div', 'ta_zs_ctc']
     metrics = [('LNK', 'LNK'), ('CT', 'CT'), ('BC(0)', 'BC(0)'), ('div_recall', 'Division recall')]
     fig, ax = plt.subplots(figsize=(style.COLUMN, 50 * style.MM))
     fig.subplots_adjust(left=0.12, right=0.99, bottom=0.27, top=0.95)
-    width = 0.26
+    width = 0.2
     lines = ['Figure S2. HeLa (Fluo-N2DL-HeLa 01/02), CTC measures on fixed detections. Ours = LOSO (trained on the '
-             'other sequence + scripta) with TTA; Trackastra zero-shot general_2d (HeLa not in its training data); '
+             'other sequence + scripta) with TTA; Trackastra ft = fine-tuned from general_2d on the same data, '
+             'LOSO; Trackastra zero-shot general_2d (HeLa not in its training data); '
              'Trackastra ctc (hatched) was trained on all CTC GT including HeLa and is shown for reference only. '
              'Bars = mean of 01 and 02, dots = sequences. Division recall at tolerance 0 = tp / (tp + fn).']
     for j, k in enumerate(keys):
         t = data.hela_wells(k)
         for i, (col, _) in enumerate(metrics):
-            x = i + (j - 1) * width
+            x = i + (j - 1.5) * width
             ax.bar(x, t[col].mean(), width, color=style.color(k), edgecolor=style.EDGE, lw=0.3,
                    hatch='////' if k == 'ta_zs_ctc' else None, label=style.label(k) if i == 0 else None)
             ax.scatter([x - 0.05, x + 0.05], t[col].values, s=4, color='white', edgecolor='black', lw=0.3, zorder=3)

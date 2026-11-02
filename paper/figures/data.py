@@ -48,7 +48,7 @@ CTC_ROWS = {
 HELA_ROWS = {
     'ours': 'ours LOSO + TTA', 'base': 'ours LOSO, no TTA', 'noapp': 'ours LOSO, noappearance',
     'novel': 'ours LOSO, novelocity', 'ta_zs_div': 'Trackastra zero-shot general_2d',   # HeLa runs: greedy
-    'ta_zs_ctc': 'Trackastra zero-shot ctc',
+    'ta_zs_ctc': 'Trackastra zero-shot ctc', 'ta_ft_div': 'Trackastra fine-tuned LOSO',
 }
 
 # method key -> folders of per-well track outputs (<folder>/<well>/instance_tracks.csv), first match wins

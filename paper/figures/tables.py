@@ -95,14 +95,16 @@ def main():
     hela_cols = [('LNK', 'LNK', 'mean', max, 3), ('CT', 'CT', 'mean', max, 3), ('BC(0)', 'BC', 'mean', max, 3),
                  ('div_recall', 'Recall', 'mean', max, 3), ('fp_div(0)', 'FP', 'sum', min, 0)]
     rows = []
-    for k, name in (('ours', OURS), ('ta_zs_div', 'Trackastra zs'), ('ta_zs_ctc', 'Trackastra ctc$^\\dagger$')):
+    for k, name in (('ours', OURS), ('ta_ft_div', 'Trackastra ft'), ('ta_zs_div', 'Trackastra zs'),
+                    ('ta_zs_ctc', 'Trackastra ctc$^\\dagger$')):
         t = data.hela_wells(k)
         for seq in t.index:
             rows.append((f'{name} & {seq}', {c: t.loc[seq, c] for c, *_ in hela_cols}))
     parts.append(divmode())
     parts.append(table(rows, hela_cols, 'Fluo-N2DL-HeLa, per sequence (Seq.). BC and division recall at tolerance 0; '
                        'FP: false divisions. ' + OURS + ': trained on \\ds{} and the other sequence (LOSO). '
-                       'Trackastra zs: \\texttt{general\\_2d}, not trained on HeLa. '
+                       'Trackastra ft: fine-tuned from \\texttt{general\\_2d} on the same data, LOSO. '
+                       'Trackastra zs: \\texttt{general\\_2d}, not trained on HeLa. All link with divisions allowed. '
                        '$^\\dagger$The \\texttt{ctc} model, trained on all CTC ground truth including these '
                        'sequences.', 'tab:hela', lead=('Method', 'Seq.'), colsep=3))
     style.OUT.mkdir(parents=True, exist_ok=True)
