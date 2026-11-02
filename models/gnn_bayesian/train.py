@@ -19,6 +19,8 @@ stable=True (for training mixes with dense videos, e.g. DynamicNuclearNet, where
 the total gradient norm is clipped at CLIP, and a step whose loss or gradient norm is not finite is skipped (no update,
 no Adam state change). Off by default, so the models trained so far are reproduced exactly. Every epoch logs the
 median / max gradient norm (before clipping) and the skipped steps.
+lr: the constant learning rate (default gnn_tracking's LR = 1e-3). 5e-4 was piloted for the scripta + RAW264.7 mix,
+where the training loss rose 5-6% over the last epochs at 1e-3 (scripta + HeLa: at most 1.6%).
 n_classes=2 is the binary ablation 'linked or not': SAME and DIVISION are both positive (a daughter is a link of its
 mother), so gnn_division's solver can divide on two strong links; same data, augmentation and schedule.
 """
@@ -91,7 +93,7 @@ def active_bias_weights(u, eps, cap=AB_CAP):
     return w
 
 
-def train(specs, seed, cache, log=None, n_classes=3, active_bias=False, cosine=False, stable=False):
+def train(specs, seed, cache, log=None, n_classes=3, active_bias=False, cosine=False, stable=False, lr=LR):
     if log:
         print(f'  {log}: building training graphs for {len(specs)} videos', flush=True)
     graphs, counts = training_graphs(specs, cache, np.random.default_rng(seed))
@@ -105,7 +107,7 @@ def train(specs, seed, cache, log=None, n_classes=3, active_bias=False, cosine=F
         print(f'  {log}: {len(graphs)} graphs, known edges per dataset {edges}, division edges per dataset {div}',
               flush=True)
     history = PredictionHistory(sum(len(g.edge_class) for g in graphs), n_classes) if active_bias else None
-    opt = torch.optim.Adam(model.parameters(), lr=LR)
+    opt = torch.optim.Adam(model.parameters(), lr=lr)
     schedule = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=EPOCHS) if cosine else None
     t0 = time.time()
     for ep in range(EPOCHS):

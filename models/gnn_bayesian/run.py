@@ -20,7 +20,8 @@ datasets (default Fluo-N2DL-HeLa; any CTC dataset under data/ can be added with 
     transfer  the extra datasets only, no scripta (a model that has never seen scripta, so it cannot tell scripta has
             no divisions); every scripta well tracked: development wells -> <out>/dev/<tracker>/<well>/, test wells
             -> <out>/test/<tracker>/<well>/ (analysis: false divisions; nothing is tuned on them) (checkpoints transfer_)
-            --track-videos D/seq ... also tracks these, never trained on -> <out>/<D>/<tracker>/<sequence>/
+            --track-videos D/seq ... (transfer and final) also tracks these, never trained on
+            -> <out>/<D>/<tracker>/<sequence>/ (final: besides the declared test sequences it tracks anyway)
 --train-videos D/seq ... (any command) trains on these extra sequences only instead of every one (e.g. one cell line
 of a dataset). --stable (training) clips the gradient norm and skips non-finite steps (train.py).
     cache   fill <out>/cache with every video used (run it once before starting several processes on one root).
@@ -104,6 +105,9 @@ def units(args, extra):
     return [('final', 'final', dev + extra,
              [(f'{scripta}/{w}', scripta, lambda name: out / 'test' / name) for w in args.test_wells]
              + [(f'{d}/{seq}', d, lambda name, d=d: out / d / name) for d in args.extra for seq in args.extra_test[d]]
+             + [(spec, spec.split('/')[0], lambda name, d=spec.split('/')[0]: out / d / name)
+                for spec in getattr(args, 'track_videos', None) or []
+                if spec.split('/')[1] not in args.extra_test[spec.split('/')[0]]]
              + [(f'{d}/{seq}', d, lambda name, d=d: out / f'unseen_{d}' / name)
                 for d in args.unseen for seq in ctc_sequences(args.unseen_roots[d])])]
 
@@ -159,7 +163,8 @@ def _train_member(args, specs, cache, prefix, seed):
     if path.exists():
         raise FileExistsError(f'{path} exists')
     model = train(specs, seed, cache, log=f'{prefix} seed {seed}', n_classes=args.classes,
-                  active_bias=args.active_bias, cosine=args.cosine_lr, stable=args.stable)
+                  active_bias=args.active_bias, cosine=args.cosine_lr, stable=args.stable,
+                  **({'lr': args.lr} if args.lr else {}))
     path.parent.mkdir(parents=True, exist_ok=True)
     save(model, path)
     return model
@@ -195,7 +200,8 @@ def _train_on_gpus(args, todo):
               *(['--track-videos', *args.track_videos] if args.track_videos else []),
               '--classes', str(args.classes), '--output-root', str(args.output_root)] \
         + (['--dataset', args.dataset] if args.dataset else []) + (['--active-bias'] if args.active_bias else []) \
-        + (['--cosine-lr'] if args.cosine_lr else []) + (['--stable'] if args.stable else [])
+        + (['--cosine-lr'] if args.cosine_lr else []) + (['--stable'] if args.stable else []) \
+        + (['--lr', str(args.lr)] if args.lr else [])
     children = []
     for i, gpu in enumerate(args.gpus):
         share = todo[i::len(args.gpus)]
@@ -225,7 +231,7 @@ def run(args):
             extra_test={d: v for d, v in args.extra_test.items() if v}, unseen=args.unseen,
             track_videos=args.track_videos or [], seeds=args.seeds,
             folds=args.scripta_spec['folds'], test_wells=args.test_wells, classes=args.classes,
-            active_bias=args.active_bias, cosine_lr=args.cosine_lr, stable=args.stable,
+            active_bias=args.active_bias, cosine_lr=args.cosine_lr, stable=args.stable, lr=args.lr or 'default',
             created=datetime.datetime.now().isoformat(timespec='seconds'),
             scope=('3-way edges (unrelated / same / division)' if args.classes == 3 else 'binary edges (linked or not)')
             + ' trained on scripta + extra datasets; tracking options per video in metrics.json'),
@@ -264,7 +270,8 @@ def main(argv=None):
     parser.add_argument('--unseen', nargs='+', default=[], help='final: also track every sequence of these datasets '
                         '(not in --extra, so never trained on)')
     parser.add_argument('--train-videos', nargs='+', help='Train on these extra sequences only (D/seq)')
-    parser.add_argument('--track-videos', nargs='+', help='transfer: also track these sequences (D/seq, not trained on)')
+    parser.add_argument('--track-videos', nargs='+', help='transfer / final: also track these sequences (D/seq, not '
+                        'trained on)')
     parser.add_argument('--folds', nargs='+', type=int, default=[0, 1, 2], help='cv: folds to run')
     parser.add_argument('--held-out', nargs='+', help='loso: sequences to hold out (default: every sequence)')
     parser.add_argument('--seeds', nargs='+', type=int, default=[0, 1, 2])
@@ -275,6 +282,7 @@ def main(argv=None):
     parser.add_argument('--cosine-lr', action='store_true', help='Cosine learning-rate decay (training; not used)')
     parser.add_argument('--stable', action='store_true', help='Clip the gradient norm and skip non-finite steps '
                         '(training; for mixes with dense videos)')
+    parser.add_argument('--lr', type=float, help='Constant learning rate (training; default gnn_tracking LR 1e-3)')
     parser.add_argument('--prior', choices=['none', 'division'], default='none',
                         help="none: the network's own posterior; division: the dataset's division prior (analysis)")
     parser.add_argument('--tta', action='store_true', help='Also score the mirrored video and average')
@@ -310,8 +318,8 @@ def main(argv=None):
         args.held_out = args.held_out or sequences
         if missing := sorted(set(args.held_out) - set(sequences)):
             parser.error(f'{args.dataset} has no sequences {missing}')
-    if args.track_videos and args.command != 'transfer':
-        parser.error('--track-videos is for transfer')
+    if args.track_videos and args.command not in ('transfer', 'final'):
+        parser.error('--track-videos is for transfer and final')
     if args.train_videos:
         if missing := sorted(set(args.train_videos) - set(extra_sequences(argparse.Namespace(**{
                 **vars(args), 'train_videos': None})))):

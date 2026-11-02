@@ -100,6 +100,13 @@ class TestUnits(unittest.TestCase):
             self.assertEqual([s for s in specs if not s.startswith('scr/')], ['sim/01', 'sim/02'])
             self.assertEqual([t[0] for t in track], [f'scr/{w}' for w in FOLDS[k]])
 
+    def test_final_tracks_chosen_videos_once_besides_the_declared_test_sequences(self):
+        args = self.args('final', extra_test={'hela': [], 'sim': ['02']})
+        args.train_videos, args.track_videos = ['sim/01'], ['hela/01', 'sim/02']
+        (_, _, specs, track), = units(args, extra_sequences(args))
+        self.assertNotIn('hela/01', specs)
+        self.assertEqual([t[0] for t in track], ['scr/t1', 'scr/t2', 'sim/02', 'hela/01'])
+
     def test_final_tracks_unseen_datasets_without_training_on_them(self):
         args = self.args('final', unseen=['hela'])
         args.extra, args.extra_roots = ['sim'], {'sim': self.roots['sim']}

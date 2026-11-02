@@ -5,7 +5,7 @@ Training data for fine-tuning Trackastra on the data gnn_bayesian is trained on 
 new folder; data/ is only read.
 
 Every sequence used for training -- the scripta development wells (never the test wells) and every sequence of the
-extra datasets -- is written as a CTC sequence Trackastra's training script reads:
+extra datasets except their declared test sequences (only the --train-videos ones when given) -- is written as a CTC sequence Trackastra's training script reads:
     <out>/<dataset>/<seq>/t###.tif             hard links (copies where linking fails) of the raw images
     <out>/<dataset>/<seq>_GT/TRA/              utils/ctc_export.canonical_gt: gaps split into single-child segments
                                                (valid CTC, Trackastra follows the parent links across the gap) and
@@ -24,6 +24,8 @@ the unit trains on, taken out of its training set (a fixed rule, not tuned):
 --input_val); prepare.json records the sources and what canonical_gt removed.
 
     python -m models.trackastra.prepare_train --output-root development/stage4_trackastra/data
+    python -m models.trackastra.prepare_train --extra DynamicNuclearNet --train-videos DynamicNuclearNet/train60 ... \\
+        --output-root development/stage7_raw/trackastra_data
 """
 import argparse
 import json
@@ -69,6 +71,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--scripta', default='scripta_data_refine2', help='Dataset with folds and test wells')
     parser.add_argument('--extra', nargs='+', default=['Fluo-N2DL-HeLa'], help='Extra datasets (every sequence)')
+    parser.add_argument('--train-videos', nargs='+', help='Only these sequences of the extra datasets (<dataset>/<seq>)')
     parser.add_argument('--output-root', type=Path, required=True, help='New directory')
     args = parser.parse_args(argv)
     cfg, base = read_config()
@@ -81,11 +84,18 @@ def main(argv=None):
         parser.error('test wells appear in the folds')
     roots = {'scripta': (args.scripta, spec['root'], dev)}
     for name in args.extra:
-        root = resolve_dataset(cfg, base, name)['root']
-        roots[name] = (name, root, ctc_sequences(root))
+        extra_spec = resolve_dataset(cfg, base, name)
+        seqs = [s for s in ctc_sequences(extra_spec['root']) if s not in extra_spec['held_out']]
+        if args.train_videos:
+            seqs = [s for s in seqs if f'{name}/{s}' in args.train_videos]
+        roots[name] = (name, extra_spec['root'], seqs)
+    if args.train_videos and (missing := sorted(set(args.train_videos)
+                                                - {f'{n}/{s}' for n in args.extra for s in roots[n][2]})):
+        parser.error(f'not training sequences of --extra: {missing}')
     out = args.output_root
     out.mkdir(parents=True)                                   # refuses an existing folder
-    record = dict(scripta=args.scripta, extra=args.extra, test_wells_excluded=spec['held_out'], sequences={})
+    record = dict(scripta=args.scripta, extra=args.extra, train_videos=args.train_videos,
+                  test_wells_excluded=spec['held_out'], sequences={})
     for key, (name, root, seqs) in roots.items():
         for seq in seqs:
             info = write_sequence(root, seq, out / name)
