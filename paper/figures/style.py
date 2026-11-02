@@ -17,7 +17,6 @@ GRID = '#E6E6E6'
 METHODS = {
     'ours': ('GapLink', '#3B6FB6'),
     'binary': ('GapLink, binary', '#8FB3E3'),
-    'v003': ('GNN, Scripta only', '#B8C9E8'),
     'ta_ft': ('Trackastra ft', '#E07B39'),
     'ta_zs': ('Trackastra zs', '#F2B880'),
     'ta_ft_dt3': ('Trackastra ft, $\\Delta t$=3', '#B5541E'),

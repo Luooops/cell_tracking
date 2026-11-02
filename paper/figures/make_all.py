@@ -10,6 +10,7 @@ from pathlib import Path
 import data
 import style
 import fig_confidence
+import fig_division
 import fig_gaps
 import fig_main
 import fig_overview
@@ -32,6 +33,7 @@ def main():
     sys.argv = sys.argv[:1]                     # automatic region choice for figure 4
     fig_qualitative.main()
     fig_suppl.main()
+    fig_division.main(refresh=args.refresh)
     tables.main()
 
 

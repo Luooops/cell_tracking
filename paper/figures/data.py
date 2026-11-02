@@ -2,6 +2,8 @@
 
 Method keys are those of style.METHODS. The 15-well scripta comparison joins out-of-fold results on the 12 dev wells
 with the final model on the 3 test wells, for ours and for Trackastra ft; Trackastra zs ran on all 15 wells.
+Our model (and its binary ablation) is read in the division mode everywhere: it is never told whether a dataset has
+divisions. On scripta it divides nowhere and its CTC values equal those of the no-division mode well by well.
 """
 import json
 import sys
@@ -24,20 +26,19 @@ CACHE = Path(__file__).resolve().parent / 'out' / 'cache'
 
 # method key -> [(method name in ctc_per_well.csv, split or None for every split)]
 CTC_ROWS = {
-    'ours': [('C ours final', 'test'), ('ours f001 + TTA (OOF)', 'dev_oof')],
+    'ours': [('C ours final (division mode)', 'test'), ('ours f001 + TTA (OOF, division mode)', 'dev_oof')],
     'ta_ft': [('F Trackastra fine-tuned', 'test'), ('Trackastra fine-tuned (OOF)', 'dev_oof')],
     'ta_zs': [('E Trackastra zero-shot general_2d', None)],
     'ta_zs_ctc': [('Trackastra zero-shot ctc', None)],
     'ta_ft_dt3': [('Trackastra ft_final delta_t 3', 'test')] + [(f'Trackastra ft_fold{k} delta_t 3', 'dev_oof') for k in range(3)],
     'ta_zs_dt3': [('Trackastra zs_general_2d delta_t 3', None)],
-    'binary': [('B binary edges', 'test')],
-    'v003': [('A gnn_tracking v003', 'test')],
+    'binary': [('B binary edges (division mode)', 'test')],
     'classical': [('D classical', 'test')],
     'ctgnn0': [('G CellTrack-GNN seed0', 'test')],
     'ctgnn1': [('G CellTrack-GNN seed1', 'test')],
-    'base': [('ours f001, no TTA (OOF)', 'dev_oof')],
-    'noapp': [('ours OOF, noappearance', 'dev_oof')],
-    'novel': [('ours OOF, novelocity', 'dev_oof')],
+    'base': [('ours f001, no TTA (OOF, division mode)', 'dev_oof')],
+    'noapp': [('ours OOF, noappearance (division mode)', 'dev_oof')],
+    'novel': [('ours OOF, novelocity (division mode)', 'dev_oof')],
 }
 HELA_ROWS = {
     'ours': 'ours LOSO + TTA', 'base': 'ours LOSO, no TTA', 'noapp': 'ours LOSO, noappearance',
@@ -47,7 +48,7 @@ HELA_ROWS = {
 # method key -> folders of per-well track outputs (<folder>/<well>/instance_tracks.csv), first match wins
 _DT3 = 'scripta/supplementary_trackastra_dt3'
 TRACKS = {
-    'ours': ['scripta/C_ours_final/tracking', 'scripta/ours_cv_oof_tta/tracking'],
+    'ours': ['scripta/C_ours_final/division', 'scripta/ours_cv_oof_tta/division'],
     'ta_ft': ['scripta/F_trackastra_ft/final/tracks'] + [f'scripta/F_trackastra_ft/fold{k}/tracks' for k in range(3)],
     'ta_zs': ['scripta/E_trackastra_zs_general_2d/tracks'],
     'ta_ft_dt3': [f'{_DT3}/ft_final/tracks'] + [f'{_DT3}/ft_fold{k}/tracks' for k in range(3)],
@@ -104,6 +105,35 @@ def track_folder(key, well):
         if (FINAL / folder / well / 'instance_tracks.csv').is_file():
             return FINAL / folder / well
     raise FileNotFoundError(f'{key}: no output for {well}')
+
+
+# method key -> per-well folders on the scripta test wells (lineage.json: {daughter track: mother track})
+TEST_FOLDERS = {
+    'ours': 'scripta/C_ours_final/division', 'binary': 'scripta/B_ours_binary/division',
+    'ta_ft': 'scripta/F_trackastra_ft/final/tracks', 'ta_zs': 'scripta/E_trackastra_zs_general_2d/tracks',
+    'ctgnn0': 'scripta/G_celltrack_gnn/seed0/tracks', 'ctgnn1': 'scripta/G_celltrack_gnn/seed1/tracks',
+    'classical': 'scripta/D_classical/tracks',
+}
+
+
+def division_events(folder):
+    """Predicted divisions of one well folder, counted as utils.lineage reads lineage: a mother with exactly two
+    daughters is one division; one daughter is a continuation (not counted); three or more is no valid division
+    (counted apart). A folder without lineage.json (a tracker run without divisions) has none.
+    -> dict(divisions, invalid)."""
+    path = Path(folder) / 'lineage.json'
+    if not path.is_file():
+        return dict(divisions=0, invalid=0)
+    children = Counter(json.loads(path.read_text(encoding='utf-8')).values()).values()
+    return dict(divisions=sum(n == 2 for n in children), invalid=sum(n >= 3 for n in children))
+
+
+def test_divisions(key):
+    """Divisions summed over the scripta test wells (scripta has none in its ground truth: all are false)."""
+    total = Counter()
+    for well in TEST_WELLS:
+        total.update(division_events(FINAL / TEST_FOLDERS[key] / well))
+    return dict(divisions=total['divisions'], invalid=total['invalid'])
 
 
 def predicted_links(tracks):
