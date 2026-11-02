@@ -1,12 +1,12 @@
-"""Figure 5 (full width): does the model decide divisions from the cells or from recognising the dataset?
+"""Figure 5 (one column): does the model decide divisions from the cells or from recognising the dataset?
 Our model is never told whether a dataset has divisions.
 a  p_division of every adjacent-frame candidate edge (round 1, where divisions are decided), by the ground-truth
-   relation of the edge: share of the edges with p_division >= x (log axes). HeLa: LOSO + TTA (each sequence scored by
-   the model trained without it); scripta: 3-fold OOF + TTA on the 12 development wells (no divisions in the GT) of
-   our model and of the same model trained on HeLa only (never saw scripta, so it cannot know scripta has none).
-   A model that only recognised the dataset would raise p_division on every HeLa edge.
-b  HeLa: precision and recall of the edges with p_division >= x as mother -> daughter edges.
-c  false divisions on the scripta test wells (data.division_events) of every method that may divide."""
+   relation of the edge: share of the edges in each probability band, and the share >= tau_D. HeLa: LOSO + TTA (each
+   sequence scored by the model trained without it); scripta: 3-fold OOF + TTA on the 12 development wells (no
+   divisions in the GT) of our model and of the same model trained on HeLa only (never saw scripta, so it cannot know
+   scripta has none). A model that only recognised the dataset would raise p_division on every HeLa edge.
+   HeLa precision / recall at tau_D go to the legend text only.
+b  false divisions on the scripta test wells (data.division_events) of every method that may divide."""
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -21,14 +21,17 @@ SOURCES = {                       # population -> (folders in final_results, dat
     'scripta': (['scripta/ours_cv_oof_tta/division'], data.SCRIPTA),
     'scripta_t1': (['scripta/T1_hela_only/dev/division'], data.SCRIPTA),
 }
-GROUPS = [('hela', MOTHER_DAUGHTER, 'HeLa, mother-daughter', '#C8553D', '-'),
-          ('hela', SAME_CELL, 'HeLa, same cell', '#2A9D8F', '-'),
-          ('scripta', SAME_CELL, 'Scripta, same cell', '#3B6FB6', '-'),
-          ('scripta_t1', SAME_CELL, 'Scripta, same cell,\nmodel trained on HeLa only', '#7FA7D9', '--')]
+ROWS = [('hela', MOTHER_DAUGHTER, 'HeLa, mother$\\rightarrow$daughter'),
+        ('hela', SAME_CELL, 'HeLa, same cell'),
+        ('scripta', SAME_CELL, 'Scripta, same cell'),
+        ('scripta_t1', SAME_CELL, 'Scripta, same cell,\nmodel trained on HeLa only')]
 COUNTED = ['ours', 't1', 'binary', 'ta_ft_div', 'ta_zs_div', 'ctgnn0', 'ctgnn1']
-SHORT = {'ours': 'ProGCT', 't1': 'ProGCT,\nHeLa only', 'binary': 'ProGCT,\nbinary', 'ta_ft_div': 'TA ft',
-         'ta_zs_div': 'TA zs', 'ctgnn0': 'CT-GNN s0', 'ctgnn1': 'CT-GNN s1'}
+SHORT = {'ours': 'ProGCT', 't1': 'ProGCT, HeLa only', 'binary': 'ProGCT, binary', 'ta_ft_div': 'Trackastra ft',
+         'ta_zs_div': 'Trackastra zs', 'ctgnn0': 'CellTrack-GNN s0', 'ctgnn1': 'CellTrack-GNN s1'}
 THRESHOLD = 0.5                    # the division threshold of the tracker (track.DIV_THRESH)
+ACCENT = '#C8553D'
+BANDS = [(0, 1e-4, '<10$^{-4}$', '#ECECEC'), (1e-4, 1e-2, '10$^{-4}$–10$^{-2}$', '#C9C9C9'),
+         (1e-2, THRESHOLD, '10$^{-2}$–$\\tau_D$', '#8F8F8F'), (THRESHOLD, np.inf, '$\\geq\\tau_D$', ACCENT)]
 
 
 def edges(refresh=False):
@@ -58,75 +61,88 @@ def edges(refresh=False):
     return table
 
 
+def share_text(share):
+    return '0' if share == 0 else f'{share:.0%}' if share >= 0.1 else f'{share:.2%}'
+
+
 def main(refresh=False):
     style.setup()
     table = edges(refresh)
-    fig = plt.figure(figsize=(style.FULL, 50 * style.MM))
-    gs = fig.add_gridspec(1, 3, width_ratios=[1.15, 0.85, 1.3], left=0.075, right=0.995, bottom=0.25, top=0.93,
-                          wspace=0.38)
-    ax_s, ax_pr, ax_c = (fig.add_subplot(gs[0, i]) for i in range(3))
+    fig = plt.figure(figsize=(style.COLUMN, 66 * style.MM))
+    gs = fig.add_gridspec(2, 1, height_ratios=[1, 1.3], left=0.35, right=0.87, bottom=0.115, top=0.875, hspace=0.6)
+    ax_a, ax_b = fig.add_subplot(gs[0]), fig.add_subplot(gs[1])
 
-    x = np.logspace(-6, 0, 200)
-    lines = ['Figure 5. Divisions are decided from the cells, not from recognising the dataset. Our model is never '
-             'told whether a dataset has divisions.',
-             'a: p_division of every adjacent-frame candidate edge (round 1, where divisions are decided), by the '
-             'ground-truth relation of the edge; share of edges with p_division >= x. HeLa: LOSO + TTA (each sequence '
-             'scored by the model trained without it). Scripta: 12 development wells, 3-fold OOF + TTA (no divisions '
-             'in the GT), of our model and of the same model trained on HeLa only (never saw scripta). Edges whose '
-             'relation is unknown (unlabelled detections) are left out.',
-             f'  Share >= {THRESHOLD} (the division threshold) and the largest value:']
-    for population, relation, name, colour, ls in GROUPS:
+    lines = ['Figure 5 (one column). Divisions are decided from the cells, not from recognising the dataset. Our model '
+             'is never told whether a dataset has divisions.',
+             'a: d (p_division) of every adjacent-frame candidate edge (round 1, where divisions are decided), by the '
+             'ground-truth relation of the edge, as the share of edges in each probability band; right: share >= '
+             'tau_D. HeLa: LOSO + TTA (each sequence scored by the model trained without it). Scripta: 12 development '
+             'wells, 3-fold OOF + TTA (no divisions in the GT), of our model and of the same model trained on HeLa '
+             'only (never saw scripta). Edges whose relation is unknown (unlabelled detections) are left out.']
+    for r, (population, relation, name) in enumerate(ROWS):
         p = table.p_div[(table.population == population) & (table.relation == relation)].to_numpy()
-        share = np.array([(p >= v).mean() for v in x])
-        ax_s.plot(x, np.where(share > 0, share, np.nan), color=colour, ls=ls, lw=0.9, label=name)
+        left = 0.0
+        for lo, hi, _, colour in BANDS:
+            share = ((p >= lo) & (p < hi)).mean()
+            ax_a.barh(r, share, left=left, height=0.64, color=colour, lw=0)
+            left += share
+        above = (p >= THRESHOLD).mean()
+        ax_a.text(1.04, r, share_text(above), transform=ax_a.get_yaxis_transform(), ha='left', va='center',
+                  fontsize=6, color=ACCENT if above >= 0.1 else 'black', fontweight='bold' if above >= 0.1 else 'normal')
         lines.append(f'  {name.replace(chr(10), " ")}: {len(p)} edges, {(p >= THRESHOLD).sum()} >= {THRESHOLD} '
-                     f'({(p >= THRESHOLD).mean():.3%}), max {p.max():.3g}')
+                     f'({above:.3%}), max {p.max():.3g}')
     for population in SOURCES:
         p = table.p_div[(table.population == population) & (table.relation == UNRELATED)].to_numpy()
         lines.append(f'  {population}, unrelated edges: {len(p)}, {(p >= THRESHOLD).sum()} >= {THRESHOLD}, '
                      f'max {p.max():.3g}')
-    ax_s.axvline(THRESHOLD, color='#9A9A9A', lw=0.5, ls=':', zorder=0)
-    ax_s.set(xscale='log', yscale='log', xlim=(1e-6, 1), ylim=(1e-6, 1.5), xlabel='p$_{division}$ threshold x',
-             ylabel='Share of edges $\\geq$ x')
-    ax_s.legend(loc='lower left', fontsize=4.8, handlelength=1.8, borderaxespad=0.2)
-    style.panel(ax_s, 'a', x=-0.17)
+    ax_a.text(1.04, -0.8, '$\\geq\\tau_D$', transform=ax_a.get_yaxis_transform(), ha='left', va='center', fontsize=6)
+    ax_a.set_yticks(range(len(ROWS)), [name for *_, name in ROWS], fontsize=6)
+    ax_a.invert_yaxis()
+    ax_a.set(xlim=(0, 1), xticks=[0, 0.5, 1])
+    ax_a.set_xticklabels(['0', '50%', '100%'])
+    ax_a.set_xlabel('Share of candidate edges', labelpad=1.5)
+    ax_a.tick_params(axis='y', length=0)
+    ax_a.spines['left'].set_visible(False)
+    handles = [plt.Rectangle((0, 0), 1, 1, color=colour) for *_, colour in BANDS]
+    ax_a.legend(handles, [band[2] for band in BANDS], ncol=4, loc='lower left', bbox_to_anchor=(-0.05, 1.08),
+                handlelength=0.9, handletextpad=0.35, columnspacing=0.8, fontsize=5.5, borderaxespad=0)
+    ax_a.text(-0.06, 1.13, '$d_{ij}$:', transform=ax_a.transAxes, ha='right', va='bottom', fontsize=6)
+    style.panel(ax_a, 'a', x=-0.6, y=1.1)
 
     hela = table[(table.population == 'hela') & (table.relation != 'unknown')]
     positive = (hela.relation == MOTHER_DAUGHTER).to_numpy()
     p = hela.p_div.to_numpy()
-    grid = np.linspace(0.05, 0.95, 91)
-    precision = [positive[p >= v].mean() if (p >= v).any() else np.nan for v in grid]
-    recall = [(positive & (p >= v)).sum() / positive.sum() for v in grid]
-    ax_pr.plot(grid, precision, color='black', lw=0.9, label='Precision')
-    ax_pr.plot(grid, recall, color='#C8553D', lw=0.9, label='Recall')
-    ax_pr.axvline(THRESHOLD, color='#9A9A9A', lw=0.5, ls=':', zorder=0)
-    ax_pr.set(xlim=(0, 1), ylim=(0, 1.02), xticks=[0, 0.5, 1], xlabel='p$_{division}$ threshold',
-              ylabel='HeLa mother-daughter edges')
-    ax_pr.legend(loc='lower left', handlelength=1.4)
-    style.panel(ax_pr, 'b', x=-0.25)
-    k = int(np.argmin(np.abs(grid - THRESHOLD)))
-    lines.append(f'b: HeLa, edges with p_division >= x as mother -> daughter edges ({positive.sum()} GT '
-                 f'mother-daughter edges of {len(hela)}). At {THRESHOLD}: precision {precision[k]:.3f}, '
-                 f'recall {recall[k]:.3f} (edge level, before the one-to-one matching of the tracker).')
+    precision, recall = positive[p >= THRESHOLD].mean(), (positive & (p >= THRESHOLD)).sum() / positive.sum()
+    lines.append(f'  HeLa, edges with d >= {THRESHOLD} as mother -> daughter edges ({positive.sum()} GT mother-daughter '
+                 f'edges of {len(hela)}): precision {precision:.3f}, recall {recall:.3f} (edge level, before the '
+                 f'one-to-one matching of the tracker).')
 
     counts = {key: data.test_divisions(key)['divisions'] for key in COUNTED}
-    xs = np.arange(len(COUNTED))
-    ax_c.bar(xs, [max(counts[key], 0.6) for key in COUNTED], 0.7, color=[style.color(key) for key in COUNTED],
-             edgecolor=style.EDGE, lw=0.3)
-    for i, key in enumerate(COUNTED):
-        ax_c.text(i, max(counts[key], 0.6) * 1.15, str(counts[key]), ha='center', va='bottom', fontsize=5.5)
-    ax_c.set_yscale('log')
-    ax_c.set_ylim(0.5, 1000)
-    ax_c.set_xticks(xs, [SHORT[key] for key in COUNTED], rotation=35, ha='right', rotation_mode='anchor', fontsize=5.5)
-    ax_c.set_ylabel('False divisions (test wells)')
-    ax_c.yaxis.grid(True, color=style.GRID, lw=0.4)
-    ax_c.set_axisbelow(True)
-    style.panel(ax_c, 'c', x=-0.13)
+    floor = 0.6
+    for y, key in enumerate(COUNTED):
+        value = max(counts[key], floor)
+        ax_b.plot([floor, value], [y, y], color=style.color(key), lw=1.5, solid_capstyle='butt')
+        ax_b.plot(value, y, 'o', ms=3.6, color=style.color(key), mec=style.EDGE, mew=0.3, clip_on=False, zorder=3)
+        ax_b.text(value * 1.4, y, str(counts[key]), ha='left', va='center', fontsize=6,
+                  fontweight='bold' if key == 'ours' else 'normal')
+    ax_b.set_xscale('log')
+    ax_b.set_xlim(floor, 1500)
+    ax_b.set_xticks([1, 10, 100, 1000], ['1', '10', '100', '1000'])
+    ax_b.minorticks_off()
+    ax_b.set_yticks(range(len(COUNTED)), [SHORT[key] for key in COUNTED], fontsize=6)
+    ax_b.get_yticklabels()[0].set_fontweight('bold')
+    ax_b.set_ylim(len(COUNTED) - 0.5, -0.5)
+    ax_b.tick_params(axis='y', length=0)
+    ax_b.spines['left'].set_visible(False)
+    ax_b.xaxis.grid(True, color=style.GRID, lw=0.4)
+    ax_b.set_axisbelow(True)
+    ax_b.set_xlabel('False divisions on the Scripta test wells', labelpad=1.5)
+    style.panel(ax_b, 'b', x=-0.6, y=1.0)
     wells = data.all_wells()
     every = {key: data.scripta_divisions(key, wells)['divisions'] for key in ('ours', 't1', 'ta_ft_div', 'ta_zs_div')}
-    lines.append('c: false divisions on the scripta test wells r16c02, r01c20, r07c07 (a mother with exactly two '
-                 'daughters; the GT has none), every method allowed to divide (Trackastra: greedy). Bars of 0 are drawn '
-                 'at the bottom of the log axis. ' + ', '.join(f'{style.plain(key)} {counts[key]}' for key in COUNTED)
+    lines.append('b: false divisions on the scripta test wells r16c02, r01c20, r07c07 (a mother with exactly two '
+                 'daughters; the GT has none), every method allowed to divide (Trackastra: greedy). A count of 0 sits '
+                 'at the left end of the log axis. ' + ', '.join(f'{style.plain(key)} {counts[key]}' for key in COUNTED)
                  + f'. CellTrack-GNN also gives {data.test_divisions("ctgnn0")["invalid"]} / '
                  f'{data.test_divisions("ctgnn1")["invalid"]} mothers three or more daughters.')
     lines.append('  All 15 wells (dev OOF + test): ' + ', '.join(f'{style.plain(key)} {v}' for key, v in every.items())
