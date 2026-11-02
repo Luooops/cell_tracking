@@ -73,6 +73,14 @@ class TestUnits(unittest.TestCase):
         self.assertEqual([t[0] for t in track], ['scr/t1', 'scr/t2', 'sim/02'])
         self.assertEqual(str(track[-1][2]('gnn_division')), str(Path('out') / 'sim' / 'gnn_division'))
 
+    def test_transfer_trains_without_scripta_and_tracks_every_scripta_well(self):
+        (unit, prefix, specs, track), = self.plan('transfer')
+        self.assertEqual(prefix, 'transfer')
+        self.assertEqual(specs, self.extra)
+        self.assertEqual([t[0] for t in track], [f'scr/{w}' for f in FOLDS for w in f] + ['scr/t1', 'scr/t2'])
+        self.assertEqual(str(track[0][2]('gnn_division')), str(Path('out') / 'dev' / 'gnn_division'))
+        self.assertEqual(str(track[-1][2]('gnn_division')), str(Path('out') / 'test' / 'gnn_division'))
+
     def test_final_tracks_unseen_datasets_without_training_on_them(self):
         args = self.args('final', unseen=['hela'])
         args.extra, args.extra_roots = ['sim'], {'sim': self.roots['sim']}

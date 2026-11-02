@@ -17,6 +17,9 @@ datasets (default Fluo-N2DL-HeLa; any CTC dataset under data/ can be added with 
             -> <out>/test/<tracker>/<well>/                                                  (checkpoints final_)
             also the declared test sequences of the extra datasets -> <out>/<D>/<tracker>/<sequence>/, and with
             --unseen U every sequence of U (never trained on) -> <out>/unseen_<U>/<tracker>/<sequence>/
+    transfer  the extra datasets only, no scripta (a model that has never seen scripta, so it cannot tell scripta has
+            no divisions); every scripta well tracked: development wells -> <out>/dev/<tracker>/<well>/, test wells
+            -> <out>/test/<tracker>/<well>/ (analysis: false divisions; nothing is tuned on them) (checkpoints transfer_)
     cache   fill <out>/cache with every video used (run it once before starting several processes on one root).
 
 An extra dataset with test_wells in config.json (DynamicNuclearNet: its official test videos) never trains on them;
@@ -45,6 +48,7 @@ whose checkpoint exists is not trained again; tracked folders that exist are ref
     python -m models.gnn_bayesian.run cv --tta --gpus 0 1 --output-root development/stage3_final/cv_f001
     python -m models.gnn_bayesian.run loso --dataset Fluo-N2DL-HeLa --tta --gpus 0 1 --output-root development/stage3_final/loso_hela_f001
     python -m models.gnn_bayesian.run final --tta --gpus 0 1 --output-root development/stage3_final/final
+    python -m models.gnn_bayesian.run transfer --tta --gpus 0 1 2 --output-root development/stage6_evidence/hela_only
     python -m models.gnn_bayesian.run final --extra DynamicNuclearNet --unseen Fluo-N2DL-HeLa --tta --gpus 0 1         --output-root development/stage6_dnn/final
 """
 import argparse
@@ -84,6 +88,10 @@ def units(args, extra):
         return [('unseen', f'unseen_{d}', dev + [s for s in extra if not s.startswith(f'{d}/')],
                  [(f'{d}/{seq}', d, lambda name, d=d: out / f'unseen_{d}' / name)
                   for seq in ctc_sequences(args.extra_roots[d])])]
+    if args.command == 'transfer':
+        return [('transfer', 'transfer', list(extra),
+                 [(f'{scripta}/{w}', scripta, lambda name: out / 'dev' / name) for w in args.dev_wells]
+                 + [(f'{scripta}/{w}', scripta, lambda name: out / 'test' / name) for w in args.test_wells])]
     return [('final', 'final', dev + extra,
              [(f'{scripta}/{w}', scripta, lambda name: out / 'test' / name) for w in args.test_wells]
              + [(f'{d}/{seq}', d, lambda name, d=d: out / d / name) for d in args.extra for seq in args.extra_test[d]]
@@ -233,7 +241,7 @@ def run(args):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('command', choices=['cache', 'cv', 'loso', 'unseen', 'final'])
+    parser.add_argument('command', choices=['cache', 'cv', 'loso', 'unseen', 'final', 'transfer'])
     parser.add_argument('--scripta', default='scripta_data_refine2', help='Dataset with folds and test wells')
     parser.add_argument('--extra', nargs='+', default=['Fluo-N2DL-HeLa'],
                         help='Datasets added to every training')
@@ -286,7 +294,7 @@ def main(argv=None):
     if args.command == 'final' and not args.test_wells:
         parser.error('final needs test wells in config.json')
     stage = {'cache': 'cache', 'cv': 'cv_folds' + ''.join(map(str, args.folds)), 'loso': f'loso_{args.dataset}',
-             'unseen': f'unseen_{args.dataset}', 'final': 'final'}[args.command]
+             'unseen': f'unseen_{args.dataset}', 'final': 'final', 'transfer': 'transfer'}[args.command]
     if args.jobs:
         stage += '_train_' + '_'.join(j.replace(':', 's') for j in args.jobs)
     elif args.retrack and args.command != 'cache':
