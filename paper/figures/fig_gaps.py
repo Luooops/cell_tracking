@@ -1,7 +1,6 @@
 """Figure 2 (one column): link errors by frame gap g on the 15 scripta wells.
 a  missed GT continuations (% of the GT links of that gap);  b  false links (count).
 Ours vs Trackastra ft and zs at delta_t 1 (its intended use) and at delta_t 3 (hatched)."""
-import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -13,19 +12,13 @@ BINS = ['g1', 'g2', 'g3+']
 TICKS = ['g = 1', 'g = 2', 'g ≥ 3']
 
 
-def light(key, amount):
-    """The method's colour mixed with white (light fill; the method colour itself is the edge)."""
-    rgb = np.array(mcolors.to_rgb(style.color(key)))
-    return tuple(rgb + (1 - rgb) * amount)
-
-
 def bars(ax, values, log_floor):
     width = 0.8 / len(METHODS)
     for j, k in enumerate(METHODS):
         x = np.arange(len(BINS)) + (j - (len(METHODS) - 1) / 2) * width
         v = np.array([values[k][b] for b in BINS], float)
         dt3 = k.endswith('dt3')
-        ax.bar(x, np.maximum(v, log_floor), width * 0.9, color=light(k, 0.88 if dt3 else 0.55),
+        ax.bar(x, np.maximum(v, log_floor), width * 0.9, color=style.light(k, 0.88 if dt3 else 0.55),
                edgecolor=style.color(k), lw=0.6, hatch='//////' if dt3 else None, label=style.label(k))
         for xi, vi in zip(x, v):
             if vi == 0:

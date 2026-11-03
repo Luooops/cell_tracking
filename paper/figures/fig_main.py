@@ -19,14 +19,15 @@ def paired_panel(ax, metric, wells):
     values = {k: data.scripta_wells(k, wells)[metric] for k in PAIRED}
     x = np.arange(len(PAIRED))
     for well in wells:
-        ax.plot(x, [values[k][well] for k in PAIRED], color='#C8C8C8', lw=0.4, zorder=1)
+        ax.plot(x, [values[k][well] for k in PAIRED], color='#DADADA', lw=0.4, zorder=1)
     for i, k in enumerate(PAIRED):
         v = values[k]
         test = v.index.isin(data.TEST_WELLS)
-        ax.scatter(np.full(len(v), i)[~test], v[~test], s=7, color=style.color(k), edgecolor=style.EDGE, lw=0.3, zorder=2)
-        ax.scatter(np.full(len(v), i)[test], v[test], s=8, marker='D', color=style.color(k), edgecolor='black',
-                   lw=0.5, zorder=3)
-        ax.plot([i - 0.22, i + 0.22], [v.mean()] * 2, color='black', lw=1.0, zorder=4)
+        ax.scatter(np.full(len(v), i)[~test], v[~test], s=8, color=style.light(k), edgecolor=style.color(k), lw=0.5,
+                   zorder=2)
+        ax.scatter(np.full(len(v), i)[test], v[test], s=10, marker='D', color=style.light(k, 0.3),
+                   edgecolor=style.color(k), lw=0.7, zorder=3)
+        ax.plot([i - 0.22, i + 0.22], [v.mean()] * 2, color=style.EDGE, lw=1.0, zorder=4)
     ax.set_xticks(x, [SHORT[k] for k in PAIRED], rotation=35, ha='right', rotation_mode='anchor')
     ax.set_xlim(-0.5, len(PAIRED) - 0.5)
     ax.set_ylabel(metric)
@@ -41,9 +42,9 @@ def test_panel(ax, metric):
     for i, k in enumerate(TEST):
         v = data.scripta_wells(k, data.TEST_WELLS)[metric]
         means[k] = v.mean()
-        ax.scatter(np.full(len(v), i), v.values, s=9, marker='D', color=style.color(k), edgecolor='black', lw=0.4,
-                   zorder=3)
-        ax.plot([i - 0.3, i + 0.3], [v.mean()] * 2, color='black', lw=1.0, zorder=4)
+        ax.scatter(np.full(len(v), i), v.values, s=10, marker='D', color=style.light(k), edgecolor=style.color(k),
+                   lw=0.6, zorder=3)
+        ax.plot([i - 0.3, i + 0.3], [v.mean()] * 2, color=style.EDGE, lw=1.0, zorder=4)
     ax.set_xticks(x, [SHORT[k] for k in TEST], rotation=45, ha='right', rotation_mode='anchor', fontsize=5.5)
     ax.set_xlim(-0.6, len(TEST) - 0.4)
     ax.set_ylabel(f'{metric} (test wells)')

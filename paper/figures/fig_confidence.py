@@ -34,8 +34,9 @@ def main():
         name, col = style.DATASETS[key]
         r = reliability[reliability.population == 'round1_decision']
         lo, hi = wilson(r.frac_pos * r.n, r.n)
-        ax_r.errorbar(r.mean_p, r.frac_pos, yerr=[np.clip(r.frac_pos - lo, 0, None), np.clip(hi - r.frac_pos, 0, None)], fmt='o-', ms=2.2, lw=0.7,
-                      elinewidth=0.5, capsize=0, color=col, label=name)
+        ax_r.fill_between(r.mean_p, np.clip(lo, 0, 1), np.clip(hi, 0, 1), color=col, alpha=0.12, lw=0, zorder=1)
+        ax_r.plot(r.mean_p, r.frac_pos, 'o-', ms=2.4, lw=0.8, color=col, mfc=style.light(col, 0.4), mec=col, mew=0.5,
+                  label=name, zorder=2)
     ax_r.set(xlim=(0, 1), ylim=(0, 1), xlabel='Predicted p (same cell)', ylabel='Fraction same cell')
     ax_r.set_aspect('equal')
     ax_r.legend(loc='upper left', handlelength=1.4)
@@ -52,7 +53,7 @@ def main():
                 ax.plot(c.checked_percent, c.errors_found_percent, ls=ls, color=col, lw=0.8)
         ax.set(xlim=(0, MAX_CHECKED), ylim=(0, 100), xlabel='Links checked (%)', ylabel='Errors found (%)')
         ax.set_title(title, loc='left', fontsize=6.5)
-        ax.yaxis.grid(True, color=style.GRID, lw=0.4)
+        ax.grid(True, color=style.GRID, lw=0.4)
         ax.set_axisbelow(True)
     handles = [plt.Line2D([], [], color='black', ls=ls, lw=0.8, label=f'ranked by {lab}') for ls, lab in SCORES.values()]
     handles.append(plt.Line2D([], [], color='#9A9A9A', ls=':', lw=0.6, label='random order'))

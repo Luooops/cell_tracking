@@ -3,7 +3,9 @@ from pathlib import Path
 
 import matplotlib
 matplotlib.use('Agg')
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
+import numpy as np
 
 MM = 1 / 25.4
 COLUMN = 82.5 * MM          # \linewidth of one column (3.25 in)
@@ -55,6 +57,12 @@ def plain(key):
 
 def color(key):
     return METHODS[key][1]
+
+
+def light(key, amount=0.55):
+    """Light fill: a method's colour (or any colour) mixed with white. The method colour itself is the edge."""
+    rgb = np.array(mcolors.to_rgb(METHODS[key][1] if key in METHODS else key))
+    return tuple(rgb + (1 - rgb) * amount)
 
 
 def setup():

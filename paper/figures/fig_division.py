@@ -32,8 +32,8 @@ SHORT = {'ours': 'ProGCT', 'raw': 'ProGCT, RAW264.7 only', 't1': 'ProGCT, HeLa o
          'ctgnn1': 'CellTrack-GNN s1'}
 THRESHOLD = 0.5                    # the division threshold of the tracker (track.DIV_THRESH)
 ACCENT = '#C8553D'
-BANDS = [(0, 1e-4, '<10$^{-4}$', '#ECECEC'), (1e-4, 1e-2, '10$^{-4}$–10$^{-2}$', '#C9C9C9'),
-         (1e-2, THRESHOLD, '10$^{-2}$–$\\tau_D$', '#8F8F8F'), (THRESHOLD, np.inf, '$\\geq\\tau_D$', ACCENT)]
+BANDS = [(0, 1e-4, '<10$^{-4}$', '#EEF2F7'), (1e-4, 1e-2, '10$^{-4}$–10$^{-2}$', '#D3DEEC'),
+         (1e-2, THRESHOLD, '10$^{-2}$–$\\tau_D$', '#A9BEDA'), (THRESHOLD, np.inf, '$\\geq\\tau_D$', '#EFA593')]
 
 
 def edges(refresh=False):
@@ -93,7 +93,7 @@ def main(refresh=False):
         left = 0.0
         for lo, hi, _, colour in BANDS:
             share = ((p >= lo) & (p < hi)).mean()
-            ax_a.barh(r, share, left=left, height=0.64, color=colour, lw=0)
+            ax_a.barh(r, share, left=left, height=0.64, color=colour, edgecolor='white', lw=0.4)
             left += share
         above = (p >= THRESHOLD).mean()
         ax_a.text(1.04, r, share_text(above), transform=ax_a.get_yaxis_transform(), ha='left', va='center',
@@ -127,8 +127,9 @@ def main(refresh=False):
     floor = 0.6
     for y, key in enumerate(COUNTED):
         value = max(counts[key]['divisions'], floor)
-        ax_b.plot([floor, value], [y, y], color=style.color(key), lw=1.5, solid_capstyle='butt')
-        ax_b.plot(value, y, 'o', ms=3.6, color=style.color(key), mec=style.EDGE, mew=0.3, clip_on=False, zorder=3)
+        ax_b.plot([floor, value], [y, y], color=style.light(key, 0.45), lw=1.8, solid_capstyle='butt')
+        ax_b.plot(value, y, 'o', ms=4, color=style.light(key, 0.3), mec=style.color(key), mew=0.6, clip_on=False,
+                  zorder=3)
         ax_b.text(value * 1.4, y, str(counts[key]['divisions']), ha='left', va='center', fontsize=6,
                   fontweight='bold' if key in ('ours', 'raw') else 'normal')
     ax_b.set_xscale('log')

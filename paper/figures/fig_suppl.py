@@ -16,9 +16,9 @@ DEV = None                      # set in main: the 12 development wells
 
 
 def dots(ax, x, values, key, marker='o'):
-    ax.scatter(np.full(len(values), x), values, s=7, marker=marker, color=style.color(key), edgecolor=style.EDGE,
-               lw=0.3, zorder=3)
-    ax.plot([x - 0.25, x + 0.25], [np.mean(values)] * 2, color='black', lw=1.0, zorder=4)
+    ax.scatter(np.full(len(values), x), values, s=8, marker=marker, color=style.light(key), edgecolor=style.color(key),
+               lw=0.5, zorder=3)
+    ax.plot([x - 0.25, x + 0.25], [np.mean(values)] * 2, color=style.EDGE, lw=1.0, zorder=4)
 
 
 def grid(ax):
@@ -68,9 +68,11 @@ def hela():
         t = data.hela_wells(k)
         for i, (col, _) in enumerate(metrics):
             x = i + (j - 2) * width
-            ax.bar(x, t[col].mean(), width, color=style.color(k), edgecolor=style.EDGE, lw=0.3,
-                   hatch='////' if k == 'ta_zs_ctc' else None, label=style.label(k) if i == 0 else None)
-            ax.scatter([x - 0.05, x + 0.05], t[col].values, s=4, color='white', edgecolor='black', lw=0.3, zorder=3)
+            ctc = k == 'ta_zs_ctc'
+            ax.bar(x, t[col].mean(), width * 0.9, color=style.light(k, 0.75 if ctc else 0.55),
+                   edgecolor=style.color('ta_ft_dt3' if ctc else k), lw=0.6, hatch='//////' if ctc else None,
+                   label=style.label(k) if i == 0 else None)
+            ax.scatter([x - 0.04, x + 0.04], t[col].values, s=4, color='white', edgecolor=style.EDGE, lw=0.4, zorder=3)
         lines.append(f'  {style.plain(k)}: ' + '; '.join(
             f'{name} {" / ".join(f"{v:.3f}" for v in t[col])}' for col, name in metrics)
             + f'; false divisions {" / ".join(str(int(v)) for v in t["fp_div(0)"])}')
@@ -92,8 +94,9 @@ def tta():
     for dataset, getter, marker in (('scripta', lambda k: data.scripta_wells(k, DEV), 'o'), ('dnn', data.dnn_wells, 's')):
         base = getter('base')['LNK']
         with_tta = getter('ours').loc[base.index]['LNK']
-        ax.scatter(base, with_tta, s=8, marker=marker, color=style.DATASETS['dnn' if dataset == 'dnn' else 'scripta_cv'][1],
-                   edgecolor=style.EDGE, lw=0.3, label='Scripta' if dataset == 'scripta' else 'DNN')
+        col = style.DATASETS['dnn' if dataset == 'dnn' else 'scripta_cv'][1]
+        ax.scatter(base, with_tta, s=9, marker=marker, color=style.light(col), edgecolor=col, lw=0.5,
+                   label='Scripta' if dataset == 'scripta' else 'DNN')
         s = data.paired(with_tta, base)
         test = f', p = {data.fmt_p(s["p"])}' if s['n'] > 5 else ''
         lines.append(f'  {dataset} LNK: no TTA {base.mean():.4f}, TTA {with_tta.mean():.4f}; TTA higher in '
@@ -113,7 +116,7 @@ def tta():
             for j, (suffix, key) in enumerate((('base', 'base'), ('tta', 'ours'))):
                 m, _, _ = data.answers(f'{prefix}_{suffix}' if prefix != 'dnn' or suffix == 'base' else 'dnn')
                 area = m['coverage'][population]['mutual_info']['area']
-                ax.bar(x + (j - 0.5) * 0.38, area, 0.38, color=style.color(key), edgecolor=style.EDGE, lw=0.3,
+                ax.bar(x + (j - 0.5) * 0.38, area, 0.34, color=style.light(key), edgecolor=style.color(key), lw=0.6,
                        label=('No TTA', 'TTA')[j] if x == 0 else None)
                 lines.append(f'  {name} {short} links, {("no TTA", "TTA")[j]}: MI area {area:.3f}')
             ticks.append((x, f'{name}\n{short}'))
