@@ -20,7 +20,7 @@ def table(rows, columns, caption, label, lead=('Method',), colsep=4, star=False)
     text columns; a name holds one cell per lead header, joined by ' & '. colsep: \\tabcolsep in pt."""
     best = {c: pick(v[c] for _, v in rows) for c, _, _, pick, _ in columns}
     env = 'table*' if star else 'table'
-    out = [f'\\begin{{{env}}}[t]', '\\centering', '\\small', f'\\setlength{{\\tabcolsep}}{{{colsep}pt}}',
+    out = [f'\\begin{{{env}}}[!t]', '\\centering', '\\small', f'\\setlength{{\\tabcolsep}}{{{colsep}pt}}',
            '\\begin{tabular}{' + 'l' * len(lead) + 'r' * len(columns) + '}', '\\toprule',
            ' & '.join(lead) + ' & ' + ' & '.join(h for _, h, *_ in columns) + ' \\\\', '\\midrule']
     for name, v in rows:
@@ -86,7 +86,7 @@ def dnn():
             values.update({f'{m}off': float('nan') for m in ('LNK', 'BC', 'rec', 'fp')})
         rows.append((name, values))
     best = {c: pick(v[c] for _, v in rows if v[c] == v[c]) for c, _, _, pick, _ in cols}
-    out = ['\\begin{table*}[t]', '\\centering', '\\small', '\\setlength{\\tabcolsep}{4pt}',
+    out = ['\\begin{table*}[!t]', '\\centering', '\\small', '\\setlength{\\tabcolsep}{4pt}',
            '\\begin{tabular}{l' + 'r' * len(cols) + '}', '\\toprule',
            ' & \\multicolumn{6}{c}{13 videos (val17--26, test09--11)} & \\multicolumn{4}{c}{Official test videos '
            '(test07--11)} \\\\', '\\cmidrule(lr){2-7}\\cmidrule(lr){8-11}',
