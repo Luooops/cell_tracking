@@ -1,5 +1,5 @@
-"""LaTeX tables (booktabs) -> out/tables.tex (main paper: scripta test wells, scripta 15 wells, division switch, DNN)
-and out/tables_suppl.tex (HeLa). LNK / CT / TRA / BC are means over wells; ED (false), EA (missed), EC (wrong edge
+"""LaTeX tables (booktabs) -> out/tables.tex (main paper: scripta test wells, DNN) and out/tables_suppl.tex (scripta
+15 wells, division switch, HeLa; the 15-well numbers are also in figure 1). LNK / CT / TRA / BC are means over wells; ED (false), EA (missed), EC (wrong edge
 type) are AOGM terms and the division counts are summed over wells; division recall is pooled (tp / (tp + fn)).
 The best value of each column is bold."""
 import data
@@ -160,17 +160,16 @@ def main():
             for k, name in keys]
     worst = {m: max(data.paired(data.scripta_wells('ours', wells)[m], data.scripta_wells(k, wells)[m])['p']
                     for k, _ in keys[1:]) for m in ('LNK', 'CT')}
-    parts.append(table(rows, cols15 + [DIV], 'All 15 \\ds{} wells: 12 development wells out-of-fold (3 folds) and the '
+    suppl = [parts[0], '', table(rows, cols15 + [DIV], 'All 15 \\ds{} wells: 12 development wells out-of-fold (3 folds) and the '
                        '3 test wells with the final models. Div.: false divisions. ' + OURS + ' is higher than all '
                        'four Trackastra variants in LNK and CT (Wilcoxon, largest '
                        f'$p = {tex_p(worst["LNK"])}$ / ${tex_p(worst["CT"])}$). Unmarked: divisions allowed '
                        '(\\texttt{greedy}); $^\\ddagger$told that there are no divisions (\\texttt{greedy\\_nodiv}).',
-                       'tab:all15'))
-    parts.append(divmode())
+                       'tab:all15'), divmode(), hela()]
     parts.append(dnn())
     style.OUT.mkdir(parents=True, exist_ok=True)
     (style.OUT / 'tables.tex').write_text('\n'.join(parts), encoding='utf-8')
-    (style.OUT / 'tables_suppl.tex').write_text(parts[0] + '\n\n' + hela(), encoding='utf-8')
+    (style.OUT / 'tables_suppl.tex').write_text('\n'.join(suppl), encoding='utf-8')
     print('written', style.OUT / 'tables.tex', style.OUT / 'tables_suppl.tex')
 
 
