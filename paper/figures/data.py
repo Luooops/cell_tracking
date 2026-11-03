@@ -1,8 +1,14 @@
-"""Inputs of the paper figures: development/final_results (read only) and the CTC data under data/ (read only).
+"""Inputs of the paper figures: development/final_results_v2 (read only) and the CTC data under data/ (read only).
 
-Method keys are those of style.METHODS. The 15-well scripta comparison joins out-of-fold results on the 12 dev wells
-with the final model on the 3 test wells, for ours and for Trackastra ft; Trackastra zs ran on all 15 wells.
-Our model (and its binary ablation) is read in the division mode everywhere: it is never told whether a dataset has
+Design (2026-11-03): ProGCT is trained on scripta (no divisions) and the RAW264.7 videos of DynamicNuclearNet
+(divisions, train60-90); HeLa is never trained on. Method keys are those of style.METHODS; every key has at most one
+row per (dataset, well) in ctc_per_well.csv, whose method column holds the key.
+  scripta  15 wells = 12 development wells out-of-fold (3 folds) + 3 test wells (final models), for ours and
+           Trackastra ft; zero-shot models and the ProGCT trained on RAW264.7 / HeLa only ran on all 15 wells.
+  dnn      15 DynamicNuclearNet videos never trained on: val17-26 and the official test videos test07-11
+           (test07-08 are 3T3/HEK293, the rest RAW264.7 / val, cell line not recorded).
+  hela     Fluo-N2DL-HeLa 01, 02, never trained on by ProGCT or Trackastra general_2d (Trackastra ctc was).
+Our model (and its binary variant) is read in the division mode everywhere: it is never told whether a dataset has
 divisions. On scripta it divides nowhere and its CTC values equal those of the no-division mode well by well.
 """
 import json
@@ -18,51 +24,36 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from utils.lineage import CONTINUATION, UNKNOWN_OFFSET, read_lineage  # noqa: E402
 
-FINAL = ROOT / 'development' / 'final_results'
+FINAL = ROOT / 'development' / 'final_results_v2'
 DATA = ROOT / 'data'
 SCRIPTA = DATA / 'scripta_data_refine2'
+DNN = DATA / 'DynamicNuclearNet'
+HELA = DATA / 'Fluo-N2DL-HeLa'
 TEST_WELLS = ['r16c02', 'r01c20', 'r07c07']
+DNN_VIDEOS = [f'val{i}' for i in range(17, 27)] + ['test09', 'test10', 'test11']   # the 13 compared videos
+DNN_OFFICIAL = ['test07', 'test08', 'test09', 'test10', 'test11']                   # official DNN test videos
+DNN_OTHER_LINE = ['test07', 'test08']                                               # 3T3/HEK293: no RAW264.7
 CACHE = Path(__file__).resolve().parent / 'out' / 'cache'
 
-# method key -> [(method name in ctc_per_well.csv, split or None for every split)]
-CTC_ROWS = {
-    'ours': [('C ours final (division mode)', 'test'), ('ours f001 + TTA (OOF, division mode)', 'dev_oof')],
-    'ta_ft': [('F Trackastra fine-tuned', 'test'), ('Trackastra fine-tuned (OOF)', 'dev_oof')],
-    'ta_zs': [('E Trackastra zero-shot general_2d', None)],
-    'ta_ft_div': [('F Trackastra fine-tuned (greedy)', 'test'), ('Trackastra fine-tuned (OOF, greedy)', 'dev_oof')],
-    'ta_zs_div': [('E Trackastra zero-shot general_2d (greedy)', None)],
-    't1': [('T1 ours trained on HeLa only', None)],
-    'ta_zs_ctc': [('Trackastra zero-shot ctc', None)],
-    'ta_ft_dt3': [('Trackastra ft_final delta_t 3', 'test')] + [(f'Trackastra ft_fold{k} delta_t 3', 'dev_oof') for k in range(3)],
-    'ta_zs_dt3': [('Trackastra zs_general_2d delta_t 3', None)],
-    'binary': [('B binary edges (division mode)', 'test')],
-    'binary_nodiv': [('B binary edges', 'test')],               # the no-division mode (only for tab:divmode)
-    'ours_nodiv': [('C ours final', 'test')],
-    'classical': [('D classical', 'test')],
-    'ctgnn0': [('G CellTrack-GNN seed0', 'test')],
-    'ctgnn1': [('G CellTrack-GNN seed1', 'test')],
-    'base': [('ours f001, no TTA (OOF, division mode)', 'dev_oof')],
-    'noapp': [('ours OOF, noappearance (division mode)', 'dev_oof')],
-    'novel': [('ours OOF, novelocity (division mode)', 'dev_oof')],
-}
-HELA_ROWS = {
-    'ours': 'ours LOSO + TTA', 'base': 'ours LOSO, no TTA', 'noapp': 'ours LOSO, noappearance',
-    'novel': 'ours LOSO, novelocity', 'ta_zs_div': 'Trackastra zero-shot general_2d',   # HeLa runs: greedy
-    'ta_zs_ctc': 'Trackastra zero-shot ctc', 'ta_ft_div': 'Trackastra fine-tuned LOSO',
-}
-
-# method key -> folders of per-well track outputs (<folder>/<well>/instance_tracks.csv), first match wins
-_DT3 = 'scripta/supplementary_trackastra_dt3'
+# method key -> per-dataset folder of per-well track outputs (<folder>/<well>/instance_tracks.csv)
 TRACKS = {
-    'ours': ['scripta/C_ours_final/division', 'scripta/ours_cv_oof_tta/division'],
-    'ta_ft': ['scripta/F_trackastra_ft/final/tracks'] + [f'scripta/F_trackastra_ft/fold{k}/tracks' for k in range(3)],
-    'ta_zs': ['scripta/E_trackastra_zs_general_2d/tracks'],
-    'ta_ft_div': ['scripta/F_trackastra_ft_greedy/final/tracks'] + [f'scripta/F_trackastra_ft_greedy/fold{k}/tracks' for k in range(3)],
-    'ta_zs_div': ['scripta/E_trackastra_zs_general_2d_greedy/tracks'],
-    't1': ['scripta/T1_hela_only/test/division', 'scripta/T1_hela_only/dev/division'],
-    'ta_ft_dt3': [f'{_DT3}/ft_final/tracks'] + [f'{_DT3}/ft_fold{k}/tracks' for k in range(3)],
-    'ta_zs_dt3': [f'{_DT3}/zs_general_2d/tracks'],
+    'scripta': {
+        'ours': 'scripta/progct/division', 'ours_nodiv': 'scripta/progct/tracking',
+        'binary': 'scripta/progct_binary/division', 'raw': 'scripta/progct_raw_only/division',
+        't1': 'scripta/progct_hela_only/division',
+        'ta_ft_div': 'scripta/trackastra_ft/greedy', 'ta_ft': 'scripta/trackastra_ft/greedy_nodiv',
+        'ta_ft_dt3': 'scripta/trackastra_ft/dt3_greedy_nodiv',
+        'ta_zs_div': 'scripta/trackastra_zs/greedy', 'ta_zs': 'scripta/trackastra_zs/greedy_nodiv',
+        'ta_zs_dt3': 'scripta/trackastra_zs/dt3_greedy_nodiv',
+        'ctgnn0': 'scripta/celltrack_gnn/seed0', 'ctgnn1': 'scripta/celltrack_gnn/seed1', 'classical': 'scripta/classical',
+    },
+    'dnn': {'ours': 'dnn/progct/division', 'binary': 'dnn/progct_binary/division', 'raw': 'dnn/progct_raw_only/division',
+            'ta_ft_div': 'dnn/trackastra_ft/greedy', 'ta_zs_div': 'dnn/trackastra_zs/greedy',
+            'ta_zs_ctc': 'dnn/trackastra_zs_ctc/greedy'},
+    'hela': {'ours': 'hela/progct/division', 'binary': 'hela/progct_binary/division', 'ta_ft_div': 'hela/trackastra_ft/greedy',
+             'ta_zs_div': 'hela/trackastra_zs/greedy', 'ta_zs_ctc': 'hela/trackastra_zs_ctc/greedy'},
 }
+GAP_KEYS = ['ours', 'ta_ft', 'ta_zs', 'ta_ft_dt3', 'ta_zs_dt3']        # figure 2
 
 _ctc = None
 
@@ -70,24 +61,35 @@ _ctc = None
 def ctc_table():
     global _ctc
     if _ctc is None:
-        _ctc = pd.read_csv(FINAL / 'ctc_per_well.csv')
+        _ctc = pd.read_csv(FINAL / 'ctc_per_well.csv', dtype={'well': str})
         _ctc['div_recall'] = _ctc['tp_div(0)'] / (_ctc['tp_div(0)'] + _ctc['fn_div(0)'])
     return _ctc
 
 
-def scripta_wells(key, wells=None):
-    """Per-well CTC rows of one method on scripta (index = well)."""
+def has(key, dataset='scripta'):
     t = ctc_table()
-    parts = [t[(t.dataset == 'scripta') & (t.method == m) & ((t.split == s) if s else True)] for m, s in CTC_ROWS[key]]
-    rows = pd.concat(parts).set_index('well')
-    if rows.index.duplicated().any():
-        raise ValueError(f'{key}: duplicated wells')
+    return bool(((t.dataset == dataset) & (t.method == key)).any())
+
+
+def wells_of(key, dataset, wells=None):
+    """Per-well CTC rows of one method on one dataset (index = well)."""
+    t = ctc_table()
+    rows = t[(t.dataset == dataset) & (t.method == key)].set_index('well').sort_index()
+    if rows.empty:
+        raise KeyError(f'{key}: no {dataset} rows')
     return rows if wells is None else rows.loc[wells]
 
 
+def scripta_wells(key, wells=None):
+    return wells_of(key, 'scripta', wells)
+
+
+def dnn_wells(key, videos=None):
+    return wells_of(key, 'dnn', DNN_VIDEOS if videos is None else videos)
+
+
 def hela_wells(key):
-    t = ctc_table()
-    return t[(t.dataset == 'hela') & (t.method == HELA_ROWS[key])].set_index('well').sort_index()
+    return wells_of(key, 'hela')
 
 
 def all_wells():
@@ -95,7 +97,7 @@ def all_wells():
 
 
 def paired(a, b):
-    """a, b: Series over the same wells -> dict(n, a_better, b_better, p) with a two-sided Wilcoxon signed-rank."""
+    """a, b: Series over the same wells -> dict(n, a_higher, b_higher, p) with a two-sided Wilcoxon signed-rank."""
     a, b = a.align(b, join='inner')
     d = a - b
     p = wilcoxon(a, b).pvalue if (d != 0).any() else float('nan')
@@ -103,28 +105,17 @@ def paired(a, b):
 
 
 def answers(name):
-    """evaluate_answers output in final_results/calibration/<name>: (metrics overall, reliability, coverage)."""
+    """evaluate_answers output in final_results_v2/calibration/<name>: (metrics overall, reliability, coverage)."""
     folder = FINAL / 'calibration' / name
     metrics = json.loads((folder / 'metrics.json').read_text(encoding='utf-8'))['overall']
     return metrics, pd.read_csv(folder / 'reliability.csv'), pd.read_csv(folder / 'coverage.csv')
 
 
-def track_folder(key, well):
-    for folder in TRACKS[key]:
-        if (FINAL / folder / well / 'instance_tracks.csv').is_file():
-            return FINAL / folder / well
-    raise FileNotFoundError(f'{key}: no output for {well}')
-
-
-# method key -> per-well folders on the scripta test wells (lineage.json: {daughter track: mother track})
-TEST_FOLDERS = {
-    'ours': 'scripta/C_ours_final/division', 'binary': 'scripta/B_ours_binary/division',
-    'ta_ft': 'scripta/F_trackastra_ft/final/tracks', 'ta_zs': 'scripta/E_trackastra_zs_general_2d/tracks',
-    'ta_ft_div': 'scripta/F_trackastra_ft_greedy/final/tracks', 'ta_zs_div': 'scripta/E_trackastra_zs_general_2d_greedy/tracks',
-    't1': 'scripta/T1_hela_only/test/division',
-    'ctgnn0': 'scripta/G_celltrack_gnn/seed0/tracks', 'ctgnn1': 'scripta/G_celltrack_gnn/seed1/tracks',
-    'classical': 'scripta/D_classical/tracks',
-}
+def track_folder(key, well, dataset='scripta'):
+    folder = FINAL / TRACKS[dataset][key] / well
+    if not (folder / 'instance_tracks.csv').is_file():
+        raise FileNotFoundError(f'{key}: no {dataset} output for {well}')
+    return folder
 
 
 def division_events(folder):
@@ -139,20 +130,39 @@ def division_events(folder):
     return dict(divisions=sum(n == 2 for n in children), invalid=sum(n >= 3 for n in children))
 
 
-def scripta_divisions(key, wells):
-    """Divisions summed over the given scripta wells, from the folders of TRACKS (all of them false)."""
+def divisions(key, wells, dataset='scripta'):
+    """Divisions summed over wells (on scripta all of them are false: its ground truth has none)."""
     total = Counter()
     for well in wells:
-        total.update(division_events(track_folder(key, well)))
+        total.update(division_events(track_folder(key, well, dataset)))
     return dict(divisions=total['divisions'], invalid=total['invalid'])
 
 
 def test_divisions(key):
-    """Divisions summed over the scripta test wells (scripta has none in its ground truth: all are false)."""
-    total = Counter()
-    for well in TEST_WELLS:
-        total.update(division_events(FINAL / TEST_FOLDERS[key] / well))
-    return dict(divisions=total['divisions'], invalid=total['invalid'])
+    return divisions(key, TEST_WELLS)
+
+
+def scripta_divisions(key, wells):
+    return divisions(key, wells)
+
+
+def expected_errors(key, wells, dataset='scripta'):
+    """Expected and measured counts on the links between detections with known identity (labels < 50000), as in
+    sec. 4 of the paper: expected false = sum(1 - p) over the links made; expected missed = sum p over the candidate
+    edges that entered the solver and were not chosen. -> dict(expected_false, expected_missed, links, candidates)."""
+    out = Counter()
+    for well in wells:
+        folder = track_folder(key, well, dataset)
+        links = pd.read_csv(folder / 'links.csv')
+        known = (links.src_label < UNKNOWN_OFFSET) & (links.dst_label < UNKNOWN_OFFSET)
+        out['expected_false'] += float((1 - links.p[known]).sum())
+        out['links'] += int(known.sum())
+        z = np.load(folder / 'edges.npz')
+        left = z['in_solver'].astype(bool) & ~z['chosen'].astype(bool) & (z['src_label'] < UNKNOWN_OFFSET) \
+            & (z['dst_label'] < UNKNOWN_OFFSET)
+        out['expected_missed'] += float(z['p'][left].sum())
+        out['candidates'] += int(left.sum())
+    return dict(out)
 
 
 def predicted_links(tracks):
@@ -175,14 +185,16 @@ def gap_bin(g):
 
 
 def gap_counts(refresh=False):
-    """Per well and method: GT continuation links, missed and false links by frame gap (g1, g2, g3+).
+    """Per well and method (GAP_KEYS): GT continuation links, missed and false links by frame gap (g1, g2, g3+).
     A false link joins two known detections (labels < 50000) that are not a GT continuation. Cached as csv."""
     cache = CACHE / 'gap_links.csv'
     if cache.is_file() and not refresh:
-        return pd.read_csv(cache)
+        table = pd.read_csv(cache)
+        if set(table.method) == set(GAP_KEYS):
+            return table
     rows = []
     for well in all_wells():
-        tracks = {k: pd.read_csv(track_folder(k, well) / 'instance_tracks.csv') for k in TRACKS}
+        tracks = {k: pd.read_csv(track_folder(k, well) / 'instance_tracks.csv') for k in GAP_KEYS}
         ref = tracks['ours']
         gt = gt_links(well, list(zip(ref.frame_index.astype(int), ref.instance_id.astype(int))))
         for key, df in tracks.items():

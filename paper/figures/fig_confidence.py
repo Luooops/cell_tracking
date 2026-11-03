@@ -2,14 +2,15 @@
 a  reliability of the edges in the decision band (0.02 < p < 0.98), equal-count bins, Wilson 95% intervals;
 b, c  error coverage: share of the false (b) / missed (c) links found when checking the given share of the
       chosen (b) / not chosen (c) candidate links, ranked by mutual information (solid) or closeness to 0.5 (dashed).
-Ours: scripta 3-fold OOF + TTA, scripta test (final model), HeLa LOSO + TTA."""
+Ours: scripta 3-fold OOF + TTA, scripta test (final model), DynamicNuclearNet (final model; the 15 videos never
+trained on: val17-26, test07-11)."""
 import matplotlib.pyplot as plt
 import numpy as np
 
 import data
 import style
 
-SOURCES = {'scripta_cv': 'scripta_cv_oof_tta', 'scripta_test': 'scripta_test_C', 'hela': 'hela_loso_tta'}
+SOURCES = {'scripta_cv': 'scripta_cv_oof_tta', 'scripta_test': 'scripta_test', 'dnn': 'dnn'}
 SCORES = {'mutual_info': ('-', 'MI'), 'closeness': ('--', 'closeness')}
 MAX_CHECKED = 20
 
@@ -63,8 +64,15 @@ def main():
              'a: decision band = edges with 0.02 < p < 0.98 (round 1, before the solver); 15 equal-count bins; '
              'Wilson 95% intervals. b, c: share of errors found when checking links in order of uncertainty; '
              f'x axis cut at {MAX_CHECKED}%; area = normalised area under the full curve (1 = perfect, 0.5 = random).']
+    expected = {'scripta_cv': ('scripta', [w for w in data.all_wells() if w not in data.TEST_WELLS]),
+                'scripta_test': ('scripta', data.TEST_WELLS), 'dnn': ('dnn', data.DNN_VIDEOS + data.DNN_OTHER_LINE)}
     for key, (m, _, _) in loaded.items():
         band, cov = m['calibration']['round1_decision'], m['coverage']
+        dataset, wells = expected[key]
+        e = data.expected_errors('ours_nodiv' if dataset == 'scripta' else 'ours', wells, dataset)
+        lines.append(f'  {style.DATASETS[key][0]}: expected false links {e["expected_false"]:.0f} (measured '
+                     f'{cov["false_links"]["errors"]}), expected missed links {e["expected_missed"]:.0f} (measured '
+                     f'{cov["missed_links"]["errors"]}); links between known identities only')
         lines.append(f'  {style.DATASETS[key][0]} ({SOURCES[key]}): band n {band["n"]}, mean p {band["mean_p"]:.3f}, '
                      f'fraction same {band["frac_pos"]:.3f}, ECE {band["ece"]:.3f}; all edges ECE '
                      f'{m["calibration"]["round1_all"]["ece"]:.4f}')

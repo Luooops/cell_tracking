@@ -264,7 +264,7 @@ def panel_b(fig, ax, x0):
     ax.text(x0 + 1.2, 7.9, 'Training', fontsize=5.6, weight='bold', va='center')
     ax.text(x0 + 10.0, 7.9, '$\\mathcal{L}=\\mathrm{CE}_{3\\text{-way}}$ (no class weights)'
             ' $+\\,\\lambda\\,\\mathrm{InfoNCE}(s_{ij}/\\tau)$', fontsize=5.0, va='center')
-    ax.text(x0 + 1.2, 4.1, 'GT velocities, mirrored videos, unknown IDs masked, Scripta + HeLa jointly',
+    ax.text(x0 + 1.2, 4.1, 'GT velocities, mirrored videos, unknown IDs masked, Scripta + DNN jointly',
             fontsize=4.8, va='center', color=SOFT)
     return xh + 13.0
 

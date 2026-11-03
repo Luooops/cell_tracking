@@ -1,7 +1,9 @@
 """Supplementary figures.
-S1 (full width)  cue ablation: ours without the appearance or the velocity input, scripta OOF and HeLa LOSO (no TTA).
-S2 (one column)  HeLa: ours (LOSO + TTA) vs Trackastra zero-shot, per sequence.
-S3 (one column)  test-time augmentation: tracking unchanged, error localisation (MI coverage area) better."""
+S1 (full width)  cue ablation: ours without the appearance or the velocity input, scripta OOF and the 13 DNN videos
+                 (no TTA). Needs the --retrack runs (keys base, noapp, novel); skipped while they are missing.
+S2 (one column)  HeLa, never trained on: ours and its binary variant vs Trackastra, per sequence.
+S3 (one column)  test-time augmentation: tracking unchanged, error localisation (MI coverage area). Needs the --retrack
+                 runs as S1."""
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -10,6 +12,7 @@ import style
 
 ABLATION = ['base', 'noapp', 'novel']
 ABL_LABEL = {'base': 'Full', 'noapp': 'No appearance', 'novel': 'No velocity'}
+DEV = None                      # set in main: the 12 development wells
 
 
 def dots(ax, x, values, key, marker='o'):
@@ -26,24 +29,24 @@ def grid(ax):
 def ablation():
     fig = plt.figure(figsize=(style.FULL, 48 * style.MM))
     gs = fig.add_gridspec(1, 5, left=0.065, right=0.995, bottom=0.25, top=0.88, wspace=0.55)
-    panels = [('scripta', 'LNK'), ('scripta', 'CT'), ('hela', 'LNK'), ('hela', 'CT'), ('hela', 'BC(0)')]
+    panels = [('scripta', 'LNK'), ('scripta', 'CT'), ('dnn', 'LNK'), ('dnn', 'CT'), ('dnn', 'BC(0)')]
     lines = ['Figure S1. Cue ablation (no TTA): the trained model with the appearance or the velocity input removed '
-             'at test time (--ablate); scripta 12 dev wells out-of-fold, HeLa LOSO sequences 01/02. '
-             'Black bar = mean. Paired Wilcoxon over the 12 scripta wells:']
+             'at test time (--ablate); scripta 12 dev wells out-of-fold, DNN 13 videos (final model). '
+             'Black bar = mean. Paired Wilcoxon over the wells / videos:']
     for i, (dataset, metric) in enumerate(panels):
         ax = fig.add_subplot(gs[0, i])
-        values = {k: (data.scripta_wells(k) if dataset == 'scripta' else data.hela_wells(k))[metric] for k in ABLATION}
+        values = {k: (data.scripta_wells(k, DEV) if dataset == 'scripta' else data.dnn_wells(k))[metric] for k in ABLATION}
         for j, k in enumerate(ABLATION):
             dots(ax, j, values[k], k)
         ax.set_xticks(range(len(ABLATION)), [ABL_LABEL[k] for k in ABLATION], rotation=30, ha='right',
                       rotation_mode='anchor')
         ax.set_ylabel(metric)
-        ax.set_title('Scripta' if dataset == 'scripta' else 'HeLa', loc='left', fontsize=6.5)
+        ax.set_title('Scripta' if dataset == 'scripta' else 'DNN', loc='left', fontsize=6.5)
         grid(ax)
         style.panel(ax, 'abcde'[i], x=-0.3)
         means = ', '.join(f'{ABL_LABEL[k]} {values[k].mean():.4f}' for k in ABLATION)
         lines.append(f'  {dataset} {metric}: {means}')
-        if dataset == 'scripta':
+        if metric != 'BC(0)':
             for k in ABLATION[1:]:
                 s = data.paired(values['base'], values[k])
                 lines.append(f'    full vs {ABL_LABEL[k]}: full higher in {s["a_higher"]}/{s["n"]}, p = {data.fmt_p(s["p"])}')
@@ -51,20 +54,20 @@ def ablation():
 
 
 def hela():
-    keys = ['ours', 'ta_ft_div', 'ta_zs_div', 'ta_zs_ctc']
+    keys = ['ours', 'binary', 'ta_ft_div', 'ta_zs_div', 'ta_zs_ctc']
     metrics = [('LNK', 'LNK'), ('CT', 'CT'), ('BC(0)', 'BC(0)'), ('div_recall', 'Division recall')]
-    fig, ax = plt.subplots(figsize=(style.COLUMN, 50 * style.MM))
-    fig.subplots_adjust(left=0.12, right=0.99, bottom=0.27, top=0.95)
-    width = 0.2
-    lines = ['Figure S2. HeLa (Fluo-N2DL-HeLa 01/02), CTC measures on fixed detections. Ours = LOSO (trained on the '
-             'other sequence + scripta) with TTA; Trackastra ft = fine-tuned from general_2d on the same data, '
-             'LOSO; Trackastra zero-shot general_2d (HeLa not in its training data); '
+    fig, ax = plt.subplots(figsize=(style.COLUMN, 56 * style.MM))
+    fig.subplots_adjust(left=0.12, right=0.99, bottom=0.3, top=0.96)
+    width = 0.16
+    lines = ['Figure S2. HeLa (Fluo-N2DL-HeLa 01/02), never trained on, CTC measures on fixed detections. Ours and '
+             'ours binary = final models (scripta + RAW264.7) with TTA; Trackastra ft = fine-tuned from general_2d on '
+             'the same data; Trackastra zero-shot general_2d (HeLa not in its training data); '
              'Trackastra ctc (hatched) was trained on all CTC GT including HeLa and is shown for reference only. '
              'Bars = mean of 01 and 02, dots = sequences. Division recall at tolerance 0 = tp / (tp + fn).']
     for j, k in enumerate(keys):
         t = data.hela_wells(k)
         for i, (col, _) in enumerate(metrics):
-            x = i + (j - 1.5) * width
+            x = i + (j - 2) * width
             ax.bar(x, t[col].mean(), width, color=style.color(k), edgecolor=style.EDGE, lw=0.3,
                    hatch='////' if k == 'ta_zs_ctc' else None, label=style.label(k) if i == 0 else None)
             ax.scatter([x - 0.05, x + 0.05], t[col].values, s=4, color='white', edgecolor='black', lw=0.3, zorder=3)
@@ -72,9 +75,9 @@ def hela():
             f'{name} {" / ".join(f"{v:.3f}" for v in t[col])}' for col, name in metrics)
             + f'; false divisions {" / ".join(str(int(v)) for v in t["fp_div(0)"])}')
     ax.set_xticks(range(len(metrics)), [name for _, name in metrics])
-    ax.set_ylim(0.5, 1.02)
+    ax.set_ylim(0.0, 1.02)
     grid(ax)
-    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.14), ncol=2, handlelength=1.2)
+    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.12), ncol=3, handlelength=1.2, columnspacing=0.8)
     style.save(fig, 'figS2_hela', '\n'.join(lines))
 
 
@@ -83,32 +86,32 @@ def tta():
     fig.subplots_adjust(left=0.13, right=0.99, bottom=0.3, top=0.9, wspace=0.5)
     ax = axes[0]
     lines = ['Figure S3. Test-time augmentation (flips; members x views averaged).',
-             'a: LNK per scripta dev well (out-of-fold) and HeLa sequence, without vs with TTA. '
+             'a: LNK per scripta dev well (out-of-fold) and DNN video (13), without vs with TTA. '
              'b: normalised area under the error-coverage curve when links are ranked by mutual information '
              '(1 = perfect, 0.5 = random).']
-    for dataset, getter, marker in (('scripta', data.scripta_wells, 'o'), ('hela', data.hela_wells, 's')):
+    for dataset, getter, marker in (('scripta', lambda k: data.scripta_wells(k, DEV), 'o'), ('dnn', data.dnn_wells, 's')):
         base = getter('base')['LNK']
-        with_tta = (getter('ours')['LNK'] if dataset == 'hela' else data.scripta_wells('ours').loc[base.index]['LNK'])
-        ax.scatter(base, with_tta, s=8, marker=marker, color=style.DATASETS['hela' if dataset == 'hela' else 'scripta_cv'][1],
-                   edgecolor=style.EDGE, lw=0.3, label='Scripta' if dataset == 'scripta' else 'HeLa')
+        with_tta = getter('ours').loc[base.index]['LNK']
+        ax.scatter(base, with_tta, s=8, marker=marker, color=style.DATASETS['dnn' if dataset == 'dnn' else 'scripta_cv'][1],
+                   edgecolor=style.EDGE, lw=0.3, label='Scripta' if dataset == 'scripta' else 'DNN')
         s = data.paired(with_tta, base)
         test = f', p = {data.fmt_p(s["p"])}' if s['n'] > 5 else ''
         lines.append(f'  {dataset} LNK: no TTA {base.mean():.4f}, TTA {with_tta.mean():.4f}; TTA higher in '
                      f'{s["a_higher"]}/{s["n"]}, lower in {s["b_higher"]}{test}')
     ax.plot([0.94, 1], [0.94, 1], color='#9A9A9A', lw=0.6, ls=':')
-    ax.set(xlim=(0.945, 0.995), ylim=(0.945, 0.995), xlabel='LNK, no TTA', ylabel='LNK, TTA')
+    ax.set(xlim=(0.945, 1.0), ylim=(0.945, 1.0), xlabel='LNK, no TTA', ylabel='LNK, TTA')
     ax.set_aspect('equal')
     ax.legend(loc='upper left', handletextpad=0.2)
     style.panel(ax, 'a', x=-0.35)
 
     ax = axes[1]
-    groups = [('scripta_cv_oof', 'Scripta'), ('hela_loso', 'HeLa')]
+    groups = [('scripta_cv_oof', 'Scripta'), ('dnn', 'DNN')]
     x = 0
     ticks = []
     for prefix, name in groups:
         for population, short in (('false_links', 'false'), ('missed_links', 'missed')):
             for j, (suffix, key) in enumerate((('base', 'base'), ('tta', 'ours'))):
-                m, _, _ = data.answers(f'{prefix}_{suffix}')
+                m, _, _ = data.answers(f'{prefix}_{suffix}' if prefix != 'dnn' or suffix == 'base' else 'dnn')
                 area = m['coverage'][population]['mutual_info']['area']
                 ax.bar(x + (j - 0.5) * 0.38, area, 0.38, color=style.color(key), edgecolor=style.EDGE, lw=0.3,
                        label=('No TTA', 'TTA')[j] if x == 0 else None)
@@ -125,11 +128,16 @@ def tta():
 
 
 def main():
+    global DEV
+    DEV = [w for w in data.all_wells() if w not in data.TEST_WELLS]
     style.setup()
     plt.rcParams['hatch.linewidth'] = 0.4
-    ablation()
     hela()
-    tta()
+    if data.has('base') and data.has('base', 'dnn'):
+        ablation()
+        tta()
+    else:
+        print('figures S1 and S3 skipped: no --retrack results (base, noapp, novel) in final_results_v2 yet')
 
 
 if __name__ == '__main__':

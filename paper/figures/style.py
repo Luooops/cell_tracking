@@ -30,6 +30,9 @@ METHODS = {
     'ctgnn1': ('CellTrack-GNN s1', '#C5B3E6'),
     'classical': ('Classical', '#A6A6A6'),
     't1': ('ProGCT, HeLa only', '#7FA7D9'),
+    'raw': ('ProGCT, RAW264.7 only', '#1F4E8C'),
+    'ours_nodiv': ('ProGCT, no div.', '#3B6FB6'),
+    'binary_nodiv': ('ProGCT, binary, no div.', '#8FB3E3'),
     'noapp': ('No appearance', '#A8D8C0'),
     'novel': ('No velocity', '#F0B8C0'),
     'base': ('No TTA', '#B8C9E8'),
@@ -37,7 +40,7 @@ METHODS = {
 DATASETS = {                # populations of the confidence figure
     'scripta_cv': ('Scripta CV (OOF)', '#3B6FB6'),
     'scripta_test': ('Scripta test', '#79A6DC'),
-    'hela': ('HeLa (LOSO)', '#2A9D8F'),
+    'dnn': ('DNN', '#2A9D8F'),
 }
 
 
