@@ -56,8 +56,8 @@ def test_panel(ax, metric):
 def main():
     style.setup()
     wells = data.all_wells()
-    fig = plt.figure(figsize=(style.FULL, 52 * style.MM))
-    gs = fig.add_gridspec(1, 4, width_ratios=[1.25, 1.25, 1.5, 1.5], left=0.07, right=0.995, bottom=0.27, top=0.92,
+    fig = plt.figure(figsize=(style.FULL, 48 * style.MM))
+    gs = fig.add_gridspec(1, 4, width_ratios=[1.25, 1.25, 1.5, 1.5], left=0.07, right=0.995, bottom=0.3, top=0.91,
                           wspace=0.42)
     axes = [fig.add_subplot(gs[0, i]) for i in range(4)]
     stats = {}

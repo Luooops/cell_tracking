@@ -25,8 +25,8 @@ def wilson(k, n, z=1.96):
 def main():
     style.setup()
     loaded = {k: data.answers(v) for k, v in SOURCES.items()}
-    fig = plt.figure(figsize=(style.FULL, 55 * style.MM))
-    gs = fig.add_gridspec(1, 3, left=0.06, right=0.99, bottom=0.2, top=0.9, wspace=0.32)
+    fig = plt.figure(figsize=(style.FULL, 48 * style.MM))
+    gs = fig.add_gridspec(1, 3, left=0.06, right=0.99, bottom=0.22, top=0.89, wspace=0.32)
     ax_r, ax_f, ax_m = (fig.add_subplot(gs[0, i]) for i in range(3))
 
     ax_r.plot([0, 1], [0, 1], color='#9A9A9A', lw=0.6, ls=':', zorder=1)
@@ -39,7 +39,6 @@ def main():
                   label=name, zorder=2)
     ax_r.set(xlim=(0, 1), ylim=(0, 1), xlabel='Predicted p (same cell)', ylabel='Fraction same cell')
     ax_r.set_aspect('equal')
-    ax_r.legend(loc='upper left', handlelength=1.4)
     ax_r.set_title('Decision band, 0.02 < p < 0.98', loc='left', fontsize=6.5)
 
     for ax, population, title in ((ax_f, 'false_links', 'False links (among chosen links)'),
@@ -58,6 +57,7 @@ def main():
     handles = [plt.Line2D([], [], color='black', ls=ls, lw=0.8, label=f'ranked by {lab}') for ls, lab in SCORES.values()]
     handles.append(plt.Line2D([], [], color='#9A9A9A', ls=':', lw=0.6, label='random order'))
     ax_m.legend(handles=handles, loc='lower right', bbox_to_anchor=(1, 0.22), handlelength=2)
+    ax_f.legend(*ax_r.get_legend_handles_labels(), loc='lower right', bbox_to_anchor=(1, 0.22), handlelength=1.4)
     for ax, letter in zip((ax_r, ax_f, ax_m), 'abc'):
         style.panel(ax, letter, x=-0.18)
 
