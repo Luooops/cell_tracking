@@ -1,6 +1,7 @@
 """Figure 2 (one column): link errors by frame gap g on the 15 scripta wells.
 a  missed GT continuations (% of the GT links of that gap);  b  false links (count).
 Ours vs Trackastra ft and zs at delta_t 1 (its intended use) and at delta_t 3 (hatched)."""
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -12,18 +13,28 @@ BINS = ['g1', 'g2', 'g3+']
 TICKS = ['g = 1', 'g = 2', 'g ≥ 3']
 
 
+def light(key, amount):
+    """The method's colour mixed with white (light fill; the method colour itself is the edge)."""
+    rgb = np.array(mcolors.to_rgb(style.color(key)))
+    return tuple(rgb + (1 - rgb) * amount)
+
+
 def bars(ax, values, log_floor):
     width = 0.8 / len(METHODS)
     for j, k in enumerate(METHODS):
         x = np.arange(len(BINS)) + (j - (len(METHODS) - 1) / 2) * width
         v = np.array([values[k][b] for b in BINS], float)
-        ax.bar(x, np.maximum(v, log_floor), width, color=style.color(k), edgecolor=style.EDGE, lw=0.3,
-               hatch='////' if k.endswith('dt3') else None, label=style.label(k))
+        dt3 = k.endswith('dt3')
+        ax.bar(x, np.maximum(v, log_floor), width * 0.9, color=light(k, 0.88 if dt3 else 0.55),
+               edgecolor=style.color(k), lw=0.6, hatch='//////' if dt3 else None, label=style.label(k))
         for xi, vi in zip(x, v):
             if vi == 0:
-                ax.text(xi, log_floor * 1.3, '0', ha='center', va='bottom', fontsize=5)
+                ax.text(xi, log_floor * 1.25, '0', ha='center', va='bottom', fontsize=5, color='#8C8C8C')
     ax.set_yscale('log')
     ax.set_xticks(range(len(BINS)), TICKS)
+    ax.tick_params(axis='x', length=0)
+    for i in range(1, len(BINS)):
+        ax.axvline(i - 0.5, color=style.GRID, lw=0.5)
     ax.yaxis.grid(True, color=style.GRID, lw=0.4, which='major')
     ax.set_axisbelow(True)
 
@@ -36,8 +47,8 @@ def main():
     missed = {k: {b: 100 * total.loc[k, f'missed_{b}'] / total.loc[k, f'gt_{b}'] for b in BINS} for k in METHODS}
     false = {k: {b: total.loc[k, f'false_{b}'] for b in BINS} for k in METHODS}
 
-    fig, axes = plt.subplots(1, 2, figsize=(style.COLUMN, 58 * style.MM))
-    fig.subplots_adjust(left=0.13, right=0.99, bottom=0.3, top=0.93, wspace=0.42)
+    fig, axes = plt.subplots(1, 2, figsize=(style.COLUMN, 56 * style.MM))
+    fig.subplots_adjust(left=0.13, right=0.99, bottom=0.27, top=0.93, wspace=0.42)
     bars(axes[0], missed, 0.1)
     axes[0].set_ylabel('Missed links (% of GT)')
     axes[0].set_ylim(0.1, 200)
@@ -47,8 +58,8 @@ def main():
     for ax, letter in zip(axes, 'ab'):
         style.panel(ax, letter, x=-0.25)
     handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc='lower center', ncol=3, bbox_to_anchor=(0.55, 0.0), handlelength=1.2,
-               columnspacing=0.8)
+    fig.legend(handles, labels, loc='lower center', ncol=3, bbox_to_anchor=(0.5, 0.0), handlelength=1.2,
+               handleheight=0.9, columnspacing=0.5, handletextpad=0.35)
 
     gt = total.loc['ours']
     ours = t[t.method == 'ours'].set_index('well')
