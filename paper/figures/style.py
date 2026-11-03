@@ -35,9 +35,9 @@ METHODS = {
     'raw': ('ProGCT, RAW264.7 only', '#1F4E8C'),
     'ours_nodiv': ('ProGCT, no div.', '#3B6FB6'),
     'binary_nodiv': ('ProGCT, binary, no div.', '#8FB3E3'),
-    'noapp': ('No appearance', '#A8D8C0'),
-    'novel': ('No velocity', '#F0B8C0'),
-    'base': ('No TTA', '#B8C9E8'),
+    'noapp': ('No appearance', '#2A9D8F'),
+    'novel': ('No velocity', '#C8607A'),
+    'base': ('No TTA', '#6C93CC'),
 }
 DATASETS = {                # populations of the confidence figure
     'scripta_cv': ('Scripta CV (OOF)', '#3B6FB6'),

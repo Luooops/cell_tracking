@@ -84,8 +84,8 @@ def hela():
 
 
 def tta():
-    fig, axes = plt.subplots(1, 2, figsize=(style.COLUMN, 48 * style.MM), gridspec_kw=dict(width_ratios=[1, 1.3]))
-    fig.subplots_adjust(left=0.13, right=0.99, bottom=0.3, top=0.9, wspace=0.5)
+    fig, axes = plt.subplots(1, 2, figsize=(style.COLUMN, 42 * style.MM), gridspec_kw=dict(width_ratios=[1, 1.3]))
+    fig.subplots_adjust(left=0.13, right=0.99, bottom=0.2, top=0.9, wspace=0.5)
     ax = axes[0]
     lines = ['Figure S3. Test-time augmentation (flips; members x views averaged).',
              'a: LNK per scripta dev well (out-of-fold) and DNN video (13), without vs with TTA. '
@@ -116,7 +116,8 @@ def tta():
             for j, (suffix, key) in enumerate((('base', 'base'), ('tta', 'ours'))):
                 m, _, _ = data.answers(f'{prefix}_{suffix}' if prefix != 'dnn' or suffix == 'base' else 'dnn')
                 area = m['coverage'][population]['mutual_info']['area']
-                ax.bar(x + (j - 0.5) * 0.38, area, 0.34, color=style.light(key), edgecolor=style.color(key), lw=0.6,
+                ax.bar(x + (j - 0.5) * 0.38, area, 0.34, color=style.light(key, 0.85 if key == 'base' else 0.45),
+                       edgecolor=style.color(key), lw=0.6,
                        label=('No TTA', 'TTA')[j] if x == 0 else None)
                 lines.append(f'  {name} {short} links, {("no TTA", "TTA")[j]}: MI area {area:.3f}')
             ticks.append((x, f'{name}\n{short}'))
