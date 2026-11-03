@@ -26,8 +26,8 @@ ROWS = [('dnn', MOTHER_DAUGHTER, 'DNN, mother$\\rightarrow$daughter'),
         ('scripta_raw', SAME_CELL, 'Scripta, same cell,\nmodel trained on RAW264.7 only'),
         ('hela', MOTHER_DAUGHTER, 'HeLa, mother$\\rightarrow$daughter'),
         ('hela', SAME_CELL, 'HeLa, same cell')]
-COUNTED = ['ours', 'raw', 't1', 'binary', 'ta_ft_div', 'ta_zs_div', 'ctgnn0', 'ctgnn1']
-SHORT = {'ours': 'ProGCT', 'raw': 'ProGCT, RAW264.7 only', 't1': 'ProGCT, HeLa only', 'binary': 'ProGCT, binary',
+COUNTED = ['ours', 'raw', 'binary', 'ta_ft_div', 'ta_zs_div', 'ctgnn0', 'ctgnn1']
+SHORT = {'ours': 'ProGCT', 'raw': 'ProGCT, RAW264.7 only', 'binary': 'ProGCT, binary',
          'ta_ft_div': 'Trackastra ft', 'ta_zs_div': 'Trackastra zs', 'ctgnn0': 'CellTrack-GNN s0',
          'ctgnn1': 'CellTrack-GNN s1'}
 THRESHOLD = 0.5                    # the division threshold of the tracker (track.DIV_THRESH)
@@ -147,7 +147,7 @@ def main(refresh=False):
     ax_b.set_xlabel('False divisions on the Scripta test wells', labelpad=1.5)
     style.panel(ax_b, 'b', x=-0.68, y=1.0)
     wells = data.all_wells()
-    every = {key: data.scripta_divisions(key, wells)['divisions'] for key in ('ours', 'raw', 't1', 'ta_ft_div', 'ta_zs_div')}
+    every = {key: data.scripta_divisions(key, wells)['divisions'] for key in ('ours', 'raw', 'ta_ft_div', 'ta_zs_div')}
     lines.append('b: false divisions on the scripta test wells r16c02, r01c20, r07c07 (a mother with exactly two '
                  'daughters; the GT has none), every method allowed to divide (Trackastra: greedy). A count of 0 sits '
                  'at the left end of the log axis. ' + ', '.join(f'{style.plain(key)} {counts[key]["divisions"]}'
