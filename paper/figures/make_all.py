@@ -16,6 +16,7 @@ import fig_main
 import fig_overview
 import fig_qualitative
 import fig_suppl
+import fig_teaser
 import tables
 
 
@@ -27,6 +28,7 @@ def main():
     style.OUT = args.out
     data.gap_counts(refresh=args.refresh)
     fig_overview.main()
+    fig_teaser.main()
     fig_main.main()
     fig_gaps.main()
     fig_confidence.main()
