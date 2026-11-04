@@ -62,6 +62,43 @@ def edges(refresh=False):
     return table
 
 
+def missed_divisions(dataset='hela', key='ours', wells=('01', '02'), root=data.HELA):
+    """Are the divisions the tracker misses flagged? Every GT division whose two mother -> daughter edges both entered
+    the round-1 solver; missed = not both d >= tau_D. A missed one carries a signal if its weaker daughter edge has
+    d >= 0.1 (a near miss) or the link the tracker made instead (mother -> a daughter as a continuation) is flagged
+    uncertain (0.1 <= p <= 0.9, confidence.py). -> dict of counts, and the share of all output links flagged."""
+    c = dict(divisions=0, missed=0, near=0, continued=0, continued_flagged=0, signal=0, links=0, flagged=0)
+    for well in wells:
+        folder = data.track_folder(key, well, dataset)
+        z = np.load(folder / 'edges.npz')
+        tracks = pd.read_csv(folder / 'instance_tracks.csv')
+        lineage = read_lineage(root / f'{well}_GT' / 'TRA' / 'man_track.txt',
+                               zip(tracks.frame_index.astype(int), tracks.instance_id.astype(int)))
+        mothers = {}
+        for k in np.flatnonzero((z['round'] == 1) & z['in_solver'].astype(bool)):
+            t, g, a, b = (int(z[n][k]) for n in ('src_frame', 'g', 'src_label', 'dst_label'))
+            if lineage.relation((t, a), (t + g, b)) == MOTHER_DAUGHTER:
+                mothers.setdefault((t, a), []).append(k)
+        for ks in mothers.values():
+            if len(ks) != 2:
+                continue
+            c['divisions'] += 1
+            weak = min(float(z['p_div'][k]) for k in ks)
+            if weak >= THRESHOLD:
+                continue
+            c['missed'] += 1
+            chosen = [k for k in ks if z['chosen'][k]]
+            flagged = any(0.1 <= float(z['p'][k]) <= 0.9 for k in chosen)
+            c['near'] += weak >= 0.1
+            c['continued'] += bool(chosen)
+            c['continued_flagged'] += flagged
+            c['signal'] += weak >= 0.1 or flagged
+        p = pd.read_csv(folder / 'links.csv').p
+        c['links'] += len(p)
+        c['flagged'] += int(((p >= 0.1) & (p <= 0.9)).sum())
+    return c
+
+
 def share_text(share):
     return '0' if share == 0 else f'{share:.0%}' if share >= 0.1 else f'{share:.2%}'
 
@@ -109,6 +146,13 @@ def main(refresh=False):
         lines.append(f'  {population}, edges with d >= {THRESHOLD} as mother -> daughter edges ({n_pos} GT '
                      f'mother-daughter edges of {n}): precision {precision:.3f}, recall {recall:.3f} (edge level, '
                      'before the one-to-one matching of the tracker).')
+    m = missed_divisions()
+    lines.append(f'  HeLa, missed divisions (GT divisions with both daughter edges in the round-1 solver: '
+                 f'{m["divisions"]}): {m["missed"]} missed; {m["near"]} with the weaker daughter edge at '
+                 f'0.1 <= d < {THRESHOLD}; {m["continued"]} continued the mother to a daughter, {m["continued_flagged"]} '
+                 f'of these links flagged uncertain (0.1 <= p <= 0.9); any signal {m["signal"]} '
+                 f'({m["signal"] / m["missed"]:.0%}). Flagged links among all {m["links"]} output links: '
+                 f'{m["flagged"]} ({m["flagged"] / m["links"]:.1%}).')
     ax_a.text(1.04, -0.8, '$\\geq\\tau_D$', transform=ax_a.get_yaxis_transform(), ha='left', va='center', fontsize=6)
     ax_a.set_yticks(range(len(ROWS)), [name for *_, name in ROWS], fontsize=5.8)
     ax_a.invert_yaxis()
