@@ -87,7 +87,8 @@ def facts():
     """Every number shown in the figure, from final_results_v2."""
     dev = [w for w in data.all_wells() if w not in data.TEST_WELLS]
     gaps = data.gap_counts().groupby('method').sum(numeric_only=True)
-    cv = data.answers('scripta_cv_oof_tta')[0]['coverage']
+    cv_all = data.answers('scripta_cv_oof_tta')[0]
+    cv = cv_all['coverage']
     nogap = data.paired(data.scripta_wells('ours_nodiv', dev).LNK, data.scripta_wells('nogap', dev).LNK)
     return dict(
         gap_found=1 - gaps.loc['ours', 'missed_g2'] / gaps.loc['ours', 'gt_g2'],
@@ -96,6 +97,7 @@ def facts():
         ta_false_div=data.scripta_divisions('ta_ft_div', data.all_wells())['divisions'],
         ours_false_div=data.scripta_divisions('ours', data.all_wells())['divisions'],
         bc=data.dnn_wells('ours')['BC(0)'].mean(), bc_ta=data.dnn_wells('ta_ft_div')['BC(0)'].mean(),
+        ece=cv_all['calibration']['round1_decision']['ece'],
         cov_false=cv['false_links']['mutual_info']['at_percent']['5'],
         cov_missed=cv['missed_links']['mutual_info']['at_percent']['5'])
 
@@ -224,9 +226,10 @@ def row_confidence(fig, ax, f):
     c = c[c.checked_percent <= 20]
     for k, (title, xl, xlim, ylim, curve, diag) in enumerate((
             ('calibration', 'predicted $p$', (0, 1), (0, 1), (r.mean_p, r.frac_pos), ([0, 1], [0, 1])),
-            ('missed links found', '% links checked', (0, 20), (0, 100), (c.checked_percent, c.errors_found_percent),
+            ('missed candidates', '% left-out checked', (0, 20), (0, 100),
+             (c.checked_percent, c.errors_found_percent),
              ([0, 20], [0, 20])))):
-        x = X_NEW + 4.4 + k * 13.0
+        x = X_NEW + 3.4 + k * 13.6
         a = inset(fig, x, lo + 4.5, 8.0, 5.8)
         a.plot(*diag, color=MUTED, lw=0.5, ls=':')
         a.plot(*curve, '-', color=BLUE, lw=0.9)
@@ -235,13 +238,11 @@ def row_confidence(fig, ax, f):
         for v, ha in zip(xlim, ('left', 'right')):
             ax.text(x + (0 if ha == 'left' else 8.0), lo + 4.1, f'{v:g}', ha=ha, va='top', fontsize=4.6, color=INK)
         ax.text(x + 4.0, lo + 2.3, xl, ha='center', va='top', fontsize=4.6, color=SOFT)
-        ax.text(x + 4.0, lo + 10.7, title, ha='center', va='bottom', fontsize=5.3, color=SOFT)
-    lines(ax, X_NEW_TEXT, hi - 1.6, [('Trained without class weights, $p$ is a posterior:', INK, True),
-                                     ('$\\tau$ = 0.4 from the LNK costs (1 : 1.5), not tuned', INK, False),
-                                     (f'the 5% most uncertain links hold {f["cov_false"]:.0f}% of the false', BLUE,
-                                      True),
-                                     (f'and {f["cov_missed"]:.0f}% of the missed links; counts within 10%', BLUE,
-                                      False)])
+        ax.text(x + 4.0, lo + 10.7, title, ha='center', va='bottom', fontsize=5.0, color=SOFT)
+    lines(ax, X_NEW_TEXT, hi - 1.6, [('No class weights: calibrated on unseen wells', INK, True),
+                                     (f'(ECE {f["ece"]:.3f}); $\\tau$ = 0.4 from the LNK costs, not tuned', INK, False),
+                                     (f'5% most uncertain: {f["cov_false"]:.0f}% of false links made,', BLUE, True),
+                                     (f'{f["cov_missed"]:.0f}% of missed candidates; counts within 10%', BLUE, False)])
 
 
 def pipeline(ax):
@@ -250,7 +251,7 @@ def pipeline(ax):
     ax.text(X_LAB, lo + 0.4, 'detections in,\ntracks and\nconfidence out', fontsize=5.3, color=SOFT, va='bottom',
             style='italic', linespacing=1.1)
     steps = [([1], 'Frame-gap graph', 'detections of $t$, $t{+}g$;\ngate $r\\sqrt{g}$, $g$ as input'),
-             ([2], 'Three-class GNN', 'no class weights,\nScripta + DNN, no flag'),
+             ([2], 'Three-class GNN', 'no class weights; Scripta +\nRAW264.7 (DNN), no flag'),
              ([3], 'Ensemble', '3 networks $\\times$ 3 mirror\nviews; mean $p$, MI'),
              ([1, 2, 3], 'Assignment', '$\\tau$ = 0.4, $\\tau_D$ = 0.5; then\ncross-frame check, $g$ = 2'),
              ([3], 'Tracks + confidence', '$p$, flag per link and track;\nexpected errors per video')]
@@ -291,8 +292,10 @@ row 2: false divisions over 15 scripta wells, Trackastra ft greedy {f['ta_false_
   DNN 13 videos BC(0) ProGCT {f['bc']:.3f}, Trackastra ft {f['bc_ta']:.3f}.
   Cells: DNN {DIVISION[0]} frames {DIVISION[1]}-{DIVISION[1] + 1}, mother label {DIVISION[2]}; bars = ProGCT's
   mean (p_unrelated, p_same, p_division) of the two daughter edges.
-row 3: scripta 12 development wells out of fold (TTA): reliability of the undecided edges (0.02 < p < 0.98) and the
-  missed-link coverage ranked by MI; 5% checked: false {f['cov_false']:.1f}%, missed {f['cov_missed']:.1f}%.
+row 3: scripta 12 development wells out of fold (TTA): reliability of the undecided edges (0.02 < p < 0.98), ECE
+  {f['ece']:.3f}, and the coverage of the missed candidates (candidate edges the solver left out that join the same
+  cell; links without a candidate edge are not counted) ranked by MI among the candidates left out; 5% checked:
+  false links among the links made {f['cov_false']:.1f}%, missed candidates among those left out {f['cov_missed']:.1f}%.
 """
     style.save(fig, 'fig0_teaser', legend)
 

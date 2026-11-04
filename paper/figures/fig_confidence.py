@@ -41,8 +41,8 @@ def main():
     ax_r.set_aspect('equal')
     ax_r.set_title('Decision band, 0.02 < p < 0.98', loc='left', fontsize=6.5)
 
-    for ax, population, title in ((ax_f, 'false_links', 'False links (among chosen links)'),
-                                  (ax_m, 'missed_links', 'Missed links (among candidates not chosen)')):
+    for ax, population, title in ((ax_f, 'false_links', 'False links (among the links made)'),
+                                  (ax_m, 'missed_links', 'Missed candidates (among those left out)')):
         ax.plot([0, MAX_CHECKED], [0, MAX_CHECKED], color='#9A9A9A', lw=0.6, ls=':', label='Random order')
         for key, (_, _, coverage) in loaded.items():
             name, col = style.DATASETS[key]
