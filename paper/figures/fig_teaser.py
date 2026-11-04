@@ -202,8 +202,9 @@ def row_divisions(fig, ax, f):
     ax.text(bx + 2.8, by + bh + 0.5, f'$d$ = {probs[2]:.2f}', ha='center', va='bottom', fontsize=5.3, color=RED)
     lines(ax, X_NEW_TEXT, hi - 1.6, [('Three-class edge: unrelated / same / division,', INK, True),
                                      ('one model for both kinds of data, no dataset flag', INK, False),
-                                     (f'{f["ours_false_div"]} false divisions without mitoses,', BLUE, True),
-                                     (f'BC {f["bc"]:.3f} with mitoses (Trackastra {f["bc_ta"]:.3f})', BLUE, False)])
+                                     (f'Scripta, no mitoses: {f["ours_false_div"]} false divisions', BLUE, True),
+                                     (f'RAW264.7 (shown): BC {f["bc"]:.3f} (Trackastra {f["bc_ta"]:.3f})', BLUE,
+                                      False)])
 
 
 def row_confidence(fig, ax, f):
@@ -239,8 +240,8 @@ def row_confidence(fig, ax, f):
             ax.text(x + (0 if ha == 'left' else 8.0), lo + 4.1, f'{v:g}', ha=ha, va='top', fontsize=4.6, color=INK)
         ax.text(x + 4.0, lo + 2.3, xl, ha='center', va='top', fontsize=4.6, color=SOFT)
         ax.text(x + 4.0, lo + 10.7, title, ha='center', va='bottom', fontsize=5.0, color=SOFT)
-    lines(ax, X_NEW_TEXT, hi - 1.6, [('No class weights: calibrated on unseen wells', INK, True),
-                                     (f'(ECE {f["ece"]:.3f}); $\\tau$ = 0.4 from the LNK costs, not tuned', INK, False),
+    lines(ax, X_NEW_TEXT, hi - 1.6, [('No class weights; calibration out of fold:', INK, True),
+                                     (f'ECE {f["ece"]:.3f}; $\\tau$ = 0.4 from the LNK costs, not tuned', INK, False),
                                      (f'5% most uncertain: {f["cov_false"]:.0f}% of false links made,', BLUE, True),
                                      (f'{f["cov_missed"]:.0f}% of missed candidates; counts within 10%', BLUE, False)])
 
