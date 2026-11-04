@@ -243,7 +243,7 @@ def row_confidence(fig, ax, f):
     lines(ax, X_NEW_TEXT, hi - 1.6, [('No class weights; calibration out of fold:', INK, True),
                                      (f'ECE {f["ece"]:.3f}; $\\tau$ = 0.4 from the LNK costs, not tuned', INK, False),
                                      (f'5% most uncertain: {f["cov_false"]:.0f}% of false links made,', BLUE, True),
-                                     (f'{f["cov_missed"]:.0f}% of missed candidates; counts within 10%', BLUE, False)])
+                                     (f'{f["cov_missed"]:.0f}% of missed candidates; counts within 11%', BLUE, False)])
 
 
 def pipeline(ax):
