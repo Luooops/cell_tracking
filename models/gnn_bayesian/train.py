@@ -21,6 +21,8 @@ no Adam state change). Off by default, so the models trained so far are reproduc
 median / max gradient norm (before clipping) and the skipped steps.
 lr: the constant learning rate (default gnn_tracking's LR = 1e-3). 5e-4 was piloted for the scripta + RAW264.7 mix,
 where the training loss rose 5-6% over the last epochs at 1e-3 (scripta + HeLa: at most 1.6%).
+max_gap: the largest frame gap g of the training graphs (default MAX_GAP = 3); max_gap=1 is the ablation 'adjacent
+frames only' (the gap feature is then always 0 in training, and round 2 scores g = 2 graphs the network never saw).
 n_classes=2 is the binary ablation 'linked or not': SAME and DIVISION are both positive (a daughter is a link of its
 mother), so gnn_division's solver can divide on two strong links; same data, augmentation and schedule.
 """
@@ -42,13 +44,13 @@ CLIP = 5.0                                  # stable=True; fixed before the expe
                                             # the RAW264.7-only run (2.0-2.8), so only the outlier steps are cut
 
 
-def training_graphs(specs, cache, rng):
+def training_graphs(specs, cache, rng, max_gap=MAX_GAP):
     graphs, counts, n_edges = [], {}, 0
     for spec in specs:
         dataset, _ = split(spec)
         for flip in (None, 'h', 'v'):
             video = Video(*load(spec, cache, flip))
-            for g in range(1, MAX_GAP + 1):
+            for g in range(1, max_gap + 1):
                 for t in video.frames:
                     if t + g in video.rows and (g == 1 or t % 2 == 0):
                         gr = pair_graph(video, t, g, gt_velocities(video, t, rng))
@@ -93,10 +95,13 @@ def active_bias_weights(u, eps, cap=AB_CAP):
     return w
 
 
-def train(specs, seed, cache, log=None, n_classes=3, active_bias=False, cosine=False, stable=False, lr=LR):
+def train(specs, seed, cache, log=None, n_classes=3, active_bias=False, cosine=False, stable=False, lr=LR,
+          max_gap=MAX_GAP):
+    if not 1 <= max_gap <= MAX_GAP:
+        raise ValueError(f'max_gap must lie in 1..{MAX_GAP}')
     if log:
-        print(f'  {log}: building training graphs for {len(specs)} videos', flush=True)
-    graphs, counts = training_graphs(specs, cache, np.random.default_rng(seed))
+        print(f'  {log}: building training graphs for {len(specs)} videos (gaps 1..{max_gap})', flush=True)
+    graphs, counts = training_graphs(specs, cache, np.random.default_rng(seed), max_gap)
     torch.manual_seed(seed)
     model = TrackerGNN3(n_classes).to(DEVICE)
     merge = (lambda c: c) if n_classes == 3 else (lambda c: np.array([c[0], c[1] + c[2]]))

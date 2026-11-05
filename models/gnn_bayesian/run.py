@@ -44,7 +44,8 @@ Tracking options (after training, or with --retrack):
 --retrack trains nothing: it loads the checkpoints and tracks again into
 <out>/retrack_<prior>[_tta][_no<cue>][_cues][_t<T>][_nogap]/.
 
-Training options: --classes 2 (binary ablation 'linked or not'); --active-bias (weight edges by their prediction
+Training options: --classes 2 (binary ablation 'linked or not'); --max-gap 1 (ablation: training graphs of adjacent
+frames only, default gaps 1-3; with the cross-frame check round 2 then scores g = 2 graphs the network never saw); --active-bias (weight edges by their prediction
 variance over the epochs; tested, not significant); --cosine-lr (cosine learning-rate decay; tested in f002, made the
 posterior under-confident on uncertain edges -> not used; the default is the constant learning rate).
 
@@ -171,7 +172,7 @@ def _train_member(args, specs, cache, prefix, seed):
         raise FileExistsError(f'{path} exists')
     model = train(specs, seed, cache, log=f'{prefix} seed {seed}', n_classes=args.classes,
                   active_bias=args.active_bias, cosine=args.cosine_lr, stable=args.stable,
-                  **({'lr': args.lr} if args.lr else {}))
+                  max_gap=args.max_gap, **({'lr': args.lr} if args.lr else {}))
     path.parent.mkdir(parents=True, exist_ok=True)
     save(model, path)
     return model
@@ -205,7 +206,7 @@ def _train_on_gpus(args, todo):
               *(['--unseen', *args.unseen] if args.unseen else []),
               *(['--train-videos', *args.train_videos] if args.train_videos else []),
               *(['--track-videos', *args.track_videos] if args.track_videos else []),
-              '--classes', str(args.classes), '--output-root', str(args.output_root)] \
+              '--classes', str(args.classes), '--max-gap', str(args.max_gap), '--output-root', str(args.output_root)] \
         + (['--dataset', args.dataset] if args.dataset else []) + (['--active-bias'] if args.active_bias else []) \
         + (['--cosine-lr'] if args.cosine_lr else []) + (['--stable'] if args.stable else []) \
         + (['--lr', str(args.lr)] if args.lr else [])
@@ -239,6 +240,7 @@ def run(args):
             track_videos=args.track_videos or [], seeds=args.seeds,
             folds=args.scripta_spec['folds'], test_wells=args.test_wells, classes=args.classes,
             active_bias=args.active_bias, cosine_lr=args.cosine_lr, stable=args.stable, lr=args.lr or 'default',
+            max_gap=args.max_gap,
             created=datetime.datetime.now().isoformat(timespec='seconds'),
             scope=('3-way edges (unrelated / same / division)' if args.classes == 3 else 'binary edges (linked or not)')
             + ' trained on scripta + extra datasets; tracking options per video in metrics.json'),
@@ -290,6 +292,8 @@ def main(argv=None):
     parser.add_argument('--stable', action='store_true', help='Clip the gradient norm and skip non-finite steps '
                         '(training; for mixes with dense videos)')
     parser.add_argument('--lr', type=float, help='Constant learning rate (training; default gnn_tracking LR 1e-3)')
+    parser.add_argument('--max-gap', type=int, choices=[1, 2, 3], default=3,
+                        help='Largest frame gap of the training graphs (training; 1 = ablation: adjacent frames only)')
     parser.add_argument('--prior', choices=['none', 'division'], default='none',
                         help="none: the network's own posterior; division: the dataset's division prior (analysis)")
     parser.add_argument('--link-thresh', type=float, help='Link and gap threshold instead of the cost-derived 0.4 '
