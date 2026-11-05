@@ -1,7 +1,9 @@
 """Framework figure of ProGCT: how one calibrated posterior per decision is computed and used.
 
-Row 1 (scoring):  input frames -> (1) frame-gap graph -> graph network (standard) -> (2) three-class edges
-Row 2 (deciding): (3) ensemble of 3 models x 3 views -> (3) calibrated decisions -> (1) cross-frame check -> outputs
+Row 1 (scoring):  frame-pair graphs (t, t+g), g = 1, 2, 3 in training -> graph network (appearance and geometry
+                  streams in parallel, fused in the node and edge features, message passing, edge head) ->
+                  three-class edges
+Row 2 (deciding): ensemble of 3 models x 3 views -> calibrated decisions -> constrained gap closing (g = 2) -> outputs
 A plain flowchart: every card alike, no step numbers, no highlighted frames.
 Features are drawn as small flat cubes; the first cube of a node token shows a real masked appearance crop
 (utils.dataset.appearance_crop of a Scripta nucleus). Everything else is schematic. No equations.
@@ -281,9 +283,37 @@ def skewed_slab(part, image01, x, y, w, h, sh, depth, z):
 CROP = appearance_crop_of(EXW, EXT, EXS)
 
 # =============================================================== layout
+# Row 1 (user, 2026-11-05): input -> two parallel branches, stacked (frame-gap graph above: the graph and its geometric
+# features, computed from the detections; appearance embedding below: the learned vector e of each cell) -> graph
+# network (where both meet: node = [geometry, e], candidate edge = [geometry, g, e_i . e_j]) -> three-class edges.
+# Feature colours are the same in every card: geometry light blue, the gap g blue, appearance grey. Each branch ends
+# in its output features at its right edge, where the flow joins.
 R1, R2 = (3.0, 35.0), (40.0, 72.0)          # rows (y0, y1)
-C1 = [(0.6, 20.6), (22.8, 72.0), (74.2, 116.6), (118.8, 174.0)]
-C2 = [(0.6, 40.0), (42.2, 92.0), (94.2, 128.0), (130.2, 174.0)]
+R1T, R1B = (3.0, 22.4), (23.6, 35.0)        # the two branches of row 1 (the graph needs the height)
+C1 = [(0.6, 17.6), (19.8, 72.8), (75.0, 121.0), (123.2, 174.0)]
+C2 = [(0.6, 34.0), (36.2, 86.0), (88.2, 128.0), (130.2, 174.0)]
+GR, GEO = '#C9D1D8', '#A9BEDD'                             # appearance / geometric features (g: BLUE)
+
+
+def blocks(part, x0, y0, groups, s=2.0, gap=0.7, dims=None):
+    """A feature vector drawn as concatenated groups of cubes, each group named under it: groups = [(colours, label)].
+    dims: the width of each group, written under its name (user: geometry and g separately).
+    Returns the x after the last cube."""
+    xx = x0
+    for k_, (colours, lab) in enumerate(groups):
+        tokens(part, xx, y0, s, list(colours))
+        width = len(colours) * (s + 0.15) - 0.15
+        if lab in ('g', 'e'):
+            note(part, xx + width / 2, y0 + s + 1.3, lab, fs=4.8, c=BLUE if lab == 'g' else INK, b=lab == 'g',
+                 it=True, ha='center')
+        elif lab == 'eij':
+            txt(part, xx + width / 2, y0 + s + 1.3, r'$\mathit{e_i}$·$\mathit{e_j}$', fs=4.4, c=INK, ha='center')
+        else:
+            note(part, xx + width / 2, y0 + s + 1.3, lab, fs=4.2, c=MUTED, ha='center')
+        if dims:
+            note(part, xx + width / 2, y0 + s + 2.9, dims[k_], fs=4.0, c=GREY_T, ha='center')
+        xx += width + gap
+    return xx - gap + 0.35 * s
 
 
 def hcard(row, col):
@@ -299,12 +329,12 @@ LV = np.percentile(np.concatenate([i[int(SY - WIN):int(SY + WIN), int(SX - WIN):
 # --------------------------------------------------------------- row 1, card 1: input (two real frames)
 x, y, w, h = hcard(R1, C1[0])
 card('input', x, y, w, h, 'Input')
-for k, (dy, lab) in enumerate(((5.4, 'frame t'), (16.2, 'frame t+1'))):
+for k, (dy, lab) in enumerate(((5.4, 'frame t'), (16.2, 'frame t+g'))):
     t = EXT + k
     y0_, x0_ = int(SY - WIN / 2), int(SX - WIN * 0.9)
     crop = ims_ex[k][y0_:y0_ + WIN, x0_:x0_ + int(WIN * 1.8)]
     m = s_mask(EXW, t)[y0_:y0_ + WIN, x0_:x0_ + int(WIN * 1.8)]
-    to = skewed_slab('input', norm(crop, LV), x + 1.4, y + dy, 13.0, 6.0, 3.3, 0.9, z=2 + 2 * k)
+    to = skewed_slab('input', norm(crop, LV), x + 1.2, y + dy, 11.6, 5.6, 3.0, 0.9, z=2 + 2 * k)
     for lab_ in np.unique(m):
         if lab_ == 0:
             continue
@@ -312,113 +342,185 @@ for k, (dy, lab) in enumerate(((5.4, 'frame t'), (16.2, 'frame t+1'))):
             u, v = (cc[:, 1] / 2) / m.shape[1], (cc[:, 0] / 2) / m.shape[0]
             pts = np.array([to(a_, b_) for a_, b_ in zip(u, v)])
             line('input', pts[:, 0], pts[:, 1], '#E8EEF2', lw=0.25, z=2.5 + 2 * k)
-    note('input', x + w / 2, y + dy + 8.3, lab, fs=5.4, c=INK, ha='center')
-note('input', x + w / 2, y + h - 3.0, 'segmented nuclei', fs=5.2, ha='center', it=True)
-note('input', x + w / 2, y + h - 1.0, 'pairs t, t+g; g = 1, 2', fs=5.0, ha='center', it=True)
+    note('input', x + w / 2, y + dy + 8.0, lab, fs=5.2, c=INK, ha='center')
+note('input', x + w / 2, y + h - 3.0, 'segmented nuclei', fs=4.8, ha='center', it=True)
+note('input', x + w / 2, y + h - 1.0, 'g = 1, 2, 3', fs=4.8, ha='center', it=True)
 
-# --------------------------------------------------------------- row 1, card 2: (1) frame-gap graph on real frames
-x, y, w, h = hcard(R1, C1[1])
+
+def sqrt_label(part, cx, yb, lead, under, fs, c):
+    """'lead' + a LaTeX-style radical over 'under', centred at cx on baseline yb: the texts stay editable SVG text
+    (Times New Roman) and the radical sign with its bar is a path (mathtext's \\sqrt shows as 'p' in Inkscape)."""
+    wl, wu, wr = sum(text_width(s, fs) for s, _ in lead), text_width(under, fs), 1.0
+    x0 = cx - (wl + 0.3 + wr + wu + 0.15) / 2
+    xx = x0
+    for s, it_ in lead:                                     # lead: [(text, italic)]
+        txt(part, xx, yb, s, fs=fs, c=c, it=it_, va='baseline')
+        xx += text_width(s, fs)
+    xr, top = x0 + wl + 0.3, yb - 0.66 * fs / PT - 0.25    # a thin space; bar just above the italic letter
+    line(part, [xr, xr + 0.22, xr + 0.5, xr + wr, xr + wr + wu + 0.15],
+         [yb - 0.45, yb - 0.58, yb + 0.3, top, top], c, lw=0.35, z=9)
+    txt(part, xr + wr, yb, under, fs=fs, c=c, it=True, va='baseline')
+
+
+# --------------------------------------------------------------- row 1, branch 1: frame-gap graph (geometry)
+# models.gnn_tracking.graph.pair_graph: one graph per pair (t, t+g); candidate edges = pairs closer than r*sqrt(g);
+# message edges = candidates + each cell's 4 nearest same-frame cells; geometric node / edge features, g included.
+# Example (user: the first one was crowded): r15c12 frame 8, cell GS, chosen for 3 well-separated candidates in
+# different directions and 4 neighbours within 1.4 gates (same well and frames as the rest of the figure).
+GS = 68
+GX, GY = EPOS[(EXT, GS)]
+CAND_G = R1M & (EZ['src_label'] == GS)
+GATE_G = float(EZ['gate'][CAND_G][0])
+x, y, w, h = hcard(R1T, C1[1])
 card('graph', x, y, w, h, 'Frame-gap graph')
-ts = 13.6
-tl = Tile('graph', ims_ex[0], SX, SY, x + 1.6, y + 5.2, ts, ts, 230, LV)
-tr = Tile('graph', ims_ex[1], SX, SY, x + 1.6 + ts + 3.6, y + 5.2, ts, ts, 230, LV)
-tl.label('t')
-tr.label('t+1')
-f8 = {b: p_ for (a, b), p_ in EPOS.items() if a == EXT and tl.inside(*p_)}
-f9 = {b: p_ for (a, b), p_ in EPOS.items() if a == EXT + 1 and tr.inside(*p_)}
-# in-frame context: the source's 4 nearest neighbours in frame t (as the network's neighbour edges)
+ts, off = 11.0, 1.8
+ty0 = y + 4.4
 allf8 = {b: p_ for (a, b), p_ in EPOS.items() if a == EXT}
-nn = sorted((np.hypot(p_[0] - SX, p_[1] - SY), b) for b, p_ in allf8.items() if b != EXS)[:4]
-for _, b in nn:
-    if b in f8:
-        a_, b_ = tl.mm(SX, SY), tl.mm(*f8[b])
-        tl.clip(line('graph', [a_[0], b_[0]], [a_[1], b_[1]], PURPLE, lw=0.7, ls=(0, (1.5, 1)), z=5))
-for b, p_ in f8.items():
-    node('graph', *tl.mm(*p_), c=BLUE if b == EXS else '#A9BEDD', r=0.75 if b == EXS else 0.55, z=6)
-for b, p_ in f9.items():
-    node('graph', *tr.mm(*p_), c='#A9BEDD', r=0.55, z=6)
-# the gate around the source's position, drawn in frame t+1
-gc = tr.mm(SX, SY)
-gr_mm = GATE / tr.wpx * tr.w
-tr.clip(gid(ax.add_patch(Circle(gc, gr_mm, fc=TEAL_L, ec=TEAL, lw=0.6, ls=(0, (2, 1)), alpha=0.35, zorder=4)),
+nn = sorted((np.hypot(p_[0] - GX, p_[1] - GY), b) for b, p_ in allf8.items() if b != GS)[:4]
+HPX = max(2.6 * GATE_G, 2.3 * nn[-1][0])                   # all 4 neighbours and the whole gate inside the tiles
+gims = [s_img(EXW, EXT + k) for k in range(4)]
+GLV = np.percentile(np.concatenate([i[int(GY - HPX):int(GY + HPX), int(GX - HPX):int(GX + HPX)].ravel()
+                                    for i in gims[:2]]), [1, 99.7])
+tl = Tile('graph', gims[0], GX, GY, x + 1.4, ty0, ts, ts, HPX, GLV)
+tl.label('t', fs=4.4)
+note('graph', tl.x + ts / 2, ty0 + ts + 1.7, '4 neighbours', fs=4.4, c=PURPLE, ha='center')   # under frame t
+sx0 = x + 1.4 + ts + 4.0
+for k, z_ in ((3, 1.0), (2, 2.0)):                          # frames t+3, t+2 behind t+1; each layer (image and frame)
+    Tile('graph', gims[k], GX, GY, sx0 + (k - 1) * off, ty0 + (k - 1) * off, ts, ts, HPX, GLV, z=z_)
+tr = Tile('graph', gims[1], GX, GY, sx0, ty0, ts, ts, HPX, GLV, z=3.5)                 # lies wholly below the next
+tr.label('t+1', fs=4.4)
+for k in range(3):                                          # each layer is one pair graph: g at its top-right corner
+    txt('graph', sx0 + k * off + ts + 0.5, ty0 + k * off + 0.7, f'g = {k + 1}', fs=4.6, c=BLUE, b=True)
+tw_title = text_width('Frame-gap graph', 6.6, True)         # gate label on the title line, above frame t+1 (user)
+sqrt_label('graph', max(x + 1.2 + tw_title + 6.0, sx0 + ts / 2), y + 3.1, [('gate ', False), ('r', True)], 'g',
+           4.6, TEAL)
+assert all(tl.inside(*allf8[b]) for _, b in nn), 'a neighbour is outside the tile'
+src_mm = tl.mm(GX, GY)
+for _, b in nn:                                             # only the cells the drawing explains: the source,
+    b_ = tl.mm(*allf8[b])                                   # its 4 in-frame neighbours (message edges) ...
+    tl.clip(line('graph', [src_mm[0], b_[0]], [src_mm[1], b_[1]], PURPLE, lw=0.6, ls=(0, (1.5, 1)), z=5))
+    node('graph', *b_, c='#C9B6EE', r=0.42, z=6)
+node('graph', *src_mm, c=BLUE, r=0.55, z=6)
+gc = tr.mm(GX, GY)                                          # ... and its candidates in t+1, inside the g = 1 gate
+gr_mm = GATE_G / tr.wpx * tr.w
+tr.clip(gid(ax.add_patch(Circle(gc, gr_mm, fc=TEAL_L, ec=TEAL, lw=0.5, ls=(0, (2, 1)), alpha=0.3, zorder=4.2)),
             'graph'))
-tr.clip(gid(ax.add_patch(Circle(gc, gr_mm, fc='none', ec=TEAL, lw=0.6, ls=(0, (2, 1)), zorder=5)), 'graph'))
-node('graph', *gc, c='white', r=0.55, ghost=True, z=6)
-for d_ in EZ['dst_label'][CAND]:
-    if int(d_) in f9:
-        a_, b_ = tl.mm(SX, SY), tr.mm(*f9[int(d_)])
-        line('graph', [a_[0], b_[0]], [a_[1], b_[1]], BLUE, lw=0.6, z=6.5)
-note('graph', tr.x + ts / 2, y + 20.4, r'gate $\mathit{r}\sqrt{\mathit{g}}$', fs=5.0, c=TEAL, ha='center')
-note('graph', tl.x + ts / 2, y + 20.4, '4 neighbours', fs=5.0, c=PURPLE, ha='center')
-tx = x + 35.4
-note('graph', tx, y + 6.0, 'node', fs=5.0, c=MUTED)
-tokens('graph', tx, y + 7.6, 2.4, [BLUE] + ['#A9BEDD'] * 3, image=CROP)
-note('graph', tx, y + 11.3, 'crop + size, motion', fs=4.8, c=MUTED)
-note('graph', tx, y + 14.4, 'edge', fs=5.0, c=MUTED)
-tokens('graph', tx, y + 16.0, 2.4, ['#A9BEDD', '#A9BEDD', BLUE, '#A9BEDD'])
-note('graph', tx + 2 * 2.55 + 1.2, y + 20.3, 'g', fs=5.6, c=BLUE, b=True, ha='center', it=True)
-note('graph', tx, y + 22.3, 'geometry + gap', fs=4.8, c=MUTED)
-note('graph', x + w / 2, y + h - 3.6, 'one graph per frame pair (t, t+g): candidates', fs=5.2, c=INK, ha='center')
-note('graph', x + w / 2, y + h - 1.4, 'within the gate, the gap g as an input', fs=5.2, c=INK, ha='center')
+tr.clip(gid(ax.add_patch(Circle(gc, gr_mm, fc='none', ec=TEAL, lw=0.5, ls=(0, (2, 1)), zorder=5)), 'graph'))
+node('graph', *gc, c='white', r=0.4, ghost=True, z=6)
+for d_ in EZ['dst_label'][CAND_G]:                          # the source's real candidate edges (g = 1)
+    p_ = EPOS.get((EXT + 1, int(d_)))
+    if p_ is not None and tr.inside(*p_):
+        b_ = tr.mm(*p_)
+        line('graph', [src_mm[0], b_[0]], [src_mm[1], b_[1]], BLUE, lw=0.5, z=6.5)
+        node('graph', *b_, c='#A9BEDD', r=0.42, z=6.6)
+# output: the geometric features of every node and candidate edge (g among them), at the right edge
+ox = x + w - 9.4
+note('graph', ox + 7.6, y + 2.6, 'node  N × 8', fs=4.6, c=MUTED, ha='right')       # N cells of t, t+g
+blocks('graph', ox, y + 4.6, [((GEO, GEO), 'geometry')], dims=['8'])
+note('graph', ox + 7.6, y + 11.4, 'edge  C × 13', fs=4.6, c=MUTED, ha='right')      # C candidate edges
+blocks('graph', ox, y + 13.2, [((GEO, GEO), 'geometry'), ((BLUE,), 'g')], gap=1.2, dims=['12', '1'])
+arrow('graph', (sx0 + 2 * off + ts + 6.2, y + 14.2), (ox - 0.6, y + 14.2), c=GREY_T, lw=0.6, head=3.5)
 
-# --------------------------------------------------------------- row 1, card 3: graph network (standard)
-x, y, w, h = hcard(R1, C1[2])
-card('network', x, y, w, h, 'Graph network (standard)')
-gid(ax.imshow(CROP, cmap='gray', vmin=0, vmax=1, extent=(x + 2.0, x + 6.4, y + 11.4, y + 7.0), zorder=4,
-              interpolation='lanczos'), 'network')
-poly('network', [(x + 7.4, y + 6.4), (x + 12.6, y + 7.8), (x + 12.6, y + 10.6), (x + 7.4, y + 12.0)], '#C9D1D8',
+# --------------------------------------------------------------- row 1, branch 2: appearance embedding
+# models.gnn_tracking.model.AppearanceNet: masked crop -> CNN -> e (32-d, unit length); trained with a contrastive
+# loss; e enters the node features and, as e_i . e_j, the candidate-edge features (graph network card).
+x, y, w, h = hcard(R1B, C1[1])
+card('appear', x, y, w, h, 'Appearance embedding')
+ay = y + 7.0
+gid(ax.imshow(CROP, cmap='gray', vmin=0, vmax=1, extent=(x + 1.6, x + 5.6, ay + 2.0, ay - 2.0), zorder=4,
+              interpolation='lanczos'), 'appear')
+note('appear', x + 1.4, ay + 3.3, 'crop 64 × 64', fs=4.4, c=MUTED)
+poly('appear', [(x + 7.2, ay - 2.2), (x + 11.6, ay - 1.1), (x + 11.6, ay + 1.1), (x + 7.2, ay + 2.2)], GR,
      ec=GREY_T, lw=0.4)
-note('network', x + 10.0, y + 9.2, 'CNN', fs=5.0, c=INK, ha='center')
-arrow('network', (x + 6.6, y + 9.2), (x + 7.3, y + 9.2), c=GREY_T, lw=0.6, head=3.5)
-tokens('network', x + 13.6, y + 7.9, 2.2, ['#C9D1D8'] * 3)
-note('network', x + 2.0, y + 14.4, 'appearance embedding', fs=4.9, c=GREY_T)
-mx, my = x + 23.0, y + 5.6
+note('appear', x + 9.4, ay, 'CNN', fs=4.8, c=INK, ha='center')
+arrow('appear', (x + 5.8, ay), (x + 7.1, ay), c=GREY_T, lw=0.6, head=3.5)
+ox = x + w - 9.0                                            # output e at the right edge, like the graph's features
+arrow('appear', (x + 11.8, ay), (ox - 0.5, ay), c=GREY_T, lw=0.6, head=3.5)
+note('appear', (x + 11.8 + ox) / 2, ay - 1.4, 'one vector per cell', fs=4.6, c=INK, ha='center')
+note('appear', (x + 11.8 + ox) / 2, ay + 1.6, 'contrastive loss in training', fs=4.4, c=GREY_T, it=True,
+     ha='center')
+note('appear', ox + 7.6, ay - 2.8, 'node  N × 32', fs=4.6, c=MUTED, ha='right')
+blocks('appear', ox, ay - 1.0, [((GR, GR, GR), 'e')])
+
+# --------------------------------------------------------------- row 1, card 3: graph network (the branches meet)
+# node encoder on [geometry, e] -> 2 x attention message passing over candidate + in-frame edges -> edge head
+# MLP(h_i, h_j, candidate-edge features: geometry, g, e_i . e_j) -> 3 logits.
+x, y, w, h = hcard(R1, C1[2])
+card('network', x, y, w, h, 'Graph network')
+ya, yg = y + 8.0, y + 16.4                                  # node row, edge row: every arrow runs straight
+note('network', x + 1.4, ya - 2.8, 'node  N × 40', fs=4.6, c=MUTED)    # the two branches' blocks, concatenated
+nx_ = blocks('network', x + 1.4, ya - 1.0, [((GEO, GEO), 'geometry'), ((GR,), 'e')], gap=1.2,
+             dims=['8', '32'])
+note('network', x + 1.4, yg - 2.8, 'edge  C × 16', fs=4.6, c=MUTED)
+ex_ = blocks('network', x + 1.4, yg - 1.0, [((GEO, GEO), 'geometry'), ((BLUE,), 'g'), ((GR,), 'sim.')], gap=1.2,
+             dims=['12', '1', '3'])
+mx, my, mw, mh = x + 16.8, y + 4.8, 11.8, 12.6              # message passing: tall enough for both rows
 for k in range(2):
-    rbox('network', mx + k * 1.2, my + k * 1.2, 15.4, 11.0, 'white', ec=GREY_E, r=0.8, lw=0.45, z=3 + k)
-pts = [(mx + 4.2, my + 5.0), (mx + 7.8, my + 3.4), (mx + 11.6, my + 5.6), (mx + 6.2, my + 9.0), (mx + 11.0, my + 9.8)]
+    rbox('network', mx + k * 0.9, my + k * 0.9, mw, mh, 'white', ec=GREY_E, r=0.8, lw=0.45, z=3 + k)
+pts = [(mx + 2.8, my + 4.6), (mx + 5.9, my + 2.8), (mx + 9.0, my + 5.0), (mx + 4.6, my + 9.0), (mx + 8.6, my + 9.8)]
 for a_, b_ in ((0, 1), (1, 2), (0, 3), (3, 4), (2, 4), (1, 3)):
-    line('network', [pts[a_][0] + 1.2, pts[b_][0] + 1.2], [pts[a_][1] + 1.2, pts[b_][1] + 1.2], '#9AA7B3', lw=0.45,
+    line('network', [pts[a_][0] + 0.9, pts[b_][0] + 0.9], [pts[a_][1] + 0.9, pts[b_][1] + 0.9], '#9AA7B3', lw=0.45,
          z=5)
 for p_ in pts:
-    node('network', p_[0] + 1.2, p_[1] + 1.2, c='#8A97A4', r=0.7, z=6)
-note('network', mx + 8.7, my + 14.6, 'attention message passing × 2', fs=4.9, c=GREY_T, ha='center')
-arrow('network', (x + 21.2, y + 9.2), (mx - 0.2, y + 9.2), c=GREY_T, lw=0.6, head=3.5)
-note('network', x + w / 2, y + h - 6.0, 'cells see their candidates and their neighbours;', fs=5.2, c=GREY_T,
-     ha='center')
-note('network', x + w / 2, y + h - 3.6, 'one feature vector per candidate edge', fs=5.2, c=GREY_T, ha='center')
-note('network', x + w / 2, y + h - 1.4, 'appearance as in CellTrack-GNN', fs=4.8, c=GREY_T, ha='center', it=True)
-
-# --------------------------------------------------------------- row 1, card 4: (2) three-class edges, real edges
+    node('network', p_[0] + 0.9, p_[1] + 0.9, c='#8A97A4', r=0.6, z=6)
+note('network', mx + mw / 2 + 0.45, my + mh + 2.4, 'attention message', fs=4.4, c=GREY_T, ha='center')
+note('network', mx + mw / 2 + 0.45, my + mh + 4.3, 'passing × 2', fs=4.4, c=GREY_T, ha='center')
+arrow('network', (nx_ + 0.2, ya), (mx - 0.2, ya), c=GREY_T, lw=0.6, head=3.5)                  # nodes -> GNN
+hx, hw = x + 32.2, 12.6
+rbox('network', hx, ya - 3.2, hw, 6.2, '#F2F4F6', ec=GREY_E, r=0.8, lw=0.45, z=3)
+note('network', hx + hw / 2, ya - 1.6, 'edge head', fs=4.8, c=INK, b=True, ha='center')
+txt('network', hx + hw / 2, ya + 1.0, r'$h_i$, $h_j$, edge', fs=4.6, c=INK, ha='center')
+arrow('network', (mx + mw + 1.0, ya), (hx - 0.2, ya), c=GREY_T, lw=0.6, head=3.5)              # GNN -> head
+# the edge features also reach the head directly (skip): branch below the edge row, right, up into the head
+bx, sy = ex_ + 1.6, y + 24.0
+arrow('network', (ex_ + 0.2, yg), (mx - 0.2, yg), c=GREY_T, lw=0.6, head=3.5)                  # edges -> GNN
+gid(ax.add_patch(Circle((bx, yg), 0.35, fc=GREY_T, ec='none', zorder=7)), 'network')
+line('network', [bx, bx, hx + 2.0], [yg, sy, sy], GREY_T, lw=0.6)
+arrow('network', (hx + 2.0, sy), (hx + 2.0, ya + 3.1), c=GREY_T, lw=0.6, head=3.5)
+note('network', hx - 2.4, sy - 0.9, 'skip', fs=4.2, c=GREY_T, it=True, ha='center')
+# output, bottom right: three logits per candidate edge (unrelated, same, division)
+ax_ = hx + 8.6
+arrow('network', (ax_, ya + 3.1), (ax_, y + 24.2), c=GREY_T, lw=0.6, head=3.5)                 # head -> logits
+for k, (c, s) in enumerate((('#C8D3E0', 'u'), (BLUE, 's'), (MAGENTA, 'd'))):
+    rbox('network', ax_ - 3.4 + k * 2.6, y + 24.4, 1.6, 1.6, c, r=0.2, z=3)
+    note('network', ax_ - 2.6 + k * 2.6, y + 27.4, s, fs=4.4, c=MUTED, ha='center')
+note('network', ax_ - 4.2, y + 25.2, 'logits', fs=4.4, c=MUTED, ha='right')
+for k, s in enumerate(('node: [geometry 8, e 32] → N × 40 → h: N × 64',              # dimensions (model.py):
+                       'edge: [geometry 12, g 1, sim. 3] → C × 16',                   # blocks side by side
+                       r'head: [$h_i$, $h_j$, edge] → C × 144 → C × 3')):          # are concatenated
+    txt('network', x + 1.4, y + 25.9 + k * 2.15, s, fs=4.2, c=GREY_T)
+# --------------------------------------------------------------- row 1, card 4: three-class edges, real edges
 x, y, w, h = hcard(R1, C1[3])
 card('head', x, y, w, h, 'Three-class edges')
 
 
 def edge_example(x0, title, pair_imgs, pair_masks, labels, probs, lo_hi, sigma):
-    """Two thumbnails (t, t+1) with the cells outlined, and the three real class probabilities of the edge."""
-    note('head', x0, y + 5.4, title, fs=5.0, c=INK, b=True)
-    th = 5.6
+    """Two thumbnails (t, t+1) with the cells outlined, and the three real class probabilities of the edge as bars
+    (u unrelated, s same cell, d division) as tall as the thumbnails."""
+    note('head', x0, y + 5.4, title, fs=4.8, c=INK, b=True)
+    tw, th = 6.4, 11.4
     for k in range(2):
         im_, m_ = pair_imgs[k], pair_masks[k]
         yy, xx = np.nonzero(np.isin(m_, labels[0] if k == 0 else labels[1]))
-        t_ = Tile('head', im_, xx.mean(), yy.mean(), x0 + k * (th + 0.5), y + 6.8, th, th,
-                  max(48, 1.6 * max(np.ptp(yy), np.ptp(xx))), lo_hi)
+        t_ = Tile('head', im_, xx.mean(), yy.mean(), x0 + k * (tw + 0.5), y + 6.8, tw, th,
+                  max(48, 1.6 * np.ptp(yy), 1.5 * np.ptp(xx) * th / tw), lo_hi)
         for lab_ in (labels[0] if k == 0 else labels[1]):
             t_.outline(m_, lab_, MAGENTA if probs[2] > 0.5 else BLUE, lw=0.6, sigma=sigma)
-        t_.label('t' if k == 0 else 't+1', fs=4.6)
-    base = y + 20.0
-    bx0 = x0 + 2 * th + 1.8
-    for k, (lab_, pv, c) in enumerate(zip(('unrel.', 'same', 'div.'), probs, ('#C8D3E0', BLUE, MAGENTA))):
-        bx = bx0 + k * 4.4
-        rbox('head', bx, base - 9.0 * pv - 0.05, 2.8, 9.0 * pv + 0.05, c, r=0.2, z=3)
-        note('head', bx + 1.4, base + 1.2, lab_, fs=4.6, c=MUTED, ha='center')
-    line('head', [bx0 - 0.5, bx0 + 3 * 4.4 - 1.0], [base, base], NODE_C, lw=0.4)
+        t_.label('t' if k == 0 else 't+1', fs=4.4)
+    base = y + 6.8 + th
+    bx0 = x0 + 2 * tw + 0.5 + 1.4
+    for k, (lab_, pv, c) in enumerate(zip(('u', 's', 'd'), probs, ('#C8D3E0', BLUE, MAGENTA))):
+        bx = bx0 + k * 2.6
+        rbox('head', bx, base - (th - 1.0) * pv - 0.05, 1.8, (th - 1.0) * pv + 0.05, c, r=0.2, z=3)
+        note('head', bx + 0.9, base + 1.2, lab_, fs=4.6, c=MUTED, ha='center')
+    line('head', [bx0 - 0.4, bx0 + 3 * 2.6 - 0.4], [base, base], NODE_C, lw=0.4)
 
 
 # continuation: a confident Scripta link of the example region; division: a held-out DynamicNuclearNet mother
 cont = 145
 cm = R1M & (EZ['src_label'] == cont) & (EZ['chosen'] == 1)
 pc = float(EZ['p'][cm][0]), float(EZ['p_div'][cm][0])
-edge_example(x + 2.0, 'continuation', ims_ex, [s_mask(EXW, EXT), s_mask(EXW, EXT + 1)], ([cont], [cont]),
+edge_example(x + 1.2, 'continuation', ims_ex, [s_mask(EXW, EXT), s_mask(EXW, EXT + 1)], ([cont], [cont]),
              (max(0.0, 1 - pc[0] - pc[1]), pc[0], pc[1]), LV, 0.0)
 dz = np.load(FIN / 'dnn' / 'progct' / 'division' / 'val18' / 'edges.npz')
 dm = (dz['round'] == 1) & (dz['src_label'] == 83) & (dz['p_div'] > 0.5)
@@ -426,40 +528,40 @@ dt = int(dz['src_frame'][dm][0])
 dp = float(dz['p'][dm][0]), float(dz['p_div'][dm][0])
 dims = [d_img('val18', dt), d_img('val18', dt + 1)]
 dlv = np.percentile(np.concatenate([i.ravel() for i in dims]), [1, 99.8])
-edge_example(x + 28.6, 'division (held-out video)', dims, [d_mask('val18', dt), d_mask('val18', dt + 1)],
+edge_example(x + 25.4, 'division (held-out)', dims, [d_mask('val18', dt), d_mask('val18', dt + 1)],
              ([83], [int(v) for v in dz['dst_label'][dm]]), (max(0.0, 1 - dp[0] - dp[1]), dp[0], dp[1]), dlv, 0.8)
 FACTS['head'] = dict(continuation=dict(well=EXW, t=EXT, cell=cont, p_same=pc[0], p_div=pc[1]),
                      division=dict(video='val18', t=dt, mother=83, daughters=[int(v) for v in dz['dst_label'][dm]],
                                    p_same=dp[0], p_div=dp[1]))
-rbox('head', x + 2.2, y + 22.6, w - 4.4, 7.4, BLUE_BAND, ec='#BFD0E8', r=0.8, lw=0.4, z=2)
-note('head', x + 3.2, y + 24.4, 'one model for videos with and without mitoses: no dataset', fs=5.2, c=INK)
-note('head', x + 3.2, y + 26.8, 'flag, no division switch, no class weights (outputs stay probabilities)',
-     fs=5.0, c=INK)
+rbox('head', x + 1.2, y + 21.4, w - 2.4, 8.6, BLUE_BAND, ec='#BFD0E8', r=0.8, lw=0.4, z=2)
+for k, s in enumerate(('one model for videos with and without mitoses:', 'no dataset flag, no division switch,',
+                       'no class weights (outputs stay probabilities)')):
+    note('head', x + w / 2, y + 23.2 + k * 2.3, s, fs=4.9, c=INK, ha='center')
 
 # --------------------------------------------------------------- row 2, card 1: (3) ensemble, the real 9 predictions
 x, y, w, h = hcard(R2, C2[0])
 card('ensemble', x, y, w, h, 'Ensemble')
-note('ensemble', x + 2.4, y + 5.4, 'models', fs=4.8, c=MUTED)
-note('ensemble', x + 8.0, y + 5.4, '3 mirrored views', fs=4.8, c=MUTED)
-for k in range(3):
+note('ensemble', x + 1.6, y + 5.4, 'models', fs=4.8, c=MUTED)
+note('ensemble', x + 7.6, y + 5.4, '3 mirrored views', fs=4.8, c=MUTED)
+for k in range(3):                                          # compact (user): rows fill the card height
     yy = y + 7.0 + k * 5.6
-    rbox('ensemble', x + 2.4, yy, 4.2, 4.2, BLUE_L, ec=BLUE, r=0.5, lw=0.45, z=3)
-    centred('ensemble', x + 4.5, yy + 2.1, str(k + 1), 5.2, c=BLUE_D)
+    rbox('ensemble', x + 1.6, yy, 4.6, 4.6, BLUE_L, ec=BLUE, r=0.5, lw=0.45, z=3)
+    centred('ensemble', x + 3.9, yy + 2.3, str(k + 1), 5.4, c=BLUE_D)
     for j in range(3):
         hh = float(Q9[j, k])
-        bx = x + 8.0 + j * 1.9
-        rbox('ensemble', bx, yy, 1.4, 4.2, 'white', ec='#C8D3E0', r=0.0, lw=0.3, z=3)
-        rbox('ensemble', bx, yy + 4.2 * (1 - hh), 1.4, 4.2 * hh, BLUE, r=0.0, z=4)
-bx_ = x + 14.4
-line('ensemble', [bx_, bx_ + 0.6, bx_ + 0.6, bx_], [y + 7.0, y + 7.0, y + 22.4, y + 22.4], NODE_C, lw=0.45)
-for cy_, col in ((y + 11.0, BLUE_D), (y + 19.0, GOLD_T)):
-    line('ensemble', [bx_ + 0.6, bx_ + 3.2], [y + 14.7, cy_], col, lw=0.5)
-note('ensemble', bx_ + 3.8, y + 9.8, 'mean', fs=5.0, c=BLUE_D)
-txt('ensemble', bx_ + 3.8, y + 12.4, f'p = {P_EX:.2f}', fs=6.4, c=BLUE, b=True)
-note('ensemble', bx_ + 3.8, y + 17.8, 'disagreement', fs=5.0, c=GOLD_T)
-txt('ensemble', bx_ + 3.8, y + 20.4, f'MI = {MI_EX:.2f}', fs=6.4, c=GOLD_T, b=True)
-note('ensemble', x + w / 2, y + h - 3.6, 'one real candidate edge: models disagree,', fs=5.2, c=INK, ha='center')
-note('ensemble', x + w / 2, y + h - 1.4, 'so MI flags it although p > τ', fs=5.2, c=INK, ha='center')
+        bx = x + 7.6 + j * 2.3
+        rbox('ensemble', bx, yy, 1.8, 4.6, 'white', ec='#C8D3E0', r=0.0, lw=0.3, z=3)
+        rbox('ensemble', bx, yy + 4.6 * (1 - hh), 1.8, 4.6 * hh, BLUE, r=0.0, z=4)
+bx_ = x + 15.0
+line('ensemble', [bx_, bx_ + 0.6, bx_ + 0.6, bx_], [y + 7.0, y + 7.0, y + 22.8, y + 22.8], NODE_C, lw=0.45)
+for cy_, col in ((y + 10.6, BLUE_D), (y + 19.2, GOLD_T)):
+    line('ensemble', [bx_ + 0.6, bx_ + 3.0], [y + 14.9, cy_], col, lw=0.5)
+note('ensemble', bx_ + 3.6, y + 9.4, 'mean', fs=5.0, c=BLUE_D)
+txt('ensemble', bx_ + 3.6, y + 12.0, 'p', fs=6.4, c=BLUE, b=True, it=True)     # no example values: the
+note('ensemble', bx_ + 3.6, y + 18.0, 'disagreement', fs=5.0, c=GOLD_T)              # bars show them (user)
+txt('ensemble', bx_ + 3.6, y + 20.6, 'MI', fs=6.4, c=GOLD_T, b=True)
+for k, s in enumerate(('one real candidate edge:', 'models disagree, so MI flags it', 'although p > τ')):
+    note('ensemble', x + w / 2, y + h - 6.0 + k * 2.3, s, fs=5.0, c=INK, ha='center')
 
 # --------------------------------------------------------------- row 2, card 2: (3) calibrated decisions
 x, y, w, h = hcard(R2, C2[1])
@@ -471,7 +573,7 @@ for r_ in REL.itertuples():
     gid(ax.add_patch(Circle((ox + r_.mean_p * s, oy - r_.frac_pos * s), 0.32, fc=BLUE, ec='white', lw=0.2,
                             zorder=6)), 'decide')
 line('decide', [ox + 0.4 * s] * 2, [oy, oy - s], GOLD, lw=0.7)
-txt('decide', ox + 0.4 * s, oy - s - 1.0, r'$\tau$ = 0.4', fs=5.2, c=GOLD_T, ha='center')
+txt('decide', ox + 0.4 * s, oy - s - 1.0, 'τ = 0.4', fs=5.2, c=GOLD_T, ha='center')
 note('decide', ox + s / 2, oy + 1.3, 'predicted p', fs=4.8, c=MUTED, ha='center')
 note('decide', ox - 1.0, oy - s / 2, 'observed', fs=4.8, c=MUTED, ha='center', rotation=90)
 # the links ProGCT made in the example region, frame t -> t+1, on frame t+1
@@ -496,9 +598,9 @@ note('decide', x + w / 2, y + h - 3.6, 'the evaluation (no tuning); one-to-one a
      ha='center')
 note('decide', x + w / 2, y + h - 1.4, 'per frame pair, divisions included', fs=5.2, c=INK, ha='center')
 
-# --------------------------------------------------------------- row 2, card 3: (1) cross-frame check, real gap
+# --------------------------------------------------------------- row 2, card 3: constrained gap closing, real gap
 x, y, w, h = hcard(R2, C2[2])
-card('check', x, y, w, h, 'Cross-frame check')
+card('check', x, y, w, h, 'Constrained gap closing')
 gw, gt_, gl = 'r08c13', 17, 453
 gtr = pd.read_csv(D.track_folder('ours', gw) / 'instance_tracks.csv')
 glinks = pd.read_csv(D.track_folder('ours', gw) / 'links.csv')
@@ -520,7 +622,7 @@ gtiles[1].outline(gm0, gl, '#FF6B6B', lw=0.7, ls=(0, (1.6, 1.2)))
 pa = gtiles[0].mm(xx0.mean(), yy0.mean())
 pb = gtiles[2].mm(xx2.mean(), yy2.mean())
 arrow('check', (pa[0], y + 7.6), (pb[0], y + 7.6), c=BLUE, lw=0.9, rad=-0.25, head=4.5)
-txt('check', x + w / 2, y + 20.6, f'rejoined: g = 2, p = {grow.p:.2f}', fs=5.0, c=BLUE, b=True, ha='center')
+txt('check', x + w / 2, y + 20.6, 'rejoined: g = 2', fs=5.0, c=BLUE, b=True, ha='center')
 centred('check', gtiles[1].x + tw_ / 2, y + 17.8, 'missed', 4.6, c='#FF8A80', b=True)
 FACTS['check'] = dict(well=gw, t=gt_, label=gl, dst=int(grow.dst_label), p=float(grow.p))
 note('check', x + w / 2, y + h - 6.0, 'a 2nd pass joins tracks that end', fs=5.2, c=INK, ha='center')
@@ -531,7 +633,7 @@ note('check', x + w / 2, y + h - 1.4, 'with the same p and τ', fs=5.2, c=INK, h
 x, y, w, h = hcard(R2, C2[3])
 card('output', x, y, w, h, 'Output')
 ot = Tile('output', s_img(EXW, 16), SX, SY, x + 1.4, y + 5.0, 18.0, 14.6, 260, LV)
-ot.label('tracks, frames 10–16', fs=4.6)
+ot.label('tracks', fs=4.6)
 olinks = pd.read_csv(ex_dir / 'links.csv')
 ids = ['#4E79A7', '#59A14F', '#9C755F', '#76B7B2', '#B6992D', '#A0CBE8', '#8CD17D', '#2F4B7C']
 tid_of = {(int(a), int(b)): int(c) for a, b, c in zip(ETR.frame_index, ETR.instance_id, ETR.track_id)}
@@ -562,12 +664,20 @@ note('output', x + w / 2, y + h - 3.6, 'carries its probability; gold = flagged'
 note('output', x + w / 2, y + h - 1.4, 'links that reviewers check first', fs=5.2, c=INK, ha='center')
 
 # --------------------------------------------------------------- flow arrows
-for a_, b_ in zip(C1[:-1], C1[1:]):
-    arrow('flow', (a_[1] + 0.1, (R1[0] + R1[1]) / 2), (b_[0] - 0.1, (R1[0] + R1[1]) / 2), c=BLUE, lw=0.9, head=5)
+ym, yt_, yb_ = (R1[0] + R1[1]) / 2, (R1T[0] + R1T[1]) / 2, (R1B[0] + R1B[1]) / 2
+xf, xj = (C1[0][1] + C1[1][0]) / 2, (C1[1][1] + C1[2][0]) / 2          # fork after the input, join before the network
+line('flow', [C1[0][1] + 0.1, xf], [ym, ym], BLUE, lw=0.9, z=6)
+line('flow', [xf, xf], [yt_, yb_], BLUE, lw=0.9, z=6)
+for yy in (yt_, yb_):
+    arrow('flow', (xf, yy), (C1[1][0] - 0.1, yy), c=BLUE, lw=0.9, head=5)
+    line('flow', [C1[1][1] + 0.1, xj], [yy, yy], BLUE, lw=0.9, z=6)
+line('flow', [xj, xj], [yt_, yb_], BLUE, lw=0.9, z=6)
+arrow('flow', (xj, ym), (C1[2][0] - 0.1, ym), c=BLUE, lw=0.9, head=5)
+arrow('flow', (C1[2][1] + 0.1, ym), (C1[3][0] - 0.1, ym), c=BLUE, lw=0.9, head=5)
 for a_, b_ in zip(C2[:-1], C2[1:]):
     arrow('flow', (a_[1] + 0.1, (R2[0] + R2[1]) / 2), (b_[0] - 0.1, (R2[0] + R2[1]) / 2), c=BLUE, lw=0.9, head=5)
 gy = (R1[1] + R2[0]) / 2
-xe = (C1[3][0] + C1[3][1]) / 2
+xe = (C1[-1][0] + C1[-1][1]) / 2
 xs_ = (C2[0][0] + C2[0][1]) / 2
 line('flow', [xe, xe, xs_, xs_], [R1[1] + 0.1, gy, gy, gy], BLUE, lw=0.9, z=6)
 arrow('flow', (xs_, gy - 0.05), (xs_, R2[0] - 0.1), c=BLUE, lw=0.9, head=5)
@@ -595,7 +705,8 @@ def audit():
         for b in boxes[i + 1:]:
             if min(a[4], b[4]) - max(a[2], b[2]) > 0.15 and min(a[5], b[5]) - max(a[3], b[3]) > 0.15:
                 probs.append(f'overlap: {a[1]!r} / {b[1]!r}')
-    cards = {'input': (R1, C1[0]), 'graph': (R1, C1[1]), 'network': (R1, C1[2]), 'head': (R1, C1[3]),
+    cards = {'input': (R1, C1[0]), 'graph': (R1T, C1[1]), 'appear': (R1B, C1[1]), 'network': (R1, C1[2]),
+             'head': (R1, C1[3]),
              'ensemble': (R2, C2[0]), 'decide': (R2, C2[1]), 'check': (R2, C2[2]), 'output': (R2, C2[3])}
     for part, s, x0, y0, x1, y1, fs in boxes:
         if part in cards:

@@ -104,12 +104,10 @@ def dnn():
         out.append(f'{name} & ' + ' & '.join(cells) + ' \\\\')
     out += ['\\bottomrule', '\\end{tabular}',
             '\\caption{\\textbf{Tracking with divisions} on DynamicNuclearNet (DNN) videos that no model in the table '
-            'was trained on. ' + OURS + ' and Trackastra ft are trained on \\ds{} and the RAW264.7 training videos; '
-            + OURS + ', RAW only on the RAW264.7 videos alone. Trackastra zs (\\texttt{general\\_2d}) and ctc are the '
-            'released models; \\texttt{general\\_2d} includes the DNN training videos and may include its validation '
-            'videos (val17--26), which can only favour it. All link with divisions allowed. BC at tolerance 0; Rec.: '
-            'division recall, pooled; FP: false divisions; ED, EA: false and missed edges. test07--08 show '
-            '3T3/HEK293 cells, a cell line absent from our training data (not run for the RAW-only model).}',
+            'was trained on (all link with divisions allowed). ' + OURS + ', RAW only is trained on the RAW264.7 videos '
+            'alone; Trackastra zs (\\texttt{general\\_2d}) and ctc are the released models, and \\texttt{general\\_2d} '
+            'may include the validation videos. Rec.: division recall; FP: false divisions; ED, EA: false and missed '
+            'edges. test07--08 show 3T3/HEK293 cells, absent from our training data.}',
             '\\label{tab:dnn}', '\\end{table*}', '']
     return '\n'.join(out)
 
@@ -119,9 +117,10 @@ TAUS = [('tau0.2', 0.2), ('tau0.3', 0.3), (None, 0.4), ('tau0.5', 0.5), ('tau0.6
 
 def modules():
     """Every module with the experiment that removes it: the full model -> the model without it, on the scripta
-    development wells (out of fold) and the 13 DNN videos. Retracks with TTA (cross-frame check, threshold) compare
+    development wells (out of fold) and the 13 DNN videos. Retracks with TTA (gap closing, threshold) compare
     with the main runs; the cue ablations were tracked without views and compare with the same run without views
-    ('base'). * : paired Wilcoxon p < 0.01 over the wells / videos."""
+    ('base'). Training gaps: the model trained with g = 1 only (g1, g1_nogap; scripta only, retrained).
+    * : paired Wilcoxon p < 0.01 over the wells / videos."""
     dev = [w for w in data.all_wells() if w not in data.TEST_WELLS]
     s = lambda k: data.scripta_wells(k, dev)
     d = lambda k: data.dnn_wells(k)
@@ -134,10 +133,15 @@ def modules():
 
     best = lambda get: max((get(k) for k, _ in TAUS if k), key=lambda t: t.LNK.mean())
     area = lambda name: data.answers(name)[0]['coverage']['false_links']['mutual_info']['area']
+    ece2 = lambda name: data.answers(name)[0]['calibration']['round2_solver']['ece']     # second-pass candidates
     div = lambda k, wells, dataset: data.divisions(k, wells, dataset)['divisions']
     rows = [
-        ('Cross-frame check', 'LNK', change(s('ours_nodiv').LNK, s('nogap').LNK, 4), change(d('ours').LNK, d('nogap').LNK, 4)),
+        ('Gap closing', 'LNK', change(s('ours_nodiv').LNK, s('nogap').LNK, 4), change(d('ours').LNK, d('nogap').LNK, 4)),
         ('', 'EA', change(s('ours_nodiv').AOGM_EA, s('nogap').AOGM_EA, 0), change(d('ours').AOGM_EA, d('nogap').AOGM_EA, 0)),
+        ('Gaps 2, 3 in training$^d$', 'LNK', change(s('ours_nodiv').LNK, s('g1').LNK, 4), '--'),
+        ('', 'LNK$_1$', change(s('nogap').LNK, s('g1_nogap').LNK, 4), '--'),
+        ('', 'CT', change(s('ours_nodiv').CT, s('g1').CT, 3), '--'),
+        ('', 'ECE$_2$', f'{ece2("scripta_cv_oof_tta"):.3f} $\\to$ {ece2("scripta_cv_oof_g1"):.3f}', '--'),
         ('Appearance', 'LNK', change(s('base').LNK, s('noapp').LNK, 4), change(d('base').LNK, d('noapp').LNK, 4)),
         ('', 'BC', '--', change(d('base')['BC(0)'], d('noapp')['BC(0)'], 3)),
         ('Velocity', 'LNK', change(s('base').LNK, s('novel').LNK, 4), change(d('base').LNK, d('novel').LNK, 4)),
@@ -156,12 +160,13 @@ def modules():
     out += [' & '.join(r) + ' \\\\' for r in rows]
     out += ['\\bottomrule', '\\end{tabular}',
             '\\caption{\\textbf{What each module contributes}: the full model $\\to$ the same model without the module '
-            '(\\ds{}: 12 development wells, out of fold; DNN: the 13 videos of \\cref{tab:dnn}). Nothing is retrained '
-            'except in $^a$ and $^b$. Cross-frame check: adjacent frames only. Appearance: cell images shuffled '
-            'within each frame; velocity: no velocity input (both compared without views). Div.: false divisions; '
-            'MI area: area under the false-link coverage curve (\\cref{fig:confidence}b). $^a$Binary edges (linked or '
-            'not), \\ds{} test wells. $^b$Trained on RAW264.7 alone (\\ds{}: all 15 wells). $^c$Best LNK over '
-            '$\\tau\\in\\{0.2,0.3,0.5,0.6\\}$ (\\cref{tab:tau}). $^*$Paired Wilcoxon $p<0.01$.}',
+            '(\\ds{}: 12 development wells, out of fold; DNN: the 13 videos of \\cref{tab:dnn}). Retrained only in '
+            '$^a$, $^b$, $^d$. Gap closing: adjacent frames only. Appearance: cell images shuffled within each frame; '
+            'velocity: no velocity input. Div.: false divisions; MI area: area under the false-link coverage curve '
+            '(\\cref{fig:confidence}b). $^a$Binary edges, \\ds{} test wells. $^b$Trained on RAW264.7 alone (\\ds{}: '
+            'all 15 wells). $^c$Best LNK over $\\tau\\in\\{0.2,0.3,0.5,0.6\\}$ (\\cref{tab:tau}). $^d$Trained with '
+            '$g=1$ only; LNK$_1$: both without gap closing; ECE$_2$: calibration of the gap-closing candidates. '
+            '$^*$Paired Wilcoxon $p<0.01$.}',
             '\\label{tab:modules}', '\\end{table}', '']
     return '\n'.join(out)
 
@@ -180,7 +185,7 @@ def tau():
                                       dBC=b['BC(0)'].mean())))
     ref = data.scripta_wells('ours_nodiv', dev).LNK
     p = {t: data.paired(data.scripta_wells(k, dev).LNK, ref)['p'] for k, t in TAUS if k}
-    text = table(rows, cols, '\\textbf{Linking threshold} $\\tau$ (link and cross-frame threshold; $\\tau_D$ stays 0.5). '
+    text = table(rows, cols, '\\textbf{Linking threshold} $\\tau$ (link and gap-closing threshold; $\\tau_D$ stays 0.5). '
                  '\\ds{}: 12 development wells, out of fold; DNN: 13 videos. $\\tau=0.4$ follows from the LNK costs '
                  '(\\cref{sec:decisions}). Paired Wilcoxon of \\ds{} LNK against $\\tau=0.4$: ' +
                  ', '.join(f'{t:.1f}: $p={p[t]:.2f}$' if p[t] >= 0.01 else f'{t:.1f}: $p={tex_p(p[t])}$' for t in sorted(p))
@@ -218,18 +223,12 @@ def main():
     divisions = {k: data.test_divisions(k) for k, _ in TEST}
     rows = [(name, {**summary(data.scripta_wells(k, data.TEST_WELLS), COLUMNS), 'div': divisions[k]['divisions']})
             for k, name in TEST]
-    parts.append(table(rows, COLUMNS + [DIV], 'Test wells (r16c02, r01c20, r07c07) of \\ds{}. CTC measures on fixed '
-                       'detections with the project ground truth (not comparable with the CTC leaderboard). '
-                       'LNK, CT, TRA: mean over wells; ED, EA, EC: AOGM terms (false, missed, wrong-type edges) '
-                       'summed over wells. Div.: false divisions (a mother with exactly two daughters; the ground '
-                       f'truth has none); CellTrack-GNN also gives {divisions["ctgnn0"]["invalid"]} / '
-                       f'{divisions["ctgnn1"]["invalid"]} mothers three or more daughters. CellTrack-GNN has no '
-                       'learned division model: its post-processing makes a track that starts in frame $t$ the '
-                       'daughter of the nearest track that ended in frame $t-1$. ' + OURS + ' is never '
-                       'told whether a dataset has divisions; unmarked Trackastra rows link with divisions allowed '
-                       '(\\texttt{greedy}), the same setting. $^\\ddagger$Told that there are no divisions (Trackastra '
-                       '\\texttt{greedy\\_nodiv}; the classical tracker never divides). ft: fine-tuned; zs: zero-shot; '
-                       's0, s1: training seeds.', 'tab:test', colsep=3))
+    parts.append(table(rows, COLUMNS + [DIV], '\\textbf{Test wells} of \\ds{} (r16c02, r01c20, r07c07). LNK, CT, TRA: mean over wells; ED, '
+                       'EA, EC: false, missed and wrong-type edges, summed. Div.: false divisions (the ground truth '
+                       'has none; CellTrack-GNN divides by post-processing and also gives '
+                       f'{divisions["ctgnn0"]["invalid"]} / {divisions["ctgnn1"]["invalid"]} mothers three or more '
+                       'daughters). Unmarked Trackastra rows link with divisions allowed, the setting of ' + OURS + '; '
+                       '$^\\ddagger$told that there are none. ft: fine-tuned; zs: zero-shot; s0, s1: seeds.', 'tab:test', colsep=3))
     keys = [('ours', OURS), ('ta_ft_div', 'Trackastra fine-tuned'), ('ta_zs_div', 'Trackastra zero-shot'),
             ('ta_ft', 'Trackastra fine-tuned$^\\ddagger$'), ('ta_zs', 'Trackastra zero-shot$^\\ddagger$')]
     cols15 = [c for c in COLUMNS if c[0] != 'AOGM_EC']
