@@ -39,9 +39,10 @@ METHODS = {
     'novel': ('No velocity', '#C8607A'),
     'base': ('No TTA', '#6C93CC'),
 }
+DS = 'ScriptaLive'           # name of the proprietary dataset in every figure (the paper's \ds macro)
 DATASETS = {                # populations of the confidence figure
-    'scripta_cv': ('Scripta CV (OOF)', '#3B6FB6'),
-    'scripta_test': ('Scripta test', '#79A6DC'),
+    'scripta_cv': (f'{DS} CV (OOF)', '#3B6FB6'),
+    'scripta_test': (f'{DS} test', '#79A6DC'),
     'dnn': ('DNN', '#2A9D8F'),
 }
 

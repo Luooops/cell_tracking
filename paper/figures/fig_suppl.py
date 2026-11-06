@@ -41,7 +41,7 @@ def ablation():
         ax.set_xticks(range(len(ABLATION)), [ABL_LABEL[k] for k in ABLATION], rotation=30, ha='right',
                       rotation_mode='anchor')
         ax.set_ylabel(metric)
-        ax.set_title('Scripta' if dataset == 'scripta' else 'DNN', loc='left', fontsize=6.5)
+        ax.set_title(style.DS if dataset == 'scripta' else 'DNN', loc='left', fontsize=6.5)
         grid(ax)
         style.panel(ax, 'abcde'[i], x=-0.3)
         means = ', '.join(f'{ABL_LABEL[k]} {values[k].mean():.4f}' for k in ABLATION)
@@ -96,7 +96,7 @@ def tta():
         with_tta = getter('ours').loc[base.index]['LNK']
         col = style.DATASETS['dnn' if dataset == 'dnn' else 'scripta_cv'][1]
         ax.scatter(base, with_tta, s=9, marker=marker, color=style.light(col), edgecolor=col, lw=0.5,
-                   label='Scripta' if dataset == 'scripta' else 'DNN')
+                   label=style.DS if dataset == 'scripta' else 'DNN')
         s = data.paired(with_tta, base)
         test = f', p = {data.fmt_p(s["p"])}' if s['n'] > 5 else ''
         lines.append(f'  {dataset} LNK: no TTA {base.mean():.4f}, TTA {with_tta.mean():.4f}; TTA higher in '
@@ -108,7 +108,7 @@ def tta():
     style.panel(ax, 'a', x=-0.35)
 
     ax = axes[1]
-    groups = [('scripta_cv_oof', 'Scripta'), ('dnn', 'DNN')]
+    groups = [('scripta_cv_oof', style.DS), ('dnn', 'DNN')]
     x = 0
     ticks = []
     for prefix, name in groups:

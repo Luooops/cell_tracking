@@ -22,8 +22,8 @@ SOURCES = {                       # population -> (dataset, method key, wells, d
 }
 ROWS = [('dnn', MOTHER_DAUGHTER, 'DNN, mother$\\rightarrow$daughter'),
         ('dnn', SAME_CELL, 'DNN, same cell'),
-        ('scripta', SAME_CELL, 'Scripta, same cell'),
-        ('scripta_raw', SAME_CELL, 'Scripta, same cell,\nmodel trained on RAW264.7 only'),
+        ('scripta', SAME_CELL, f'{style.DS}, same cell'),
+        ('scripta_raw', SAME_CELL, f'{style.DS}, same cell,\nmodel trained on RAW264.7 only'),
         ('hela', MOTHER_DAUGHTER, 'HeLa, mother$\\rightarrow$daughter'),
         ('hela', SAME_CELL, 'HeLa, same cell')]
 COUNTED = ['ours', 'raw', 'binary', 'ta_ft_div', 'ta_zs_div', 'ctgnn0', 'ctgnn1']
@@ -188,7 +188,7 @@ def main(refresh=False):
     ax_b.spines['left'].set_visible(False)
     ax_b.xaxis.grid(True, color=style.GRID, lw=0.4)
     ax_b.set_axisbelow(True)
-    ax_b.set_xlabel('False divisions on the Scripta test wells', labelpad=1.5)
+    ax_b.set_xlabel(f'False divisions on the {style.DS} test wells', labelpad=1.5)
     style.panel(ax_b, 'b', x=-0.68, y=1.0)
     wells = data.all_wells()
     every = {key: data.scripta_divisions(key, wells)['divisions'] for key in ('ours', 'raw', 'ta_ft_div', 'ta_zs_div')}
