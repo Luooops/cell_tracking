@@ -10,9 +10,23 @@ import data
 import style
 
 PAIRED = ['ours', 'ta_ft_div', 'ta_zs_div', 'ta_ft', 'ta_zs']
-TEST = ['ours', 'binary', 'ta_ft_div', 'ta_zs_div', 'ta_ft', 'ta_zs', 'ctgnn0', 'ctgnn1', 'classical']
+TEST = ['ours', 'binary', 'ta_ft_div', 'ta_zs_div', 'ta_ft', 'ta_zs', 'ctgnn', 'classical']   # ctgnn: both seeds
 SHORT = {'ours': 'ProGCT', 'binary': 'ProGCT, binary', 'ta_ft_div': 'TA ft', 'ta_zs_div': 'TA zs', 'ta_ft': 'TA ft‡',
-         'ta_zs': 'TA zs‡', 'ctgnn0': 'CT-GNN s0', 'ctgnn1': 'CT-GNN s1', 'classical': 'Classical‡'}
+         'ta_zs': 'TA zs‡', 'ctgnn': 'CellTrack-GNN', 'classical': 'Classical‡'}
+HIGHLIGHT = '#E3ECF8'                     # band behind ProGCT (user: show that ours is best)
+
+
+def highlight(ax, i):
+    ax.axvspan(i - 0.45, i + 0.45, color=HIGHLIGHT, zorder=0, lw=0)
+    lab = ax.get_xticklabels()[i]
+    lab.set_color(style.color('ours'))
+    lab.set_fontweight('bold')
+
+
+def test_values(k, metric):
+    if k == 'ctgnn':                     # CellTrack-GNN: per-well mean of its two training seeds
+        return np.mean([data.scripta_wells(s, data.TEST_WELLS)[metric].values for s in ('ctgnn0', 'ctgnn1')], axis=0)
+    return data.scripta_wells(k, data.TEST_WELLS)[metric].values
 
 
 def paired_panel(ax, metric, wells):
@@ -27,8 +41,10 @@ def paired_panel(ax, metric, wells):
                    zorder=2)
         ax.scatter(np.full(len(v), i)[test], v[test], s=10, marker='D', color=style.light(k, 0.3),
                    edgecolor=style.color(k), lw=0.7, zorder=3)
-        ax.plot([i - 0.22, i + 0.22], [v.mean()] * 2, color=style.EDGE, lw=1.0, zorder=4)
+        ax.plot([i - 0.22, i + 0.22], [v.mean()] * 2, color=style.color('ours') if k == 'ours' else style.EDGE,
+                lw=1.6 if k == 'ours' else 1.0, zorder=4)
     ax.set_xticks(x, [SHORT[k] for k in PAIRED], rotation=35, ha='right', rotation_mode='anchor')
+    highlight(ax, 0)
     ax.set_xlim(-0.5, len(PAIRED) - 0.5)
     ax.set_ylabel(metric)
     ax.yaxis.grid(True, color=style.GRID, lw=0.4)
@@ -40,12 +56,15 @@ def test_panel(ax, metric):
     x = np.arange(len(TEST))
     means = {}
     for i, k in enumerate(TEST):
-        v = data.scripta_wells(k, data.TEST_WELLS)[metric]
+        v = test_values(k, metric)
         means[k] = v.mean()
-        ax.scatter(np.full(len(v), i), v.values, s=10, marker='D', color=style.light(k), edgecolor=style.color(k),
+        ck = 'ctgnn0' if k == 'ctgnn' else k
+        ax.scatter(np.full(len(v), i), v, s=10, marker='D', color=style.light(ck), edgecolor=style.color(ck),
                    lw=0.6, zorder=3)
-        ax.plot([i - 0.3, i + 0.3], [v.mean()] * 2, color=style.EDGE, lw=1.0, zorder=4)
+        ax.plot([i - 0.3, i + 0.3], [v.mean()] * 2, color=style.color('ours') if k == 'ours' else style.EDGE,
+                lw=1.6 if k == 'ours' else 1.0, zorder=4)
     ax.set_xticks(x, [SHORT[k] for k in TEST], rotation=45, ha='right', rotation_mode='anchor', fontsize=5.5)
+    highlight(ax, 0)
     ax.set_xlim(-0.6, len(TEST) - 0.4)
     ax.set_ylabel(f'{metric} (test wells)')
     ax.yaxis.grid(True, color=style.GRID, lw=0.4)
@@ -87,9 +106,10 @@ def main():
     lines.append('TA = Trackastra; unmarked: divisions allowed (greedy), as for ours; ‡ told that there are no '
                  'divisions (Trackastra greedy_nodiv; the classical tracker never divides).')
     lines.append('c, d: test wells r16c02, r01c20, r07c07; black bar = mean, diamonds = wells. TA = Trackastra, '
-                 'CT-GNN = CellTrack-GNN (s0/s1 = training seeds; shared labels counted strictly, see RESULTS.md).')
+                 'CellTrack-GNN: per-well mean of its two training seeds; shared labels counted strictly. '
+                 'ProGCT highlighted (band, bold label, blue mean bar).')
     for metric, means in tests.items():
-        lines.append(f'  {metric}: ' + ', '.join(f'{style.label(k)} {v:.4f}' for k, v in means.items()))
+        lines.append(f'  {metric}: ' + ', '.join(f'{SHORT[k]} {v:.4f}' for k, v in means.items()))
     style.save(fig, 'fig1_main_comparison', '\n'.join(lines))
 
 
