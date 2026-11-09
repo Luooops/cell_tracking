@@ -13,6 +13,11 @@ augmentation, model.edge_scores). ablate (cue analysis): 'appearance' shuffles t
 every graph (appearance carries no information, its distribution is kept); 'velocity' builds every graph without
 velocities (as for a cell seen for the first time); position, size and competition stay. cues=True keeps the real
 tracking and records, per edge, the probabilities the same graph gets under each ablation (p_noapp, p_novel).
+
+Gap closing (after round 1, no divisions): round g joins tracks ending at t to tracks starting at t + g on the graph
+(t, t + g), g = 2 .. max_bridge, with the same network and threshold. The default max_bridge 2 bridges one missed
+frame (the final version); max_bridge 3 adds a round over two missed frames after it (ablation). Its edges are
+recorded with round 3.
 """
 import numpy as np
 
@@ -64,9 +69,12 @@ def _order(reference, view):
 
 def track_video(models, video, target, divisions=False, gap_round=True, link_thresh=LINK_THRESH,
                 gap_thresh=GAP_THRESH, div_thresh=DIV_THRESH, recorder=None, prior='none', views=(), ablate=None,
-                cues=False):
+                cues=False, max_bridge=2):
     """-> (assign, parent) as gnn_tracking.track_division (parent stays empty without divisions). target: the
-    dataset of the video (used only by prior 'division'); prior: model.PRIORS; views / ablate / cues: see above."""
+    dataset of the video (used only by prior 'division'); prior: model.PRIORS; views / ablate / cues / max_bridge:
+    see above."""
+    if max_bridge not in (2, 3):
+        raise ValueError(f'max_bridge must be 2 or 3, not {max_bridge}')
     binary = models[0].n_classes == 2
     frames = video.frames
     f0 = frames[0]
@@ -133,34 +141,35 @@ def track_video(models, video, target, divisions=False, gap_round=True, link_thr
     if not gap_round:
         return assign, parent
 
-    for t in frames[:-2]:                                             # round 2: bridge one missed frame (no divisions)
-        fi, fj = t - f0, t + 2 - f0
-        ends = [tid for tid, ks in members.items() if ks[-1][0] == fi and tid not in divided]
-        starts = [tid for tid, ks in members.items() if ks[0][0] == fj and tid not in parent]
-        if not ends or not starts:
-            continue
-        gr, s = score(t, 2)
-        src, dst = gr.candidate_edge_index.numpy()
-        dst = dst - gr.n_t
-        row = {members[tid][-1][1]: r for r, tid in enumerate(ends)}
-        col = {members[tid][0][1]: c for c, tid in enumerate(starts)}
-        sel = [e for e in range(len(src)) if src[e] in row and dst[e] in col]
-        if not sel:
+    for g in range(2, max_bridge + 1):                                # round g: bridge g - 1 missed frames (no divisions)
+        for t in frames[:-g]:
+            fi, fj = t - f0, t + g - f0
+            ends = [tid for tid, ks in members.items() if ks[-1][0] == fi and tid not in divided]
+            starts = [tid for tid, ks in members.items() if ks[0][0] == fj and tid not in parent]
+            if not ends or not starts:
+                continue
+            gr, s = score(t, g)
+            src, dst = gr.candidate_edge_index.numpy()
+            dst = dst - gr.n_t
+            row = {members[tid][-1][1]: r for r, tid in enumerate(ends)}
+            col = {members[tid][0][1]: c for c, tid in enumerate(starts)}
+            sel = [e for e in range(len(src)) if src[e] in row and dst[e] in col]
+            if not sel:
+                if recorder is not None:
+                    recorder(g, t, g, src, dst, s, np.zeros(len(src), bool), [])
+                continue
+            links = match(s['p_same'][sel], np.array([row[src[e]] for e in sel]),
+                          np.array([col[dst[e]] for e in sel]), len(ends), len(starts), gap_thresh)
             if recorder is not None:
-                recorder(2, t, 2, src, dst, s, np.zeros(len(src), bool), [])
-            continue
-        links = match(s['p_same'][sel], np.array([row[src[e]] for e in sel]), np.array([col[dst[e]] for e in sel]),
-                      len(ends), len(starts), gap_thresh)
-        if recorder is not None:
-            recorder(2, t, 2, src, dst, s, np.isin(np.arange(len(src)), sel),
-                     [(members[ends[r]][-1][1], members[starts[c]][0][1]) for r, c in links])
-        for r, c in links:
-            a, b = ends[r], starts[c]
-            for k in members[b]:
-                assign[k] = a
-            members[a] = members[a] + members.pop(b)
-            if b in divided: divided.discard(b); divided.add(a)       # the merged track inherits b's division
-            for d, m in parent.items():
-                if m == b: parent[d] = a
+                recorder(g, t, g, src, dst, s, np.isin(np.arange(len(src)), sel),
+                         [(members[ends[r]][-1][1], members[starts[c]][0][1]) for r, c in links])
+            for r, c in links:
+                a, b = ends[r], starts[c]
+                for k in members[b]:
+                    assign[k] = a
+                members[a] = members[a] + members.pop(b)
+                if b in divided: divided.discard(b); divided.add(a)   # the merged track inherits b's division
+                for d, m in parent.items():
+                    if m == b: parent[d] = a
     return assign, parent
 

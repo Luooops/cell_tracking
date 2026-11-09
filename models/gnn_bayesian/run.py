@@ -41,8 +41,10 @@ Tracking options (after training, or with --retrack):
                             velocities;  --cues  track normally and record per edge the probabilities without each cue
     --link-thresh T         link and gap threshold T instead of the cost-derived 0.4 (threshold sweep, analysis only)
     --no-gap-round          adjacent frames only, no cross-frame check (ablation of the frame-gap links)
+    --max-bridge 3          gap closing also over two missed frames (graphs (t, t+3), after the one-frame round;
+                            ablation; default 2 = one missed frame)
 --retrack trains nothing: it loads the checkpoints and tracks again into
-<out>/retrack_<prior>[_tta][_no<cue>][_cues][_t<T>][_nogap]/.
+<out>/retrack_<prior>[_tta][_no<cue>][_cues][_t<T>][_nogap][_bridge3]/.
 
 Training options: --classes 2 (binary ablation 'linked or not'); --max-gap 1 (ablation: training graphs of adjacent
 frames only, default gaps 1-3; with the cross-frame check round 2 then scores g = 2 graphs the network never saw); --active-bias (weight edges by their prediction
@@ -80,7 +82,8 @@ TRACKERS = {'gnn_tracking': False, 'gnn_division': True}
 def _tag(args):
     return '_'.join([args.prior] + (['tta'] if args.tta else []) + ([f'no{args.ablate}'] if args.ablate else [])
                     + (['cues'] if args.cues else []) + ([f't{args.link_thresh:g}'] if args.link_thresh else [])
-                    + (['nogap'] if args.no_gap_round else []))
+                    + (['nogap'] if args.no_gap_round else [])
+                    + ([f'bridge{args.max_bridge}'] if args.max_bridge != 2 else []))
 
 
 def units(args, extra):
@@ -143,7 +146,7 @@ def _track_and_export(args, models, spec, target, cache, folder_of, extra_report
         recorder = Recorder(video)
         assign, parent = track_video(models, video, target, divisions=divisions, recorder=recorder, prior=args.prior,
                                      views=views, ablate=args.ablate, cues=args.cues, link_thresh=thresh,
-                                     gap_thresh=thresh, gap_round=not args.no_gap_round)
+                                     gap_thresh=thresh, gap_round=not args.no_gap_round, max_bridge=args.max_bridge)
         folder = folder_of(name)
         folder.mkdir(parents=True, exist_ok=True)
         report = export_gnn_well(folder / well, video, assign, parent if divisions else None, recorder)
@@ -152,7 +155,7 @@ def _track_and_export(args, models, spec, target, cache, folder_of, extra_report
         tracks.to_csv(folder / well / 'tracks_confidence.csv', index=False)
         (folder / well / 'metrics.json').write_text(json.dumps(dict(
             **extra_report, prior=args.prior, tta=args.tta, ablate=args.ablate, cues=args.cues, link_thresh=thresh,
-            gap_round=not args.no_gap_round, **report,
+            gap_round=not args.no_gap_round, max_bridge=args.max_bridge, **report,
             confidence=confidence), indent=2), encoding='utf-8')
         print(f"{spec} {name}: perfect {report['perfect']:.1f}  id switches {report['id_switches']}"
               + (f"  divisions {len(parent)}" if divisions else '')
@@ -300,6 +303,8 @@ def main(argv=None):
                         '(threshold sweep)')
     parser.add_argument('--no-gap-round', action='store_true', help='Adjacent frames only, no cross-frame check '
                         '(ablation)')
+    parser.add_argument('--max-bridge', type=int, choices=[2, 3], default=2,
+                        help='Largest frame gap of gap closing (2: one missed frame; 3: also two, ablation)')
     parser.add_argument('--tta', action='store_true', help='Also score the mirrored video and average')
     parser.add_argument('--ablate', choices=['appearance', 'velocity'], help='Cue analysis: track without this cue')
     parser.add_argument('--cues', action='store_true', help='Record per edge the scores without each cue')
@@ -345,6 +350,8 @@ def main(argv=None):
             parser.error(f'--track-videos must be sequences of --extra: {bad}')
         if seen := sorted(set(args.track_videos) & set(extra_sequences(args))):
             parser.error(f'--track-videos are trained on: {seen}')
+    if args.no_gap_round and args.max_bridge != 2:
+        parser.error('--max-bridge needs the gap round (drop --no-gap-round)')
     if args.link_thresh is not None and not 0 < args.link_thresh < 1:
         parser.error('--link-thresh must lie in (0, 1)')
     if args.command == 'final' and not args.test_wells:

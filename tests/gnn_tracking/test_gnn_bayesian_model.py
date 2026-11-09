@@ -92,6 +92,25 @@ class TestGnnBayesian(unittest.TestCase):
         assign, parent = track_video(binary, video, 'syn', divisions=True, prior='none')
         self.assertEqual(len(assign), sum(len(video.rows[t]) for t in video.frames))
 
+    def test_max_bridge_three_records_only_rounds_up_to_three(self):
+        import torch
+        from models.gnn_bayesian.model import TrackerGNN3, class_priors
+        from models.gnn_bayesian.track import Recorder, track_video
+        from models.gnn_tracking.model import DEVICE
+        from tests.gnn_tracking.test_gnn_track_recording import synthetic_video
+        torch.manual_seed(0)
+        video = synthetic_video()
+        models = [TrackerGNN3().to(DEVICE).eval()]
+        models[0].priors = class_priors({('syn', 1): [80, 20, 1], ('syn', 2): [80, 20, 1]})
+        rec = Recorder(video)
+        assign, _ = track_video(models, video, 'syn', recorder=rec, max_bridge=3)
+        self.assertEqual(len(assign), sum(len(video.rows[t]) for t in video.frames))
+        e = rec.arrays()
+        self.assertTrue(set(e['round'].tolist()) <= {1, 2, 3})
+        self.assertTrue((e['g'][e['round'] == 3] == 3).all())
+        with self.assertRaises(ValueError):
+            track_video(models, video, 'syn', max_bridge=4)
+
 
 if __name__ == '__main__':
     unittest.main()
