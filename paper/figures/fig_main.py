@@ -1,8 +1,9 @@
-"""Figure 1 (full width): main comparison on scripta.
-a, b  LNK and CT on all 15 wells, paired by well: ours vs Trackastra ft and zs, each with divisions allowed (greedy, the
-      setting of ours: not told whether there are divisions) and told that there are none (greedy_nodiv, marked ‡)
-      (dev wells out-of-fold, test wells final).
-c, d  LNK and CT on the 3 test wells for every method (mean and the wells)."""
+"""Main comparison on scripta.
+fig1_main_comparison (paper, one column): a, b  LNK and CT on all 15 videos, paired: ours vs Trackastra ft and zs,
+      each with divisions allowed (greedy, the setting of ours: not told whether there are divisions) and with
+      divisions forbidden (greedy_nodiv, marked ‡) (dev wells out-of-fold, test wells final).
+figS4_test_wells (supplement, one column): LNK and CT on the 3 test wells for every method (mean and the wells),
+      the points behind the paper's test-well table."""
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -72,13 +73,12 @@ def test_panel(ax, metric):
     return means
 
 
-def main():
-    style.setup()
+def paired():
+    """Paper figure (one column): a, b on all 15 videos."""
     wells = data.all_wells()
-    fig = plt.figure(figsize=(style.FULL, 48 * style.MM))
-    gs = fig.add_gridspec(1, 4, width_ratios=[1.25, 1.25, 1.5, 1.5], left=0.07, right=0.995, bottom=0.3, top=0.91,
-                          wspace=0.42)
-    axes = [fig.add_subplot(gs[0, i]) for i in range(4)]
+    fig = plt.figure(figsize=(style.COLUMN, 42 * style.MM))
+    gs = fig.add_gridspec(1, 2, left=0.16, right=0.99, bottom=0.24, top=0.9, wspace=0.48)
+    axes = [fig.add_subplot(gs[0, i]) for i in range(2)]
     stats = {}
     for ax, metric, letter in ((axes[0], 'LNK', 'a'), (axes[1], 'CT', 'b')):
         values = paired_panel(ax, metric, wells)
@@ -86,31 +86,44 @@ def main():
         stats[metric] = (values, {k: data.paired(values['ours'], values[k]) for k in PAIRED[1:]})
     axes[0].set_ylim(0.88, 1.0)
     axes[1].set_ylim(0.3, 0.95)
-    tests = {}
-    for ax, metric, letter, lo in ((axes[2], 'LNK', 'c', 0.78), (axes[3], 'CT', 'd', 0.0)):
-        tests[metric] = test_panel(ax, metric)
-        ax.set_ylim(lo, 1.0 if metric == 'LNK' else 0.9)
-        style.panel(ax, letter, x=-0.2)
     axes[0].set_title('15 videos, paired', loc='left', fontsize=6.5)
-    axes[2].set_title('3 test wells', loc='left', fontsize=6.5)
-
-    lines = ['Figure 1. Main comparison on scripta (refine2 GT; CTC measures on fixed detections, project GT).',
-             'a, b: 15 wells paired by well; dev wells (circles) = 3-fold out-of-fold, test wells (diamonds) = final '
+    lines = ['Main comparison on scripta (CTC measures on fixed detections, project GT).',
+             'a, b: 15 videos paired; dev wells (circles) = 3-fold out-of-fold, test wells (diamonds) = final '
              'models; black bar = mean. Two-sided Wilcoxon signed-rank, ours vs each:']
     for metric, (values, tests_) in stats.items():
         means = ', '.join(f'{style.label(k)} {values[k].mean():.4f}' for k in PAIRED)
         lines.append(f'  {metric}: means {means}')
         for k, s in tests_.items():
-            lines.append(f'    ours vs {style.label(k)}: ours higher in {s["a_higher"]}/{s["n"]} wells, '
+            lines.append(f'    ours vs {style.label(k)}: ours higher in {s["a_higher"]}/{s["n"]} videos, '
                          f'lower in {s["b_higher"]}, p = {data.fmt_p(s["p"])}')
     lines.append('TA = Trackastra; unmarked: divisions allowed (greedy), as for ours; ‡ divisions forbidden '
-                 '(Trackastra greedy_nodiv; the classical tracker never divides).')
-    lines.append('c, d: test wells r16c02, r01c20, r07c07; black bar = mean, diamonds = wells. TA = Trackastra, '
-                 'CellTrack-GNN: per-well mean of its two training seeds; shared labels counted strictly. '
-                 'ProGCT highlighted (band, bold label, blue mean bar).')
+                 '(Trackastra greedy_nodiv).')
+    style.save(fig, 'fig1_main_comparison', '\n'.join(lines))
+
+
+def test_wells():
+    """Supplementary figure (one column): LNK and CT on the 3 test wells for every method (Table 1 as points)."""
+    fig = plt.figure(figsize=(style.COLUMN, 48 * style.MM))
+    gs = fig.add_gridspec(1, 2, left=0.16, right=0.99, bottom=0.36, top=0.9, wspace=0.5)
+    axes = [fig.add_subplot(gs[0, i]) for i in range(2)]
+    tests = {}
+    for ax, metric, letter, lo in ((axes[0], 'LNK', 'a', 0.78), (axes[1], 'CT', 'b', 0.0)):
+        tests[metric] = test_panel(ax, metric)
+        ax.set_ylim(lo, 1.0 if metric == 'LNK' else 0.9)
+        style.panel(ax, letter, x=-0.3)
+    axes[0].set_title('3 test wells', loc='left', fontsize=6.5)
+    lines = ['Test wells r16c02, r01c20, r07c07, every method; black bar = mean, diamonds = wells. TA = Trackastra; '
+             '‡ divisions forbidden (the classical tracker never divides); CellTrack-GNN: per-well mean of its two '
+             'training seeds. ProGCT highlighted (band, bold label, blue mean bar).']
     for metric, means in tests.items():
         lines.append(f'  {metric}: ' + ', '.join(f'{SHORT[k]} {v:.4f}' for k, v in means.items()))
-    style.save(fig, 'fig1_main_comparison', '\n'.join(lines))
+    style.save(fig, 'figS4_test_wells', '\n'.join(lines))
+
+
+def main():
+    style.setup()
+    paired()
+    test_wells()
 
 
 if __name__ == '__main__':

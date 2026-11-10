@@ -73,43 +73,17 @@ def dnn_summary(key, videos):
 def dnn():
     keys = [('ours', OURS), ('binary', OURS + ', binary'), ('raw', OURS + ', RAW only'), ('ta_ft_div', 'Trackastra ft'),
             ('ta_zs_div', 'Trackastra zs'), ('ta_zs_ctc', 'Trackastra ctc')]
-    cols = [(f'{m}{s}', h, None, pick, d) for s in ('13', 'off')
-            for m, h, pick, d in (('LNK', 'LNK', max, 4), ('BC', 'BC', max, 3), ('rec', 'Rec.', max, 3), ('fp', 'FP', min, 0))]
-    cols.insert(4, ('ED13', 'ED', None, min, 0))
-    cols.insert(5, ('EA13', 'EA', None, min, 0))
-    rows = []
-    for key, name in keys:
-        a = dnn_summary(key, data.DNN_VIDEOS)
-        values = {f'{m}13': a[m] for m in ('LNK', 'BC', 'rec', 'fp', 'ED', 'EA')}
-        try:                    # the RAW-only model never tracked the 3T3/HEK293 videos test07-08
-            b = dnn_summary(key, data.DNN_OFFICIAL)
-            values.update({f'{m}off': b[m] for m in ('LNK', 'BC', 'rec', 'fp')})
-        except KeyError:
-            values.update({f'{m}off': float('nan') for m in ('LNK', 'BC', 'rec', 'fp')})
-        rows.append((name, values))
-    best = {c: pick(v[c] for _, v in rows if v[c] == v[c]) for c, _, _, pick, _ in cols}
-    out = ['\\begin{table*}[!t]', '\\centering', '\\small', '\\setlength{\\tabcolsep}{4pt}',
-           '\\begin{tabular}{l' + 'r' * len(cols) + '}', '\\toprule',
-           ' & \\multicolumn{6}{c}{13 videos (val17--26, test09--11)} & \\multicolumn{4}{c}{Official test videos '
-           '(test07--11)} \\\\', '\\cmidrule(lr){2-7}\\cmidrule(lr){8-11}',
-           'Method & ' + ' & '.join(h for _, h, *_ in cols) + ' \\\\', '\\midrule']
-    for name, v in rows:
-        cells = []
-        for c, _, _, _, digits in cols:
-            if v[c] != v[c]:
-                cells.append('--')
-                continue
-            text = f'{v[c]:.{digits}f}' if digits else f'{int(round(v[c]))}'
-            cells.append(f'\\textbf{{{text}}}' if v[c] == best[c] else text)
-        out.append(f'{name} & ' + ' & '.join(cells) + ' \\\\')
-    out += ['\\bottomrule', '\\end{tabular}',
-            '\\caption{\\textbf{Tracking with divisions} on DynamicNuclearNet (DNN) videos that no model in the table '
-            'was trained on (all link with divisions allowed). ' + OURS + ', RAW only is trained on the RAW264.7 videos '
-            'alone; Trackastra zs (\\texttt{general\\_2d}) and ctc are the released models, and \\texttt{general\\_2d} '
-            'may include the validation videos. Rec.: division recall; FP: false divisions; ED, EA: false and missed '
-            'edges. test07--08 show 3T3/HEK293 cells, absent from our training data.}',
-            '\\label{tab:dnn}', '\\end{table*}', '']
-    return '\n'.join(out)
+    # the 13 RAW264.7 videos only; test07-08 (3T3/HEK293, a cell type absent from training, which the RAW-only
+    # model never tracked) are reported in the limitations
+    cols = [('LNK', 'LNK', None, max, 4), ('BC', 'BC', None, max, 3), ('rec', 'Rec.', None, max, 3),
+            ('fp', 'FP', None, min, 0), ('ED', 'ED', None, min, 0), ('EA', 'EA', None, min, 0)]
+    rows = [(name, dnn_summary(key, data.DNN_VIDEOS)) for key, name in keys]
+    return table(rows, cols, '\\textbf{Tracking with divisions} on the 13 DynamicNuclearNet (DNN) videos val17--26 '
+                 'and test09--11 (RAW264.7), which no model in the table was trained on; all link with divisions '
+                 'allowed. ' + OURS + ', RAW only is trained on the RAW264.7 videos alone; Trackastra zs '
+                 '(\\texttt{general\\_2d}) and ctc are the released models, and \\texttt{general\\_2d} may include the '
+                 'validation videos. Rec.: division recall; FP: false divisions; ED, EA: false and missed edges.',
+                 'tab:dnn', colsep=3)
 
 
 TAUS = [('tau0.2', 0.2), ('tau0.3', 0.3), (None, 0.4), ('tau0.5', 0.5), ('tau0.6', 0.6)]   # None: the main runs
@@ -294,7 +268,7 @@ def main():
                        '(\\texttt{greedy}); $^\\ddagger$divisions forbidden (\\texttt{greedy\\_nodiv}).',
                        'tab:all15'), divmode(), hela(), tau()]
     compact, full = modules()
-    parts += [dnn(), compact]
+    parts += [compact, dnn()]      # the order in which sec:main and sec:divisions discuss them
     style.OUT.mkdir(parents=True, exist_ok=True)
     (style.OUT / 'tables.tex').write_text('\n'.join(parts), encoding='utf-8')
     (style.OUT / 'tables_suppl.tex').write_text('\n'.join(suppl), encoding='utf-8')
