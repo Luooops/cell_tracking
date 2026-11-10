@@ -104,9 +104,20 @@ def paired(a, b):
     return dict(n=len(d), a_higher=int((d > 0).sum()), b_higher=int((d < 0).sum()), p=float(p))
 
 
+# calibration_mi3: the same evaluations re-run on 2026-11-10 with the MI ranking on the recorded three-class MI (the
+# paper's definition) instead of the members' binary MI; ECE and reliability are unchanged. scripta_cv_oof_g1 was not
+# re-run (its tracking output is on the server) and is used for its ECE only, which the change does not touch.
+BINARY_MI_ONLY = {'scripta_cv_oof_g1'}
+
+
+def calibration_folder(name):
+    """final_results_v2/calibration_mi3/<name>, or calibration/<name> for BINARY_MI_ONLY."""
+    return FINAL / ('calibration' if name in BINARY_MI_ONLY else 'calibration_mi3') / name
+
+
 def answers(name):
-    """evaluate_answers output in final_results_v2/calibration/<name>: (metrics overall, reliability, coverage)."""
-    folder = FINAL / 'calibration' / name
+    """evaluate_answers output of calibration_folder(name): (metrics overall, reliability, coverage)."""
+    folder = calibration_folder(name)
     metrics = json.loads((folder / 'metrics.json').read_text(encoding='utf-8'))['overall']
     return metrics, pd.read_csv(folder / 'reliability.csv'), pd.read_csv(folder / 'coverage.csv')
 

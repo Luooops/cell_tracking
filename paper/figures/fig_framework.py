@@ -3,7 +3,7 @@
 Row 1 (scoring):  frame-pair graphs (t, t+g), g = 1, 2, 3 in training -> graph network (appearance and geometry
                   streams in parallel, fused in the node and edge features, message passing, edge head) ->
                   three-class edges
-Row 2 (deciding): ensemble of 3 models x 3 views -> calibrated decisions -> constrained gap closing (g = 2) -> outputs
+Row 2 (deciding): ensemble of 3 models x 3 mirrored views -> calibrated decisions -> constrained gap closing (g = 2) -> outputs
 A plain flowchart: every card alike, no step numbers, no highlighted frames.
 Features are drawn as small flat cubes; the first cube of a node token shows a real masked appearance crop
 (utils.dataset.appearance_crop of a Scripta nucleus). Everything else is schematic. No equations.
@@ -293,12 +293,14 @@ R1T, R1B = (3.0, 22.4), (23.6, 35.0)        # the two branches of row 1 (the gra
 C1 = [(0.6, 17.6), (19.8, 72.8), (75.0, 121.0), (123.2, 174.0)]
 C2 = [(0.6, 34.0), (36.2, 86.0), (88.2, 128.0), (130.2, 174.0)]
 GR, GEO = '#C9D1D8', '#A9BEDD'                             # appearance / geometric features (g: BLUE)
+COMP, MOT = '#DCCFB9', '#B8CBB4'                            # edge competition / motion columns (graph.py)
 
 
 def blocks(part, x0, y0, groups, s=2.0, gap=0.7, dims=None):
     """A feature vector drawn as concatenated groups of cubes, each group named under it: groups = [(colours, label)].
-    dims: the width of each group, written under its name (user: geometry and g separately).
-    Returns the x after the last cube."""
+    dims: the width of each group, written under its name (user: geometry and g separately). gap: one value, or one
+    per space between groups. Returns the x after the last cube."""
+    gaps = list(gap) if isinstance(gap, (list, tuple)) else [gap] * (len(groups) - 1)
     xx = x0
     for k_, (colours, lab) in enumerate(groups):
         tokens(part, xx, y0, s, list(colours))
@@ -312,8 +314,8 @@ def blocks(part, x0, y0, groups, s=2.0, gap=0.7, dims=None):
             note(part, xx + width / 2, y0 + s + 1.3, lab, fs=4.2, c=MUTED, ha='center')
         if dims:
             note(part, xx + width / 2, y0 + s + 2.9, dims[k_], fs=4.0, c=GREY_T, ha='center')
-        xx += width + gap
-    return xx - gap + 0.35 * s
+        xx += width + (gaps[k_] if k_ < len(gaps) else 0)
+    return xx + 0.35 * s
 
 
 def hcard(row, col):
@@ -416,10 +418,11 @@ for d_ in EZ['dst_label'][CAND_G]:                          # the source's real 
 # output: the geometric features of every node and candidate edge (g among them), at the right edge
 ox = x + w - 9.4
 note('graph', ox + 7.6, y + 2.6, 'node  N × 8', fs=4.6, c=MUTED, ha='right')       # N cells of t, t+g
-blocks('graph', ox, y + 4.6, [((GEO, GEO), 'geometry')], dims=['8'])
+blocks('graph', ox, y + 4.6, [((GEO, GEO), 'cell')], dims=['8'])
 note('graph', ox + 7.6, y + 11.4, 'edge  C × 13', fs=4.6, c=MUTED, ha='right')      # C candidate edges
-blocks('graph', ox, y + 13.2, [((GEO, GEO), 'geometry'), ((BLUE,), 'g')], gap=1.2, dims=['12', '1'])
-arrow('graph', (sx0 + 2 * off + ts + 6.2, y + 14.2), (ox - 0.6, y + 14.2), c=GREY_T, lw=0.6, head=3.5)
+EDGE_G = [((GEO,), 'geo'), ((COMP,), 'cmp'), ((MOT,), 'mot'), ((BLUE,), 'g')]    # graph.py columns 0-3, 4-7, 8-11, 12
+blocks('graph', ox - 3.0, y + 13.2, EDGE_G, gap=[0.7, 0.7, 1.2], dims=['4', '4', '4', '1'])
+arrow('graph', (sx0 + 2 * off + ts + 6.2, y + 14.2), (ox - 3.6, y + 14.2), c=GREY_T, lw=0.6, head=3.5)
 
 # --------------------------------------------------------------- row 1, branch 2: appearance embedding
 # models.gnn_tracking.model.AppearanceNet: masked crop -> CNN -> e (32-d, unit length); trained with a contrastive
@@ -449,11 +452,11 @@ x, y, w, h = hcard(R1, C1[2])
 card('network', x, y, w, h, 'Graph network')
 ya, yg = y + 8.0, y + 16.4                                  # node row, edge row: every arrow runs straight
 note('network', x + 1.4, ya - 2.8, 'node  N × 40', fs=4.6, c=MUTED)    # the two branches' blocks, concatenated
-nx_ = blocks('network', x + 1.4, ya - 1.0, [((GEO, GEO), 'geometry'), ((GR,), 'e')], gap=1.2,
+nx_ = blocks('network', x + 1.4, ya - 1.0, [((GEO, GEO), 'cell'), ((GR,), 'e')], gap=1.2,
              dims=['8', '32'])
 note('network', x + 1.4, yg - 2.8, 'edge  C × 16', fs=4.6, c=MUTED)
-ex_ = blocks('network', x + 1.4, yg - 1.0, [((GEO, GEO), 'geometry'), ((BLUE,), 'g'), ((GR,), 'sim.')], gap=1.2,
-             dims=['12', '1', '3'])
+ex_ = blocks('network', x + 1.4, yg - 1.0, EDGE_G + [((GR,), 'sim.')], s=1.4, gap=[1.3, 1.3, 0.9, 0.9],
+             dims=['4', '4', '4', '1', '3'])
 mx, my, mw, mh = x + 16.8, y + 4.8, 11.8, 12.6              # message passing: tall enough for both rows
 for k in range(2):
     rbox('network', mx + k * 0.9, my + k * 0.9, mw, mh, 'white', ec=GREY_E, r=0.8, lw=0.45, z=3 + k)
@@ -485,8 +488,8 @@ for k, (c, s) in enumerate((('#C8D3E0', 'u'), (BLUE, 's'), (MAGENTA, 'd'))):
     rbox('network', ax_ - 3.4 + k * 2.6, y + 24.4, 1.6, 1.6, c, r=0.2, z=3)
     note('network', ax_ - 2.6 + k * 2.6, y + 27.4, s, fs=4.4, c=MUTED, ha='center')
 note('network', ax_ - 4.2, y + 25.2, 'logits', fs=4.4, c=MUTED, ha='right')
-for k, s in enumerate(('node: [geometry 8, e 32] → N × 40 → h: N × 64',              # dimensions (model.py):
-                       'edge: [geometry 12, g 1, sim. 3] → C × 16',                   # blocks side by side
+for k, s in enumerate(('node: [cell 8, e 32] → N × 40 → h: N × 64',              # dimensions (model.py):
+                       'edge: [geom. 4, comp. 4, motion 4, g 1, sim. 3] → C × 16',                   # blocks side by side
                        r'head: [$h_i$, $h_j$, edge] → C × 144 → C × 3')):          # are concatenated
     txt('network', x + 1.4, y + 25.9 + k * 2.15, s, fs=4.2, c=GREY_T)
 # --------------------------------------------------------------- row 1, card 4: three-class edges, real edges
@@ -520,7 +523,7 @@ def edge_example(x0, title, pair_imgs, pair_masks, labels, probs, lo_hi, sigma):
 cont = 145
 cm = R1M & (EZ['src_label'] == cont) & (EZ['chosen'] == 1)
 pc = float(EZ['p'][cm][0]), float(EZ['p_div'][cm][0])
-edge_example(x + 1.2, 'continuation', ims_ex, [s_mask(EXW, EXT), s_mask(EXW, EXT + 1)], ([cont], [cont]),
+edge_example(x + 1.2, 'same cell', ims_ex, [s_mask(EXW, EXT), s_mask(EXW, EXT + 1)], ([cont], [cont]),
              (max(0.0, 1 - pc[0] - pc[1]), pc[0], pc[1]), LV, 0.0)
 dz = np.load(FIN / 'dnn' / 'progct' / 'division' / 'val18' / 'edges.npz')
 dm = (dz['round'] == 1) & (dz['src_label'] == 83) & (dz['p_div'] > 0.5)
@@ -534,7 +537,7 @@ FACTS['head'] = dict(continuation=dict(well=EXW, t=EXT, cell=cont, p_same=pc[0],
                      division=dict(video='val18', t=dt, mother=83, daughters=[int(v) for v in dz['dst_label'][dm]],
                                    p_same=dp[0], p_div=dp[1]))
 rbox('head', x + 1.2, y + 21.4, w - 2.4, 8.6, BLUE_BAND, ec='#BFD0E8', r=0.8, lw=0.4, z=2)
-for k, s in enumerate(('one model for videos with and without mitoses:', 'no dataset flag, no division switch,',
+for k, s in enumerate(('one model for videos with and without divisions:', 'no dataset flag, no division switch,',
                        'no class weights (outputs stay probabilities)')):
     note('head', x + w / 2, y + 23.2 + k * 2.3, s, fs=4.9, c=INK, ha='center')
 
@@ -543,6 +546,8 @@ x, y, w, h = hcard(R2, C2[0])
 card('ensemble', x, y, w, h, 'Ensemble')
 note('ensemble', x + 1.6, y + 5.4, 'models', fs=4.8, c=MUTED)
 note('ensemble', x + 7.6, y + 5.4, '3 mirrored views', fs=4.8, c=MUTED)
+for j, (s, dx, fs_) in enumerate((('orig.', -0.35, 4.0), ('↔', 0.15, 4.6), ('↕', 0.0, 4.6))):
+    note('ensemble', x + 8.5 + j * 2.3 + dx, y + 23.8, s, fs=fs_, c=MUTED, ha='center')   # run.py --tta: none, 'h', 'v'
 for k in range(3):                                          # compact (user): rows fill the card height
     yy = y + 7.0 + k * 5.6
     rbox('ensemble', x + 1.6, yy, 4.6, 4.6, BLUE_L, ec=BLUE, r=0.5, lw=0.45, z=3)
@@ -560,7 +565,7 @@ note('ensemble', bx_ + 3.6, y + 9.4, 'mean', fs=5.0, c=BLUE_D)
 txt('ensemble', bx_ + 3.6, y + 12.0, 'p', fs=6.4, c=BLUE, b=True, it=True)     # no example values: the
 note('ensemble', bx_ + 3.6, y + 18.0, 'disagreement', fs=5.0, c=GOLD_T)              # bars show them (user)
 txt('ensemble', bx_ + 3.6, y + 20.6, 'MI', fs=6.4, c=GOLD_T, b=True)
-for k, s in enumerate(('one real candidate edge:', 'models disagree, so MI flags it', 'although p > τ')):
+for k, s in enumerate(('one real candidate edge:', 'models and views disagree, so MI flags it', 'although p > τ')):
     note('ensemble', x + w / 2, y + h - 6.0 + k * 2.3, s, fs=5.0, c=INK, ha='center')
 
 # --------------------------------------------------------------- row 2, card 2: (3) calibrated decisions
@@ -681,7 +686,7 @@ xe = (C1[-1][0] + C1[-1][1]) / 2
 xs_ = (C2[0][0] + C2[0][1]) / 2
 line('flow', [xe, xe, xs_, xs_], [R1[1] + 0.1, gy, gy, gy], BLUE, lw=0.9, z=6)
 arrow('flow', (xs_, gy - 0.05), (xs_, R2[0] - 0.1), c=BLUE, lw=0.9, head=5)
-txt('flow', (xe + xs_) / 2, gy - 1.25, 'for every candidate edge: three class probabilities, 3 models × 3 views',
+txt('flow', (xe + xs_) / 2, gy - 1.25, 'for every candidate edge: three class probabilities, 3 models × 3 mirrored views',
     fs=5.0, c=BLUE_D, ha='center', it=True)
 (OUT / 'facts.json').write_text(json.dumps(FACTS, indent=1), encoding='utf-8')
 

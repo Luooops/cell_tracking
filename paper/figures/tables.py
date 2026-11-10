@@ -1,6 +1,6 @@
-"""LaTeX tables (booktabs) -> out/tables.tex (main paper: scripta test wells, DNN, module ablations) and
+"""LaTeX tables (booktabs) -> out/tables.tex (main paper: scripta test wells, DNN, module ablations),
 out/tables_suppl.tex (scripta 15 wells, division switch, HeLa, threshold sweep; the 15-well numbers are also in
-figure 1). LNK / CT / TRA / BC are means over wells; ED (false), EA (missed), EC (wrong edge type) are AOGM terms and
+figure 1) and out/table_modules_full.tex (the supplement's full module table). LNK / CT / TRA / BC are means over wells; ED (false), EA (missed), EC (wrong edge type) are AOGM terms and
 the division counts are summed over wells; division recall is pooled (tp / (tp + fn)). The best value of each column
 is bold (not in the module table, which compares each module with its own full model)."""
 import data
@@ -120,54 +120,102 @@ def modules():
     development wells (out of fold) and the 13 DNN videos. Retracks with TTA (gap closing, threshold) compare
     with the main runs; the cue ablations were tracked without views and compare with the same run without views
     ('base'). Training gaps: the model trained with g = 1 only (g1, g1_nogap; scripta only, retrained).
-    * : paired Wilcoxon p < 0.01 over the wells / videos."""
+    -> (compact table for the paper: the change without - with, grouped; full table for the supplement: every
+    measure as full -> without, with a note). * : paired Wilcoxon p < 0.01 over the wells / videos."""
     dev = [w for w in data.all_wells() if w not in data.TEST_WELLS]
     s = lambda k: data.scripta_wells(k, dev)
     d = lambda k: data.dnn_wells(k)
+    count = lambda n: f'{int(round(n)):,}'.replace(',', '{,}')
 
-    def change(a, b, digits, test=True):
-        star = '$^*$' if test and data.paired(a, b)['p'] < 0.01 else ''
-        f = (lambda x: f'{x:.{digits}f}') if digits else (lambda x: f'{int(round(x))}')
-        mean = (lambda x: x.mean()) if digits else (lambda x: x.sum())
-        return f'{f(mean(a))} $\\to$ {f(mean(b))}{star}'
+    def mean(a, b, digits, test=True):         # (full, without) of a per-well measure: mean, or sum for counts
+        f = (lambda x: x.mean()) if digits else (lambda x: x.sum())
+        return dict(full=f(a), without=f(b), digits=digits,
+                    star='^*' if test and data.paired(a, b)['p'] < 0.01 else '')
+
+    def fixed(full, without, digits):           # pooled numbers, no per-well test
+        return dict(full=full, without=without, digits=digits, star='')
+
+    def arrow(v):                                # supplement: full -> without
+        f = (lambda x: f'{x:.{v["digits"]}f}') if v['digits'] else count
+        return f'{f(v["full"])} $\\to$ {f(v["without"])}' + ('$^*$' if v['star'] else '')
+
+    def delta(v):                                # paper: without - with, signed; zero without a sign
+        # from the values as the full table shows them, so a reader gets the same change from either table
+        x = round(v['without'], v['digits']) - round(v['full'], v['digits'])
+        text = f'{x:+.{v["digits"]}f}' if v['digits'] else f'{int(round(x)):+d}'
+        if float(text) == 0:
+            text = text.lstrip('+-')
+        return f'${text}{v["star"]}$'
 
     best = lambda get: max((get(k) for k, _ in TAUS if k), key=lambda t: t.LNK.mean())
     area = lambda name: data.answers(name)[0]['coverage']['false_links']['mutual_info']['area']
     ece2 = lambda name: data.answers(name)[0]['calibration']['round2_solver']['ece']     # second-pass candidates
-    div = lambda k, wells, dataset: data.divisions(k, wells, dataset)['divisions']
-    rows = [
-        ('Gap closing', 'LNK', change(s('ours_nodiv').LNK, s('nogap').LNK, 4), change(d('ours').LNK, d('nogap').LNK, 4)),
-        ('', 'EA', change(s('ours_nodiv').AOGM_EA, s('nogap').AOGM_EA, 0), change(d('ours').AOGM_EA, d('nogap').AOGM_EA, 0)),
-        ('Gaps 2, 3 in training$^d$', 'LNK', change(s('ours_nodiv').LNK, s('g1').LNK, 4), '--'),
-        ('', 'LNK$_1$', change(s('nogap').LNK, s('g1_nogap').LNK, 4), '--'),
-        ('', 'CT', change(s('ours_nodiv').CT, s('g1').CT, 3), '--'),
-        ('', 'ECE$_2$', f'{ece2("scripta_cv_oof_tta"):.3f} $\\to$ {ece2("scripta_cv_oof_g1"):.3f}', '--'),
-        ('Appearance', 'LNK', change(s('base').LNK, s('noapp').LNK, 4), change(d('base').LNK, d('noapp').LNK, 4)),
-        ('', 'BC', '--', change(d('base')['BC(0)'], d('noapp')['BC(0)'], 3)),
-        # velocity (no effect, at most 0.0004 LNK): supplement, figure S1
-        ('Three classes$^a$', 'Div.', f'{div("ours", data.TEST_WELLS, "scripta")} $\\to$ '
-         f'{div("binary", data.TEST_WELLS, "scripta")}',
-         f'{int(d("ours")["fp_div(0)"].sum())} $\\to$ {int(d("binary")["fp_div(0)"].sum())}'),
-        ('\\ds{} in training$^b$', 'Div.', f'{div("ours", data.all_wells(), "scripta")} $\\to$ '
-         f'{div("raw", data.all_wells(), "scripta")}',
-         f'{int(d("ours")["fp_div(0)"].sum())} $\\to$ {int(d("raw")["fp_div(0)"].sum())}'),
-        ('Mirrored views', 'MI area', f'{area("scripta_cv_oof_tta"):.3f} $\\to$ {area("scripta_cv_oof_base"):.3f}',
-         f'{area("dnn"):.3f} $\\to$ {area("dnn_base"):.3f}'),
-        ('$\\tau=0.4$$^c$', 'LNK', change(s('ours_nodiv').LNK, best(s).LNK, 4), change(d('ours').LNK, best(d).LNK, 4)),
-    ]
-    out = ['\\begin{table}[!t]', '\\centering', '\\small', '\\setlength{\\tabcolsep}{3pt}',
-           '\\begin{tabular}{llll}', '\\toprule', 'Module & Measure & \\ds{} & DNN \\\\', '\\midrule']
-    out += [' & '.join(r) + ' \\\\' for r in rows]
-    out += ['\\bottomrule', '\\end{tabular}',
-            '\\caption{\\textbf{What each module contributes}: the full model $\\to$ the same model without the module '
-            '(\\ds{}: 12 development wells, out of fold; DNN: the 13 videos of \\cref{tab:dnn}). Retrained only in '
-            '$^a$, $^b$, $^d$. Gap closing: adjacent frames only. Appearance: cell images shuffled within each frame. Div.: false divisions; MI area: area under the false-link coverage curve '
-            '(\\cref{fig:confidence}b). $^a$Binary edges, \\ds{} test wells. $^b$Trained on RAW264.7 alone (\\ds{}: '
-            'all 15 wells). $^c$Best LNK over $\\tau\\in\\{0.2,0.3,0.5,0.6\\}$ (\\cref{tab:tau}). $^d$Trained with '
-            '$g=1$ only; LNK$_1$: both without gap closing; ECE$_2$: calibration of the gap-closing candidates. '
-            '$^*$Paired Wilcoxon $p<0.01$.}',
-            '\\label{tab:modules}', '\\end{table}', '']
-    return '\n'.join(out)
+    div = lambda k, wells: data.divisions(k, wells, 'scripta')['divisions']
+    fp = lambda k: d(k)['fp_div(0)'].sum()
+    # (group, [(module, measure, scripta, dnn, note, in the paper's compact table)]); a cell is a value dict, a
+    # fixed string, or None (not run). Velocity (no effect, at most 0.0004 LNK): supplement, figure S1.
+    groups = [
+        ('Relations across missed detections', [
+            ('Gap closing', 'LNK $\\uparrow$', mean(s('ours_nodiv').LNK, s('nogap').LNK, 4),
+             mean(d('ours').LNK, d('nogap').LNK, 4), 'adjacent frames only', True),
+            ('', 'Missed edges $\\downarrow$', mean(s('ours_nodiv').AOGM_EA, s('nogap').AOGM_EA, 0),
+             mean(d('ours').AOGM_EA, d('nogap').AOGM_EA, 0), '', False),
+            ('Gaps 2, 3 in training$^\\dagger$', 'LNK $\\uparrow$', mean(s('ours_nodiv').LNK, s('g1').LNK, 4), None,
+             'trained with $g=1$ only', True),
+            ('', 'LNK$_1$ $\\uparrow$', mean(s('nogap').LNK, s('g1_nogap').LNK, 4), None, 'both without gap closing',
+             False),
+            ('', 'CT $\\uparrow$', mean(s('ours_nodiv').CT, s('g1').CT, 3), None, '', False),
+            ('', 'ECE$_2$ $\\downarrow$', fixed(ece2('scripta_cv_oof_tta'), ece2('scripta_cv_oof_g1'), 3), None,
+             'gap-closing candidates', False)]),
+        ('Calibrated decisions', [
+            ('Three classes$^\\dagger$', 'False div. $\\downarrow$',
+             fixed(div('ours', data.TEST_WELLS), div('binary', data.TEST_WELLS), 0), fixed(fp('ours'), fp('binary'), 0),
+             'binary edges; \\ds{} test wells', True),
+            ('Cost-derived $\\tau=0.4$', 'LNK $\\uparrow$', mean(s('ours_nodiv').LNK, best(s).LNK, 4, test=False),
+             mean(d('ours').LNK, best(d).LNK, 4, test=False), 'best $\\tau\\in\\{0.2,0.3,0.5,0.6\\}$ (\\cref{tab:tau})',
+             True),
+            ('\\ds{} in training$^\\dagger$', 'False div. $\\downarrow$',
+             fixed(div('ours', data.all_wells()), div('raw', data.all_wells()), 0), fixed(fp('ours'), fp('raw'), 0),
+             'RAW264.7 only; \\ds{}: all 15 wells', False)]),
+        ('Cues and confidence', [
+            ('Appearance', 'LNK $\\uparrow$', mean(s('base').LNK, s('noapp').LNK, 4),
+             mean(d('base').LNK, d('noapp').LNK, 4), 'images shuffled within each frame;', True),
+            ('', 'BC $\\uparrow$', 'n/a', mean(d('base')['BC(0)'], d('noapp')['BC(0)'], 3), 'without mirrored views',
+             False),
+            ('Mirrored views', 'MI area $\\uparrow$', fixed(area('scripta_cv_oof_tta'), area('scripta_cv_oof_base'), 3),
+             fixed(area('dnn'), area('dnn_base'), 3), 'false-link coverage (\\cref{fig:confidence}b)', True)])]
+    cell = lambda v, show: v if isinstance(v, str) else ('n.r.' if v is None else show(v))
+
+    compact = ['\\begin{table}[!t]', '\\centering', '\\small', '\\setlength{\\tabcolsep}{4pt}',
+               '\\begin{tabular}{@{}llrr@{}}', '\\toprule', 'Module removed & Measure & \\ds{} & DNN \\\\', '\\midrule']
+    full = ['\\begin{table*}[!t]', '\\centering', '\\small', '\\begin{tabular}{@{}lllll@{}}', '\\toprule',
+            'Module removed & Measure & \\ds{} & DNN & Note \\\\', '\\midrule']
+    for i, (title, rows) in enumerate(groups):
+        if i:
+            compact.append('\\addlinespace')
+            full.append('\\addlinespace')
+        compact.append(f'\\multicolumn{{4}}{{@{{}}l}}{{\\emph{{{title}}}}} \\\\')
+        full.append(f'\\multicolumn{{5}}{{@{{}}l}}{{\\emph{{{title}}}}} \\\\')
+        for module, measure, a, b, note, main in rows:
+            if main:
+                compact.append(f'{module} & {measure} & {cell(a, delta)} & {cell(b, delta)} \\\\')
+            full.append(f'{module} & {measure} & {cell(a, arrow)} & {cell(b, arrow)} & {note}'.rstrip() + ' \\\\')
+    compact += ['\\bottomrule', '\\end{tabular}',
+                '\\caption{\\textbf{Module ablations}: change when the module is removed from the full model (without '
+                '$-$ with). \\ds{}: 12 development wells, out of fold (three classes: test wells); DNN: the 13 videos '
+                'of \\cref{tab:dnn} (MI area: all 15 DNN videos). $^\\dagger$Retrained. Cost-derived $\\tau$: replaced '
+                'by the best tuned $\\tau$. n.r.: not run. All values, measures and definitions in '
+                '\\cref{tab:modules_full}. $^*$Paired Wilcoxon $p<0.01$.}',
+                '\\label{tab:modules}', '\\end{table}', '']
+    full += ['\\bottomrule', '\\end{tabular}',
+             '\\caption{\\textbf{Module ablation}: full model $\\to$ the same model without the module. \\ds{}: 12 '
+             'development wells, out of fold, unless noted; DNN: the 13 videos of \\cref{tab:dnn} (MI area: all 15 DNN '
+             'videos). $^\\dagger$Retrained without the module. n/a: \\ds{} has no divisions; n.r.: not run, the $g=1$ '
+             'model was trained only in the \\ds{} cross-validation. LNK$_1$: LNK without gap closing; ECE$_2$: '
+             'calibration of the gap-closing candidates; MI area: area under the false-link coverage curve. '
+             '$^*$Paired Wilcoxon $p<0.01$.}',
+             '\\label{tab:modules_full}', '\\end{table*}', '']
+    return '\n'.join(compact), '\n'.join(full)
 
 
 def tau():
@@ -230,7 +278,7 @@ def main():
                        'has none; CellTrack-GNN divides by post-processing and also gives '
                        f'{divisions["ctgnn"]["invalid"]:.0f} mothers three or more '
                        'daughters). Unmarked Trackastra rows link with divisions allowed, the setting of ' + OURS + '; '
-                       '$^\\ddagger$told that there are none. ft: fine-tuned; zs: zero-shot; CellTrack-GNN: mean of two training seeds.', 'tab:test', colsep=3))
+                       '$^\\ddagger$divisions forbidden. ft: fine-tuned; zs: zero-shot; CellTrack-GNN: mean of two training seeds.', 'tab:test', colsep=3))
     keys = [('ours', OURS), ('ta_ft_div', 'Trackastra fine-tuned'), ('ta_zs_div', 'Trackastra zero-shot'),
             ('ta_ft', 'Trackastra fine-tuned$^\\ddagger$'), ('ta_zs', 'Trackastra zero-shot$^\\ddagger$')]
     cols15 = [c for c in COLUMNS if c[0] != 'AOGM_EC']
@@ -243,13 +291,16 @@ def main():
                        '3 test wells with the final models. Div.: false divisions. ' + OURS + ' is higher than all '
                        'four Trackastra variants in LNK and CT (Wilcoxon, largest '
                        f'$p = {tex_p(worst["LNK"])}$ / ${tex_p(worst["CT"])}$). Unmarked: divisions allowed '
-                       '(\\texttt{greedy}); $^\\ddagger$told that there are no divisions (\\texttt{greedy\\_nodiv}).',
+                       '(\\texttt{greedy}); $^\\ddagger$divisions forbidden (\\texttt{greedy\\_nodiv}).',
                        'tab:all15'), divmode(), hela(), tau()]
-    parts += [dnn(), modules()]
+    compact, full = modules()
+    parts += [dnn(), compact]
     style.OUT.mkdir(parents=True, exist_ok=True)
     (style.OUT / 'tables.tex').write_text('\n'.join(parts), encoding='utf-8')
     (style.OUT / 'tables_suppl.tex').write_text('\n'.join(suppl), encoding='utf-8')
-    print('written', style.OUT / 'tables.tex', style.OUT / 'tables_suppl.tex')
+    # the supplement inputs the full module table at its own place (its section 'Module ablation')
+    (style.OUT / 'table_modules_full.tex').write_text('\n'.join([parts[0], '', full]), encoding='utf-8')
+    print('written', *(style.OUT / n for n in ('tables.tex', 'tables_suppl.tex', 'table_modules_full.tex')))
 
 
 if __name__ == '__main__':

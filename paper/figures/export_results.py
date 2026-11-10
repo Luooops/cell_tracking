@@ -10,7 +10,8 @@ Written:
   summary_by_method.csv   per method, dataset and well set: means of LNK / CT / TRA / BC, sums of the AOGM terms and
                           division counts (the values behind every table)
   ctc_per_well.csv        all CTC rows per well / video (copy of final_results_v2)
-  calibration/            evaluate_answers outputs (metrics.json, reliability.csv, coverage.csv) of the main runs and of
+  calibration/            evaluate_answers outputs (metrics.json, reliability.csv, coverage.csv) of the main runs (MI
+                          ranking on the recorded three-class MI: final_results_v2/calibration_mi3) and of
                           the retracks (no cross-frame check, thresholds 0.2-0.6)
   per_link/               per-gap link errors (figure 2) and the round-1 division probabilities (figure 5)
   data_statistics.json    what makes the data hard, from the masks: missed detections, unknown identities, nuclei per
@@ -295,8 +296,8 @@ def main():
         sys.exit(f'{args.out} exists; choose a new --out')
     args.out.mkdir(parents=True)
     shutil.copy2(data.FINAL / 'ctc_per_well.csv', args.out / 'ctc_per_well.csv')
-    for folder in sorted((data.FINAL / 'calibration').iterdir()):
-        shutil.copytree(folder, args.out / 'calibration' / folder.name)
+    for folder in sorted((data.FINAL / 'calibration').iterdir()):       # the evaluations the figures read
+        shutil.copytree(data.calibration_folder(folder.name), args.out / 'calibration' / folder.name)
     for folder in sorted((DEV / 'stage8_argument' / 'answers').iterdir()):
         if folder.name != 'logs':
             shutil.copytree(folder, args.out / 'calibration' / f'retrack_{folder.name}')

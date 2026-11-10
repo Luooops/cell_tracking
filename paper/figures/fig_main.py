@@ -91,7 +91,7 @@ def main():
         tests[metric] = test_panel(ax, metric)
         ax.set_ylim(lo, 1.0 if metric == 'LNK' else 0.9)
         style.panel(ax, letter, x=-0.2)
-    axes[0].set_title('15 wells, paired', loc='left', fontsize=6.5)
+    axes[0].set_title('15 videos, paired', loc='left', fontsize=6.5)
     axes[2].set_title('3 test wells', loc='left', fontsize=6.5)
 
     lines = ['Figure 1. Main comparison on scripta (refine2 GT; CTC measures on fixed detections, project GT).',
@@ -103,8 +103,8 @@ def main():
         for k, s in tests_.items():
             lines.append(f'    ours vs {style.label(k)}: ours higher in {s["a_higher"]}/{s["n"]} wells, '
                          f'lower in {s["b_higher"]}, p = {data.fmt_p(s["p"])}')
-    lines.append('TA = Trackastra; unmarked: divisions allowed (greedy), as for ours; ‡ told that there are no '
-                 'divisions (Trackastra greedy_nodiv; the classical tracker never divides).')
+    lines.append('TA = Trackastra; unmarked: divisions allowed (greedy), as for ours; ‡ divisions forbidden '
+                 '(Trackastra greedy_nodiv; the classical tracker never divides).')
     lines.append('c, d: test wells r16c02, r01c20, r07c07; black bar = mean, diamonds = wells. TA = Trackastra, '
                  'CellTrack-GNN: per-well mean of its two training seeds; shared labels counted strictly. '
                  'ProGCT highlighted (band, bold label, blue mean bar).')

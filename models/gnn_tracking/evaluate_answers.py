@@ -14,7 +14,8 @@ negatives = unrelated; mother_daughter edges are reported on their own and unkno
                   DECISION_HI, where the decision is not already certain), round2_solver (gap-2 edges the solver saw)
     coverage      error coverage curves (utils/calibration.py) for false links (chosen edges that are unrelated) and
                   missed links (solver edges left unchosen that are the same cell), ranked by closeness of p to 0.5,
-                  by the ensemble's mutual information and, for aleatoric ensembles, by the members' mean learned
+                  by the ensemble's mutual information (the 'mi' recorded in edges.npz, over all classes, when the
+                  run has it; else the members' binary MI from their logits) and, for aleatoric ensembles, by the members' mean learned
                   noise sigma^2 (log_var in edges.npz); a random check is the diagonal
     division      precision / recall / false positives per 1000 detections (utils/division_metrics.py); a run
                   without lineage.json predicts no division
@@ -92,10 +93,13 @@ def calibration_block(e, relation, sel):
 
 def coverage_block(e, relation, sel, error_relation):
     error = relation[sel] == error_relation
-    p, q = e['p'][sel], sigmoid(e['logits'][sel])
+    p = e['p'][sel]
     out = dict(items=int(sel.sum()), errors=int(error.sum()))
     curves = {}
-    scores = [('closeness', np.minimum(p, 1 - p)), ('mutual_info', mutual_information(q))]
+    # The MI the tracker outputs: recorded per edge over all classes (gnn_bayesian: unrelated / same / division,
+    # the paper's definition); runs that did not record it fall back to the members' binary 'same cell?' MI.
+    mi = e['mi'][sel].astype(np.float64) if 'mi' in e else mutual_information(sigmoid(e['logits'][sel]))
+    scores = [('closeness', np.minimum(p, 1 - p)), ('mutual_info', mi)]
     if 'log_var' in e:
         scores.append(('aleatoric', np.exp(e['log_var'][sel].astype(np.float64)).mean(1)))
     for name, score in scores:

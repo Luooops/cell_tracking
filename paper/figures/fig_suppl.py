@@ -2,7 +2,7 @@
 S1 (full width)  cue ablation: ours without the appearance or the velocity input, scripta OOF and the 13 DNN videos
                  (no TTA). Needs the --retrack runs (keys base, noapp, novel); skipped while they are missing.
 S2 (one column)  HeLa, never trained on: ours and its binary variant vs Trackastra, per sequence.
-S3 (one column)  test-time augmentation: tracking unchanged, error localisation (MI coverage area). Needs the --retrack
+S3 (one column)  mirrored views (test-time augmentation): tracking unchanged, error localisation (MI coverage area). Needs the --retrack
                  runs as S1."""
 import matplotlib.pyplot as plt
 import numpy as np
@@ -87,8 +87,9 @@ def tta():
     fig, axes = plt.subplots(1, 2, figsize=(style.COLUMN, 42 * style.MM), gridspec_kw=dict(width_ratios=[1, 1.3]))
     fig.subplots_adjust(left=0.13, right=0.99, bottom=0.2, top=0.9, wspace=0.5)
     ax = axes[0]
-    lines = ['Figure S3. Test-time augmentation (flips; members x views averaged).',
-             'a: LNK per scripta dev well (out-of-fold) and DNN video (13), without vs with TTA. '
+    lines = ['Figure S3. Mirrored views (the video and its horizontal and vertical mirror images; 3 models x 3 views '
+             'averaged) against the original video only.',
+             'a: LNK per scripta dev well (out-of-fold) and DNN video (13), original only vs mirrored views. '
              'b: normalised area under the error-coverage curve when links are ranked by mutual information '
              '(1 = perfect, 0.5 = random).']
     for dataset, getter, marker in (('scripta', lambda k: data.scripta_wells(k, DEV), 'o'), ('dnn', data.dnn_wells, 's')):
@@ -99,10 +100,10 @@ def tta():
                    label=style.DS if dataset == 'scripta' else 'DNN')
         s = data.paired(with_tta, base)
         test = f', p = {data.fmt_p(s["p"])}' if s['n'] > 5 else ''
-        lines.append(f'  {dataset} LNK: no TTA {base.mean():.4f}, TTA {with_tta.mean():.4f}; TTA higher in '
-                     f'{s["a_higher"]}/{s["n"]}, lower in {s["b_higher"]}{test}')
+        lines.append(f'  {dataset} LNK: original only {base.mean():.4f}, mirrored views {with_tta.mean():.4f}; '
+                     f'views higher in {s["a_higher"]}/{s["n"]}, lower in {s["b_higher"]}{test}')
     ax.plot([0.94, 1], [0.94, 1], color='#9A9A9A', lw=0.6, ls=':')
-    ax.set(xlim=(0.945, 1.0), ylim=(0.945, 1.0), xlabel='LNK, no TTA', ylabel='LNK, TTA')
+    ax.set(xlim=(0.945, 1.0), ylim=(0.945, 1.0), xlabel='LNK, original only', ylabel='LNK, mirrored views')
     ax.set_aspect('equal')
     ax.legend(loc='upper left', handletextpad=0.2)
     style.panel(ax, 'a', x=-0.35)
@@ -118,15 +119,17 @@ def tta():
                 area = m['coverage'][population]['mutual_info']['area']
                 ax.bar(x + (j - 0.5) * 0.38, area, 0.34, color=style.light(key, 0.85 if key == 'base' else 0.45),
                        edgecolor=style.color(key), lw=0.6,
-                       label=('No TTA', 'TTA')[j] if x == 0 else None)
-                lines.append(f'  {name} {short} links, {("no TTA", "TTA")[j]}: MI area {area:.3f}')
-            ticks.append((x, f'{name}\n{short}'))
+                       label=('Original', 'Mirrored views')[j] if x == 0 else None)
+                lines.append(f'  {name} {short} links, {("original only", "mirrored views")[j]}: MI area {area:.3f}')
+            ticks.append((x, short))
             x += 1
+        # dataset name once under its two groups, below the 'false' / 'missed' ticks (they overlapped as one label)
+        ax.text(x - 1.5, -0.2, name, transform=ax.get_xaxis_transform(), ha='center', va='top', fontsize=5.5)
     ax.set_xticks([t for t, _ in ticks], [lab for _, lab in ticks], fontsize=5.5)
     ax.set_ylim(0.8, 1.0)
     ax.set_ylabel('MI coverage area')
     grid(ax)
-    ax.legend(loc='upper left', ncol=2, handlelength=1)
+    ax.legend(loc='lower left', bbox_to_anchor=(0, 1.0), ncol=2, handlelength=1, columnspacing=0.8, borderaxespad=0.2)
     style.panel(ax, 'b', x=-0.3)
     style.save(fig, 'figS3_tta', '\n'.join(lines))
 
