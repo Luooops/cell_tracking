@@ -41,9 +41,10 @@ METHODS = {
 }
 DS = 'ScriptaLive'           # name of the proprietary dataset in every figure (the paper's \ds macro)
 DATASETS = {                # populations of the confidence figure
-    'scripta_cv': (f'{DS} CV (OOF)', '#3B6FB6'),
+    'scripta_cv': (f'{DS} dev. (OOF)', '#3B6FB6'),
     'scripta_test': (f'{DS} test', '#79A6DC'),
     'dnn': ('DNN', '#2A9D8F'),
+    'hela': ('HeLa (unseen)', '#C9822F'),
 }
 
 
