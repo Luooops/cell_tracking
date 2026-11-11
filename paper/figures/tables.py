@@ -44,7 +44,7 @@ def grouped(text, old_header, groups):
 
 
 def divmode():
-    """Test wells, each method linked without and with divisions (ours: its two tracking modes; Trackastra:
+    """Test wells, each method with divisions forbidden and allowed (ours: its two tracking modes; Trackastra:
     greedy_nodiv and greedy), and the false divisions with divisions allowed."""
     keys = [('ours', 'ours_nodiv', OURS), ('binary', 'binary_nodiv', OURS + ', binary'),
             ('ta_ft_div', 'ta_ft', 'Trackastra ft'), ('ta_zs_div', 'ta_zs', 'Trackastra zs')]
@@ -55,12 +55,13 @@ def divmode():
         told, free = (data.scripta_wells(k, data.TEST_WELLS) for k in (nodiv, div))
         rows.append((name, dict(LNK0=told.LNK.mean(), CT0=told.CT.mean(), LNK1=free.LNK.mean(), CT1=free.CT.mean(),
                                 div=data.test_divisions(div)['divisions'])))
-    text = table(rows, cols, '\\textbf{Telling the tracker that there are no divisions} (\\ds{} test wells, no divisions '
-                 'in the ground truth). No divisions: our no-division tracking mode; Trackastra '
+    text = table(rows, cols, '\\textbf{Divisions forbidden or allowed} (\\ds{} test wells, no divisions in the ground '
+                 'truth). Divisions forbidden: our tracking mode without the division step; Trackastra '
                  '\\texttt{greedy\\_nodiv}. Divisions allowed: our division mode; Trackastra \\texttt{greedy}. Div.: '
                  'false divisions with divisions allowed. ' + OURS + ' gives the same result either way, so it '
                  'needs no division switch.', 'tab:divmode')
-    return grouped(text, 'Method & LNK & CT & LNK & CT & Div. \\\\', [('No divisions', 2, 3), ('Divisions allowed', 4, 6)])
+    return grouped(text, 'Method & LNK & CT & LNK & CT & Div. \\\\',
+                   [('Divisions forbidden', 2, 3), ('Divisions allowed', 4, 6)])
 
 
 def dnn_summary(key, videos):
@@ -175,10 +176,9 @@ def modules():
                 compact.append(f'{module} & {measure} & {cell(a, delta)} & {cell(b, delta)} \\\\')
             full.append(f'{module} & {measure} & {cell(a, arrow)} & {cell(b, arrow)} & {note}'.rstrip() + ' \\\\')
     compact += ['\\bottomrule', '\\end{tabular}',
-                '\\caption{\\textbf{Module ablations}: change when the module is removed from the full model (without '
-                '$-$ with). \\ds{}: 12 development wells, out of fold (three classes: test wells); DNN: the 13 videos '
-                'of \\cref{tab:dnn} (MI area: all 15 DNN videos). $^\\dagger$Retrained. Cost-derived $\\tau$: replaced '
-                'by the best tuned $\\tau$. n.r.: not run. All values, measures and definitions in '
+                '\\caption{\\textbf{Module ablations}: change when the module is removed (without $-$ with). \\ds{}: '
+                '12 development wells, out of fold (three classes: test wells); DNN: 13 videos (MI area: all 15). '
+                '$^\\dagger$Retrained. $\\tau$: replaced by the best tuned one. n.r.: not run. Full values in '
                 '\\cref{tab:modules_full}. $^*$Paired Wilcoxon $p<0.01$.}',
                 '\\label{tab:modules}', '\\end{table}', '']
     full += ['\\bottomrule', '\\end{tabular}',
@@ -247,11 +247,12 @@ def main():
     wells = lambda k: (sum(data.scripta_wells(s, data.TEST_WELLS)[[c for c, *_ in COLUMNS]] for s in seeds) / len(seeds)
                        if k == 'ctgnn' else data.scripta_wells(k, data.TEST_WELLS))   # per-well mean of the seeds
     rows = [(name, {**summary(wells(k), COLUMNS), 'div': divisions[k]['divisions']}) for k, name in TEST]
+    # stated in the supplement's baseline details (no longer in the caption): mothers with >= 3 daughters
+    print(f'CellTrack-GNN, test wells: {divisions["ctgnn"]["invalid"]:.0f} mothers with three or more daughters '
+          '(mean of the two seeds)')
     parts.append(table(rows, COLUMNS + [DIV], '\\textbf{Test wells} of \\ds{} (r16c02, r01c20, r07c07). LNK, CT, TRA: mean over wells; ED, '
                        'EA, EC: false, missed and wrong-type edges, summed. Div.: false divisions (the ground truth '
-                       'has none; CellTrack-GNN divides by post-processing and also gives '
-                       f'{divisions["ctgnn"]["invalid"]:.0f} mothers three or more '
-                       'daughters). Unmarked Trackastra rows link with divisions allowed, the setting of ' + OURS + '; '
+                       'has none). Unmarked Trackastra rows link with divisions allowed, the setting of ' + OURS + '; '
                        '$^\\ddagger$divisions forbidden. ft: fine-tuned; zs: zero-shot; CellTrack-GNN: mean of two training seeds.', 'tab:test', colsep=3))
     keys = [('ours', OURS), ('ta_ft_div', 'Trackastra fine-tuned'), ('ta_zs_div', 'Trackastra zero-shot'),
             ('ta_ft', 'Trackastra fine-tuned$^\\ddagger$'), ('ta_zs', 'Trackastra zero-shot$^\\ddagger$')]

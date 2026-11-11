@@ -40,8 +40,8 @@ def main():
     missed = {k: {b: 100 * total.loc[k, f'missed_{b}'] / total.loc[k, f'gt_{b}'] for b in BINS} for k in METHODS}
     false = {k: {b: total.loc[k, f'false_{b}'] for b in BINS} for k in METHODS}
 
-    fig, axes = plt.subplots(1, 2, figsize=(style.COLUMN, 56 * style.MM))
-    fig.subplots_adjust(left=0.13, right=0.99, bottom=0.27, top=0.93, wspace=0.42)
+    fig, axes = plt.subplots(1, 2, figsize=(style.COLUMN, 47 * style.MM))
+    fig.subplots_adjust(left=0.13, right=0.99, bottom=0.2, top=0.92, wspace=0.42)
     bars(axes[0], missed, 0.1)
     axes[0].set_ylabel('Missed links (% of GT)')
     axes[0].set_ylim(0.1, 200)
@@ -50,9 +50,11 @@ def main():
     axes[1].set_ylim(1, 1e5)
     for ax, letter in zip(axes, 'ab'):
         style.panel(ax, letter, x=-0.25)
+    # one legend row: short names (TA = Trackastra, defined in the caption) so the five entries fit the column
     handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc='lower center', ncol=3, bbox_to_anchor=(0.5, 0.0), handlelength=1.2,
-               handleheight=0.9, columnspacing=0.5, handletextpad=0.35)
+    labels = [l.replace('Trackastra', 'TA').replace(', $\Delta t$=3', ' $\Delta t$=3') for l in labels]
+    fig.legend(handles, labels, loc='lower center', ncol=len(labels), bbox_to_anchor=(0.5, 0.0), handlelength=1.1,
+               handleheight=0.9, columnspacing=0.6, handletextpad=0.3, fontsize=5.3)
 
     gt = total.loc['ours']
     ours = t[t.method == 'ours'].set_index('well')
