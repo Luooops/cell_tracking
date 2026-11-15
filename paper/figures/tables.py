@@ -2,66 +2,91 @@
 out/tables_suppl.tex (scripta 15 wells, division switch, HeLa, threshold sweep; the 15-well numbers are also in
 figure 1) and out/table_modules_full.tex (the supplement's full module table). LNK / CT / TRA / BC are means over wells; ED (false), EA (missed), EC (wrong edge type) are AOGM terms and
 the division counts are summed over wells; division recall is pooled (tp / (tp + fn)). The best value of each column
-is bold (not in the module table, which compares each module with its own full model)."""
+is bold on green (\\best, defined in the paper's preamble), the rows of ablated variants of the method excluded (not
+in the module table, which compares each module with its own full model)."""
 import data
 import style
 
 OURS = '\\method{}'                 # method and dataset names are macros of the paper's preamble
-TEST = [('ours', OURS), ('binary', OURS + ', binary'), ('ta_ft_div', 'Trackastra ft'), ('ta_zs_div', 'Trackastra zs'),
-        ('ta_ft', 'Trackastra ft$^\\ddagger$'), ('ta_zs', 'Trackastra zs$^\\ddagger$'),
-        ('ctgnn', 'CellTrack-GNN'), ('classical', 'Classical$^\\ddagger$')]   # ctgnn: mean of its two training seeds
+ALLOWED = 'Divisions allowed, as for ' + OURS
+FORBIDDEN = 'Divisions forbidden$^\\ddagger$, an assumption unavailable to ' + OURS
+ABLATION = 'Ablation of ' + OURS + ' (not ranked)'
+# (key, name) rows and (None, group title) rows; ctgnn: mean of its two training seeds
+TEST = [(None, ALLOWED), ('ours', OURS), ('ta_ft_div', 'Trackastra ft'), ('ta_zs_div', 'Trackastra zs'),
+        ('ctgnn', 'CellTrack-GNN'),
+        (None, FORBIDDEN), ('ta_ft', 'Trackastra ft$^\\ddagger$'), ('ta_zs', 'Trackastra zs$^\\ddagger$'),
+        ('classical', 'Classical$^\\ddagger$'),
+        (None, ABLATION), ('binary', OURS + ', binary')]
+SCORES_ERRORS = [('CTC scores', 2, 4), ('Edge errors', 5, 7)]       # header groups over COLUMNS
 # the short names (ft fine-tuned, zs zero-shot, s0/s1 training seeds) keep the tables inside one column
-COLUMNS = [('LNK', 'LNK', 'mean', max, 4), ('CT', 'CT', 'mean', max, 3), ('TRA', 'TRA', 'mean', max, 4),
+COLUMNS = [('LNK', 'LNK', 'mean', max, 3), ('CT', 'CT', 'mean', max, 3), ('TRA', 'TRA', 'mean', max, 3),
            ('AOGM_ED', 'ED', 'sum', min, 0), ('AOGM_EA', 'EA', 'sum', min, 0), ('AOGM_EC', 'EC', 'sum', min, 0)]
 DIV = ('div', 'Div.', None, min, 0)      # false divisions (data.division_events)
 
 
-def table(rows, columns, caption, label, lead=('Method',), colsep=4, star=False, bold=True):
-    """rows: [(name, {column: value})] -> booktabs tabular, best of each column bold (unless bold=False). lead:
-    headers of the leading text columns; a name holds one cell per lead header, joined by ' & '. colsep: \\tabcolsep
-    in pt."""
-    best = {c: pick(v[c] for _, v in rows) if bold else None for c, _, _, pick, _ in columns}
+BEST_NOTE = ('$\\uparrow$: higher is better, $\\downarrow$: lower is better; the best value of each column is bold on '
+             'green')
+
+
+def table(rows, columns, caption, label, lead=('Method',), colsep=4, star=False, bold=True, ablation=(), top=()):
+    """rows: [(name, {column: value})] -> booktabs tabular. A row (None, title) starts a group of rows under an
+    italic title. The header marks each column with its better direction (max: up, min: down); the best value of
+    each column (as printed, so ties are all marked) is \\best (bold on green, preamble) unless bold=False, and
+    rows named in ablation (variants of the method itself) are not candidates for it. lead: headers of the leading
+    text columns; a name holds one cell per lead header, joined by ' & '. top: a header row above the column names,
+    [(title, first column, last column)] (1-based, counting the lead columns). colsep: \\tabcolsep in pt."""
+    fmt = lambda x, digits: f'{x:.{digits}f}' if digits else f'{int(round(x))}'
+    data_rows = [(n, v) for n, v in rows if n is not None]
+    best = {c: fmt(pick(float(fmt(v[c], d)) for n, v in data_rows if n not in ablation), d) if bold else None
+            for c, _, _, pick, d in columns}
+    width = len(lead) + len(columns)
     env = 'table*' if star else 'table'
     out = [f'\\begin{{{env}}}[!t]', '\\centering', '\\small', f'\\setlength{{\\tabcolsep}}{{{colsep}pt}}',
-           '\\begin{tabular}{' + 'l' * len(lead) + 'r' * len(columns) + '}', '\\toprule',
-           ' & '.join(lead) + ' & ' + ' & '.join(h for _, h, *_ in columns) + ' \\\\', '\\midrule']
+           '\\begin{tabular}{' + 'l' * len(lead) + 'r' * len(columns) + '}', '\\toprule']
+    if top:
+        out.append(' & '.join([''] * (top[0][1] - 1) + [f'\\multicolumn{{{b - a + 1}}}{{c}}{{{t}}}' for t, a, b in top])
+                   + ' \\\\')
+        out.append(''.join(f'\\cmidrule(lr){{{a}-{b}}}' for _, a, b in top))
+    out += [' & '.join(lead) + ' & ' + ' & '.join(h + ('$\\uparrow$' if pick is max else '$\\downarrow$')
+                                                   for _, h, _, pick, _ in columns) + ' \\\\', '\\midrule']
+    first = True
     for name, v in rows:
-        cells = []
-        for c, _, _, _, digits in columns:
-            text = f'{v[c]:.{digits}f}' if digits else f'{int(round(v[c]))}'
-            cells.append(f'\\textbf{{{text}}}' if v[c] == best[c] else text)
-        out.append(f'{name} & ' + ' & '.join(cells) + ' \\\\')
+        if name is None:
+            if not first:
+                out.append('\\addlinespace')
+            out.append(f'\\multicolumn{{{width}}}{{@{{}}l}}{{\\emph{{{v}}}}} \\\\')
+        else:
+            cells = []
+            for c, _, _, _, digits in columns:
+                text = fmt(v[c], digits)
+                cells.append(f'\\best{{{text}}}' if text == best[c] and name not in ablation else text)
+            out.append(f'{name} & ' + ' & '.join(cells) + ' \\\\')
+        first = False
     out += ['\\bottomrule', '\\end{tabular}', f'\\caption{{{caption}}}', f'\\label{{{label}}}', f'\\end{{{env}}}', '']
     return '\n'.join(out)
-
-
-def grouped(text, old_header, groups):
-    """Replace the header line by a two-level header: groups = [(title, first column, last column)] (1-based, counting
-    the lead columns)."""
-    top = ' & '.join([''] + [f'\\multicolumn{{{b - a + 1}}}{{c}}{{{t}}}' for t, a, b in groups]) + ' \\\\'
-    rules = ''.join(f'\\cmidrule(lr){{{a}-{b}}}' for _, a, b in groups)
-    return text.replace(old_header, f'{top}\n{rules}\n{old_header}', 1)
 
 
 def divmode():
     """Test wells, each method with divisions forbidden and allowed (ours: its two tracking modes; Trackastra:
     greedy_nodiv and greedy), and the false divisions with divisions allowed."""
-    keys = [('ours', 'ours_nodiv', OURS), ('binary', 'binary_nodiv', OURS + ', binary'),
-            ('ta_ft_div', 'ta_ft', 'Trackastra ft'), ('ta_zs_div', 'ta_zs', 'Trackastra zs')]
+    keys = [('ours', 'ours_nodiv', OURS), ('ta_ft_div', 'ta_ft', 'Trackastra ft'), ('ta_zs_div', 'ta_zs', 'Trackastra zs'),
+            (None, None, ABLATION), ('binary', 'binary_nodiv', OURS + ', binary')]
     cols = [('LNK0', 'LNK', None, max, 4), ('CT0', 'CT', None, max, 3), ('LNK1', 'LNK', None, max, 4),
             ('CT1', 'CT', None, max, 3), ('div', 'Div.', None, min, 0)]
     rows = []
     for div, nodiv, name in keys:
+        if div is None:
+            rows.append((None, name))
+            continue
         told, free = (data.scripta_wells(k, data.TEST_WELLS) for k in (nodiv, div))
         rows.append((name, dict(LNK0=told.LNK.mean(), CT0=told.CT.mean(), LNK1=free.LNK.mean(), CT1=free.CT.mean(),
                                 div=data.test_divisions(div)['divisions'])))
-    text = table(rows, cols, '\\textbf{Divisions forbidden or allowed} (\\ds{} test wells, no divisions in the ground '
-                 'truth). Divisions forbidden: our tracking mode without the division step; Trackastra '
-                 '\\texttt{greedy\\_nodiv}. Divisions allowed: our division mode; Trackastra \\texttt{greedy}. Div.: '
-                 'false divisions with divisions allowed. ' + OURS + ' gives the same result either way, so it '
-                 'needs no division switch.', 'tab:divmode')
-    return grouped(text, 'Method & LNK & CT & LNK & CT & Div. \\\\',
-                   [('Divisions forbidden', 2, 3), ('Divisions allowed', 4, 6)])
+    return table(rows, cols, '\\textbf{Divisions forbidden or allowed} (\\ds{} test wells, no divisions in the ground '
+                 'truth). ' + BEST_NOTE + ' (ablation excluded). Divisions forbidden: our tracking mode without the '
+                 'division step; Trackastra \\texttt{greedy\\_nodiv}. Divisions allowed: our division mode; Trackastra '
+                 '\\texttt{greedy}. Div.: false divisions with divisions allowed. ' + OURS + ' gives the same result '
+                 'either way, so it needs no division switch.', 'tab:divmode', ablation={OURS + ', binary'},
+                 top=[('Divisions forbidden', 2, 3), ('Divisions allowed', 4, 6)])
 
 
 def dnn_summary(key, videos):
@@ -72,19 +97,19 @@ def dnn_summary(key, videos):
 
 
 def dnn():
-    keys = [('ours', OURS), ('binary', OURS + ', binary'), ('raw', OURS + ', RAW only'), ('ta_ft_div', 'Trackastra ft'),
-            ('ta_zs_div', 'Trackastra zs'), ('ta_zs_ctc', 'Trackastra ctc')]
+    keys = [('ours', OURS), ('ta_ft_div', 'Trackastra ft'), ('ta_zs_div', 'Trackastra zs'), ('ta_zs_ctc', 'Trackastra ctc'),
+            (None, ABLATION), ('binary', OURS + ', binary'), ('raw', OURS + ', RAW only')]
     # the 13 RAW264.7 videos only; test07-08 (3T3/HEK293, a cell type absent from training, which the RAW-only
     # model never tracked) are reported in the limitations
     cols = [('LNK', 'LNK', None, max, 4), ('BC', 'BC', None, max, 3), ('rec', 'Rec.', None, max, 3),
             ('fp', 'FP', None, min, 0), ('ED', 'ED', None, min, 0), ('EA', 'EA', None, min, 0)]
-    rows = [(name, dnn_summary(key, data.DNN_VIDEOS)) for key, name in keys]
+    rows = [(None, name) if key is None else (name, dnn_summary(key, data.DNN_VIDEOS)) for key, name in keys]
     return table(rows, cols, '\\textbf{Tracking with divisions} on the 13 DynamicNuclearNet (DNN) videos val17--26 '
                  'and test09--11 (RAW264.7), which no model in the table was trained on; all link with divisions '
-                 'allowed. ' + OURS + ', RAW only is trained on the RAW264.7 videos alone; Trackastra zs '
+                 'allowed. ' + BEST_NOTE + ' (ablations excluded). ' + OURS + ', RAW only is trained on the RAW264.7 videos alone; Trackastra zs '
                  '(\\texttt{general\\_2d}) and ctc are the released models, and \\texttt{general\\_2d} may include the '
                  'validation videos. Rec.: division recall; FP: false divisions; ED, EA: false and missed edges.',
-                 'tab:dnn', colsep=3)
+                 'tab:dnn', colsep=3, ablation={OURS + ', binary', OURS + ', RAW only'})
 
 
 TAUS = [('tau0.2', 0.2), ('tau0.3', 0.3), (None, 0.4), ('tau0.5', 0.5), ('tau0.6', 0.6)]   # None: the main runs
@@ -206,12 +231,12 @@ def tau():
                                       dBC=b['BC(0)'].mean())))
     ref = data.scripta_wells('ours_nodiv', dev).LNK
     p = {t: data.paired(data.scripta_wells(k, dev).LNK, ref)['p'] for k, t in TAUS if k}
-    text = table(rows, cols, '\\textbf{Linking threshold} $\\tau$ (link and gap-closing threshold; $\\tau_D$ stays 0.5). '
-                 '\\ds{}: 12 development wells, out of fold; DNN: 13 videos. $\\tau=0.4$ follows from the LNK costs '
+    return table(rows, cols, '\\textbf{Linking threshold} $\\tau$ (link and gap-closing threshold; $\\tau_D$ stays 0.5). '
+                 '\\ds{}: 12 development wells, out of fold; DNN: 13 videos. $\\uparrow$: higher is better, '
+                 '$\\downarrow$: lower is better. $\\tau=0.4$ follows from the LNK costs '
                  '(\\cref{sec:decisions}). Paired Wilcoxon of \\ds{} LNK against $\\tau=0.4$: ' +
                  ', '.join(f'{t:.1f}: $p={p[t]:.2f}$' if p[t] >= 0.01 else f'{t:.1f}: $p={tex_p(p[t])}$' for t in sorted(p))
-                 + '.', 'tab:tau', lead=('$\\tau$',), colsep=3, bold=False)
-    return grouped(text, '$\\tau$ & LNK & CT & ED & EA & LNK & ED & EA & BC \\\\', [('\\ds{}', 2, 5), ('DNN', 6, 9)])
+                 + '.', 'tab:tau', lead=('$\\tau$',), colsep=3, bold=False, top=[('\\ds{}', 2, 5), ('DNN', 6, 9)])
 
 
 def tex_p(p):
@@ -233,41 +258,49 @@ def hela():
         for seq in t.index:
             rows.append((f'{name} & {seq}', {c: t.loc[seq, c] for c, *_ in hela_cols}))
     return table(rows, hela_cols, 'Fluo-N2DL-HeLa, per sequence (Seq.), a cell line none of the models was trained on '
-                 '(except $^\\dagger$). ' + OURS + ' and Trackastra ft: trained on \\ds{} and the DNN RAW264.7 '
+                 '(except $^\\dagger$). ' + BEST_NOTE + ' (ablation excluded). ' + OURS + ' and Trackastra ft: trained on \\ds{} and the DNN RAW264.7 '
                  'videos. Trackastra zs: \\texttt{general\\_2d}. All link with divisions allowed. BC and division '
                  'recall at tolerance 0; FP: false divisions. $^\\dagger$The \\texttt{ctc} model, trained on all '
-                 'CTC ground truth including these sequences.', 'tab:hela', lead=('Method', 'Seq.'), colsep=3)
+                 'CTC ground truth including these sequences.', 'tab:hela', lead=('Method', 'Seq.'), colsep=3,
+                 ablation={f'{OURS}, binary & {seq}' for seq in ('01', '02')})
 
 
 def main():
     parts = ['% Generated by paper/figures/tables.py from development/final_results_v2; do not edit by hand.', '']
     seeds = ('ctgnn0', 'ctgnn1')
-    divisions = {k: data.test_divisions(k) for k, _ in TEST if k != 'ctgnn'}
+    divisions = {k: data.test_divisions(k) for k, _ in TEST if k not in (None, 'ctgnn')}
     divisions['ctgnn'] = {m: sum(data.test_divisions(s)[m] for s in seeds) / len(seeds) for m in ('divisions', 'invalid')}
     wells = lambda k: (sum(data.scripta_wells(s, data.TEST_WELLS)[[c for c, *_ in COLUMNS]] for s in seeds) / len(seeds)
                        if k == 'ctgnn' else data.scripta_wells(k, data.TEST_WELLS))   # per-well mean of the seeds
-    rows = [(name, {**summary(wells(k), COLUMNS), 'div': divisions[k]['divisions']}) for k, name in TEST]
-    # stated in the supplement's baseline details (no longer in the caption): mothers with >= 3 daughters
-    print(f'CellTrack-GNN, test wells: {divisions["ctgnn"]["invalid"]:.0f} mothers with three or more daughters '
+    rows = [(None, name) if k is None else (name, {**summary(wells(k), COLUMNS), 'div': divisions[k]['divisions']})
+            for k, name in TEST]
+    # stated in the supplement's baseline details (no longer in the caption): parents with >= 3 children
+    print(f'CellTrack-GNN, test wells: {divisions["ctgnn"]["invalid"]:.0f} parents with three or more children '
           '(mean of the two seeds)')
-    parts.append(table(rows, COLUMNS + [DIV], '\\textbf{Test wells} of \\ds{} (r16c02, r01c20, r07c07). LNK, CT, TRA: mean over wells; ED, '
-                       'EA, EC: false, missed and wrong-type edges, summed. Div.: false divisions (the ground truth '
-                       'has none). Unmarked Trackastra rows link with divisions allowed, the setting of ' + OURS + '; '
-                       '$^\\ddagger$divisions forbidden. ft: fine-tuned; zs: zero-shot; CellTrack-GNN: mean of two training seeds.', 'tab:test', colsep=3))
-    keys = [('ours', OURS), ('ta_ft_div', 'Trackastra fine-tuned'), ('ta_zs_div', 'Trackastra zero-shot'),
-            ('ta_ft', 'Trackastra fine-tuned$^\\ddagger$'), ('ta_zs', 'Trackastra zero-shot$^\\ddagger$')]
+    parts.append(table(rows, COLUMNS + [DIV], '\\textbf{Test wells} of \\ds{} (r16c02, r01c20, r07c07; the ground '
+                       'truth has no divisions). ' + BEST_NOTE + ' (ablation excluded). LNK, CT, TRA: mean over '
+                       'wells; ED, EA, EC: false, missed and wrong-type edges, summed over wells; Div.: false '
+                       'divisions. $^\\ddagger$Trackastra is told that no cell divides (\\texttt{greedy\\_nodiv}); the '
+                       'classical tracker never divides. '
+                       'ft: fine-tuned; zs: zero-shot; CellTrack-GNN: mean of two training seeds; binary: ' + OURS +
+                       ' with a binary edge classifier (\\cref{tab:modules}).', 'tab:test', colsep=3,
+                       ablation={OURS + ', binary'}, top=SCORES_ERRORS))
+    keys = [(None, ALLOWED), ('ours', OURS), ('ta_ft_div', 'Trackastra fine-tuned'), ('ta_zs_div', 'Trackastra zero-shot'),
+            (None, FORBIDDEN), ('ta_ft', 'Trackastra fine-tuned$^\\ddagger$'),
+            ('ta_zs', 'Trackastra zero-shot$^\\ddagger$')]
     cols15 = [c for c in COLUMNS if c[0] != 'AOGM_EC']
     wells = data.all_wells()
-    rows = [(name, {**summary(data.scripta_wells(k, wells), cols15), 'div': data.scripta_divisions(k, wells)['divisions']})
+    rows = [(None, name) if k is None else
+            (name, {**summary(data.scripta_wells(k, wells), cols15), 'div': data.scripta_divisions(k, wells)['divisions']})
             for k, name in keys]
     worst = {m: max(data.paired(data.scripta_wells('ours', wells)[m], data.scripta_wells(k, wells)[m])['p']
-                    for k, _ in keys[1:]) for m in ('LNK', 'CT')}
+                    for k, _ in keys if k not in (None, 'ours')) for m in ('LNK', 'CT')}
     suppl = [parts[0], '', table(rows, cols15 + [DIV], 'All 15 \\ds{} wells: 12 development wells out-of-fold (3 folds) and the '
-                       '3 test wells with the final models. Div.: false divisions. ' + OURS + ' is higher than all '
-                       'four Trackastra variants in LNK and CT (Wilcoxon, largest '
-                       f'$p = {tex_p(worst["LNK"])}$ / ${tex_p(worst["CT"])}$). Unmarked: divisions allowed '
-                       '(\\texttt{greedy}); $^\\ddagger$divisions forbidden (\\texttt{greedy\\_nodiv}).',
-                       'tab:all15'), divmode(), hela(), tau()]
+                       '3 test wells with the final models. ' + BEST_NOTE + '. ED, EA: false and missed edges; Div.: '
+                       'false divisions. ' + OURS + ' is higher than all four Trackastra variants in LNK and CT '
+                       f'(Wilcoxon, largest $p = {tex_p(worst["LNK"])}$ / ${tex_p(worst["CT"])}$). Divisions allowed: '
+                       '\\texttt{greedy}; $^\\ddagger$divisions forbidden: \\texttt{greedy\\_nodiv}.',
+                       'tab:all15', top=[('CTC scores', 2, 4), ('Edge errors', 5, 6)]), divmode(), hela(), tau()]
     compact, full = modules()
     parts += [compact, dnn()]      # the order in which sec:main and sec:divisions discuss them
     style.OUT.mkdir(parents=True, exist_ok=True)
