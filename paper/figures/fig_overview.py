@@ -322,7 +322,7 @@ def panel_d(ax, x0):
     ax.text(x0 + 16.75, 30.2, 'one-to-one min-cost matching', ha='center', va='center', fontsize=5.3)
     ax.text(x0 + 16.75, 26.6, 'cost $-\\log\\bar p$; link only if $\\bar p_{\\mathrm{same}}>0.4$',
             ha='center', va='center', fontsize=5.1)
-    ax.text(x0 + 16.75, 23.2, 'two daughters if $\\bar p_{\\mathrm{div}}\\geq 0.5$', ha='center', va='center', fontsize=5.1)
+    ax.text(x0 + 16.75, 23.2, 'two children if $\\bar p_{\\mathrm{div}}\\geq 0.5$', ha='center', va='center', fontsize=5.1)
     ax.text(x0 + 16.75, 19.8, 'thresholds from LNK / BC costs, not tuned', ha='center', va='center', fontsize=4.8,
             color=SOFT)
     box(ax, x0, 1.8, 33.5, 13.4, '', fc=NET['head'], ec='#8FA9D6')

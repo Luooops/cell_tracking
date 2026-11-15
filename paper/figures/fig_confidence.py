@@ -1,6 +1,6 @@
-"""Confidence figure (full width): what the link probabilities are worth.
-a  reliability of the edges in the decision band (0.02 < p < 0.98), equal-count bins, Wilson 95% intervals;
-b, c  error coverage: share of the false (b) / missed (c) links found when checking the given share of the
+"""Confidence figures: what the link probabilities are worth.
+fig3_confidence (one column, main text): reliability of the edges in the decision band (0.02 < p < 0.98), equal-count bins, Wilson 95% intervals;
+figS5_error_ranking (one column, supplement), panels a, b: error coverage: share of the false (b) / missed (c) links found when checking the given share of the
       chosen (b) / not chosen (c) candidate links, ranked by mutual information (solid) or closeness to 0.5 (dashed).
 Ours: scripta 3-fold OOF + TTA, scripta test (final model), HeLa (final model, never trained on), DynamicNuclearNet (final model; the 15 videos never
 trained on: val17-26, test07-11)."""
@@ -25,10 +25,15 @@ def wilson(k, n, z=1.96):
 def main():
     style.setup()
     loaded = {k: data.answers(v) for k, v in SOURCES.items()}
-    fig = plt.figure(figsize=(style.FULL, 46 * style.MM))
-    gs = fig.add_gridspec(1, 3, left=0.06, right=0.99, bottom=0.33, top=0.91, wspace=0.3)
-    ax_r, ax_f, ax_m = (fig.add_subplot(gs[0, i]) for i in range(3))
+    def dataset_handles(marker):
+        return [plt.Line2D([], [], color=style.DATASETS[k][1], marker=marker, ms=2.4, lw=0.8,
+                           mfc=style.light(style.DATASETS[k][1], 0.4), label=style.DATASETS[k][0]) for k in loaded]
 
+    # main text: calibration only (square axes, legend to the right)
+    height, bottom, top = 40 * style.MM, 9.5 * style.MM, 4.5 * style.MM    # room for the x label and the title
+    side = height - bottom - top                                           # square axes
+    ax_r = (fig := plt.figure(figsize=(style.COLUMN, height))).add_axes(
+        [0.14, bottom / height, side / style.COLUMN, side / height])
     ax_r.plot([0, 1], [0, 1], color='#9A9A9A', lw=0.6, ls=':', zorder=1)
     for key, (metrics, reliability, _) in loaded.items():
         name, col = style.DATASETS[key]
@@ -38,12 +43,18 @@ def main():
         ax_r.plot(r.mean_p, r.frac_pos, 'o-', ms=2.0, lw=0.8, color=col, mfc=style.light(col, 0.4), mec=col, mew=0.5,
                   zorder=2)
     ax_r.set(xlim=(0, 1), ylim=(0, 1), xlabel='Predicted p (same cell)', ylabel='Fraction same cell')
-    ax_r.set_aspect('equal')
     ax_r.set_title('Calibration, 0.02 < p < 0.98', loc='left', fontsize=6.5)
+    handles = dataset_handles('o') + [plt.Line2D([], [], color='#9A9A9A', ls=':', lw=0.6, label='perfect calibration')]
+    fig.legend(handles=handles, loc='center left', bbox_to_anchor=(0.14 + side / style.COLUMN + 0.02, (bottom + side / 2) / height),
+               handlelength=1.6, handletextpad=0.5, labelspacing=0.35, frameon=False)
 
+    # supplement: error ranking (two panels, one legend below)
+    fig_s = plt.figure(figsize=(style.COLUMN, 56 * style.MM))
+    gs = fig_s.add_gridspec(1, 2, left=0.15, right=0.98, bottom=0.42, top=0.9, wspace=0.35)
+    ax_f, ax_m = (fig_s.add_subplot(gs[0, i]) for i in range(2))
     for ax, population, title, checked in (
-            (ax_f, 'false_links', 'False links among the links made', 'Links checked (%)'),
-            (ax_m, 'missed_links', 'Missed candidates among those left out', 'Candidates checked (%)')):
+            (ax_f, 'false_links', 'False links (links made)', 'Links checked (%)'),
+            (ax_m, 'missed_links', 'Missed (candidates left out)', 'Candidates checked (%)')):
         ax.plot([0, MAX_CHECKED], [0, MAX_CHECKED], color='#9A9A9A', lw=0.6, ls=':')
         for key, (_, _, coverage) in loaded.items():
             name, col = style.DATASETS[key]
@@ -55,20 +66,17 @@ def main():
         ax.set_title(title, loc='left', fontsize=6.5)
         ax.grid(True, color=style.GRID, lw=0.4)
         ax.set_axisbelow(True)
-    # one legend for the whole figure, below the panels: the colours are the datasets of all three panels, the line
-    # styles the two rankings of b and c (two legends inside b and c read as if each belonged to its panel only)
-    handles = [plt.Line2D([], [], color=style.DATASETS[k][1], marker='o', ms=2.4, lw=0.8,
-                          mfc=style.light(style.DATASETS[k][1], 0.4), label=style.DATASETS[k][0]) for k in loaded]
+    handles = dataset_handles(None)
     handles += [plt.Line2D([], [], color='black', ls=ls, lw=0.8, label=f'ranked by {lab}') for ls, lab in SCORES.values()]
-    handles.append(plt.Line2D([], [], color='#9A9A9A', ls=':', lw=0.6, label='random / ideal'))
-    fig.legend(handles=handles, loc='lower center', ncol=len(handles), bbox_to_anchor=(0.5, 0.0), handlelength=1.8,
-               columnspacing=1.2, frameon=False)
-    for ax, letter in zip((ax_r, ax_f, ax_m), 'abc'):
-        style.panel(ax, letter, x=-0.16)
+    handles.append(plt.Line2D([], [], color='#9A9A9A', ls=':', lw=0.6, label='random order'))
+    fig_s.legend(handles=handles, loc='lower center', ncol=2, bbox_to_anchor=(0.5, 0.0), handlelength=1.8,
+                 columnspacing=1.2, frameon=False)
+    for ax, letter in zip((ax_f, ax_m), 'ab'):
+        style.panel(ax, letter, x=-0.22)
 
-    lines = ['Figure 3. Confidence of the link probabilities (evaluate_answers; edges of all candidate links).',
-             'a: decision band = edges with 0.02 < p < 0.98 (round 1, before the solver); 15 equal-count bins; '
-             'Wilson 95% intervals. b, c: share of errors found when checking links in order of uncertainty; '
+    lines = ['Figure 3 (calibration) and Figure S5 (error ranking). Confidence of the link probabilities (evaluate_answers; edges of all candidate links).',
+             'Fig. 3: decision band = edges with 0.02 < p < 0.98 (round 1, before the solver); 15 equal-count bins; '
+             'Wilson 95% intervals. Fig. S5 a, b: share of errors found when checking links in order of uncertainty; '
              f'x axis cut at {MAX_CHECKED}%; area = normalised area under the full curve (1 = perfect, 0.5 = random).']
     expected = {'scripta_cv': ('scripta', [w for w in data.all_wells() if w not in data.TEST_WELLS]),
                 'scripta_test': ('scripta', data.TEST_WELLS), 'dnn': ('dnn', data.DNN_VIDEOS + data.DNN_OTHER_LINE)}
@@ -89,6 +97,7 @@ def main():
                          f'{c["mutual_info"]["area"]:.3f}, closeness {c["closeness"]["area"]:.3f}; found at 5% checked: '
                          f'MI {c["mutual_info"]["at_percent"]["5"]:.1f}%, closeness {c["closeness"]["at_percent"]["5"]:.1f}%')
     style.save(fig, 'fig3_confidence', '\n'.join(lines))
+    style.save(fig_s, 'figS5_error_ranking', '\n'.join(lines))
 
 
 if __name__ == '__main__':

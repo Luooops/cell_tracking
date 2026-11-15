@@ -20,11 +20,11 @@ SOURCES = {                       # population -> (dataset, method key, wells, d
     'scripta_raw': ('scripta', 'raw', None, data.SCRIPTA),
     'hela': ('hela', 'ours', ['01', '02'], data.HELA),
 }
-ROWS = [('dnn', MOTHER_DAUGHTER, 'DNN, mother$\\rightarrow$daughter'),
+ROWS = [('dnn', MOTHER_DAUGHTER, 'DNN, parent$\\rightarrow$child'),
         ('dnn', SAME_CELL, 'DNN, same cell'),
         ('scripta', SAME_CELL, f'{style.DS}, same cell'),
         ('scripta_raw', SAME_CELL, f'{style.DS}, same cell,\nmodel trained on RAW264.7 only'),
-        ('hela', MOTHER_DAUGHTER, 'HeLa, mother$\\rightarrow$daughter'),
+        ('hela', MOTHER_DAUGHTER, 'HeLa, parent$\\rightarrow$child'),
         ('hela', SAME_CELL, 'HeLa, same cell')]
 COUNTED = ['ours', 'raw', 'binary', 'ta_ft_div', 'ta_zs_div', 'ctgnn0', 'ctgnn1']
 SHORT = {'ours': 'ProGCT', 'raw': 'ProGCT, RAW264.7 only', 'binary': 'ProGCT, binary',
@@ -143,13 +143,13 @@ def main(refresh=False):
                      f'max {p.max():.3g}')
     for population in ('dnn', 'hela'):
         precision, recall, n_pos, n = precision_recall(table, population)
-        lines.append(f'  {population}, edges with d >= {THRESHOLD} as mother -> daughter edges ({n_pos} GT '
-                     f'mother-daughter edges of {n}): precision {precision:.3f}, recall {recall:.3f} (edge level, '
+        lines.append(f'  {population}, edges with d >= {THRESHOLD} as parent -> child edges ({n_pos} GT '
+                     f'parent-child edges of {n}): precision {precision:.3f}, recall {recall:.3f} (edge level, '
                      'before the one-to-one matching of the tracker).')
     m = missed_divisions()
-    lines.append(f'  HeLa, missed divisions (GT divisions with both daughter edges in the round-1 solver: '
-                 f'{m["divisions"]}): {m["missed"]} missed; {m["near"]} with the weaker daughter edge at '
-                 f'0.1 <= d < {THRESHOLD}; {m["continued"]} continued the mother to a daughter, {m["continued_flagged"]} '
+    lines.append(f'  HeLa, missed divisions (GT divisions with both child edges in the round-1 solver: '
+                 f'{m["divisions"]}): {m["missed"]} missed; {m["near"]} with the weaker child edge at '
+                 f'0.1 <= d < {THRESHOLD}; {m["continued"]} continued the parent to a child, {m["continued_flagged"]} '
                  f'of these links flagged uncertain (0.1 <= p <= 0.9); any signal {m["signal"]} '
                  f'({m["signal"] / m["missed"]:.0%}). Flagged links among all {m["links"]} output links: '
                  f'{m["flagged"]} ({m["flagged"] / m["links"]:.1%}).')
@@ -192,12 +192,12 @@ def main(refresh=False):
     style.panel(ax_b, 'b', x=-0.68, y=1.0)
     wells = data.all_wells()
     every = {key: data.scripta_divisions(key, wells)['divisions'] for key in ('ours', 'raw', 'ta_ft_div', 'ta_zs_div')}
-    lines.append('b: false divisions on the scripta test wells r16c02, r01c20, r07c07 (a mother with exactly two '
-                 'daughters; the GT has none), every method allowed to divide (Trackastra: greedy). A count of 0 sits '
+    lines.append('b: false divisions on the scripta test wells r16c02, r01c20, r07c07 (a parent with exactly two '
+                 'children; the GT has none), every method allowed to divide (Trackastra: greedy). A count of 0 sits '
                  'at the left end of the log axis. ' + ', '.join(f'{style.plain(key)} {counts[key]["divisions"]}'
                                                                  for key in COUNTED)
-                 + f'. CellTrack-GNN also gives {counts["ctgnn0"]["invalid"]} / {counts["ctgnn1"]["invalid"]} mothers '
-                   'three or more daughters.')
+                 + f'. CellTrack-GNN also gives {counts["ctgnn0"]["invalid"]} / {counts["ctgnn1"]["invalid"]} parents '
+                   'three or more children.')
     lines.append('  All 15 wells (dev OOF + test): ' + ', '.join(f'{style.plain(key)} {v}' for key, v in every.items())
                  + '. Told that there are no divisions (greedy_nodiv), Trackastra has none by construction.')
     style.save(fig, 'fig5_division_evidence', '\n'.join(lines))

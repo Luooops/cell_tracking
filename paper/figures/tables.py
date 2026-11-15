@@ -158,13 +158,13 @@ def modules():
             ('', 'BC $\\uparrow$', 'n/a', mean(d('base')['BC(0)'], d('noapp')['BC(0)'], 3), 'without mirrored views',
              False),
             ('Mirrored views', 'MI area $\\uparrow$', fixed(area('scripta_cv_oof_tta'), area('scripta_cv_oof_base'), 3),
-             fixed(area('dnn'), area('dnn_base'), 3), 'false-link coverage (\\cref{fig:confidence}b)', True)])]
+             fixed(area('dnn'), area('dnn_base'), 3), 'false-link coverage (\\cref{fig:ranking}a)', True)])]
     cell = lambda v, show: v if isinstance(v, str) else ('n.r.' if v is None else show(v))
 
     compact = ['\\begin{table}[!t]', '\\centering', '\\small', '\\setlength{\\tabcolsep}{4pt}',
-               '\\begin{tabular}{@{}llrr@{}}', '\\toprule', 'Module removed & Measure & \\ds{} & DNN \\\\', '\\midrule']
+               '\\begin{tabular}{@{}llrr@{}}', '\\toprule', 'Module removed & Metric & \\ds{} & DNN \\\\', '\\midrule']
     full = ['\\begin{table*}[!t]', '\\centering', '\\small', '\\begin{tabular}{@{}lllll@{}}', '\\toprule',
-            'Module removed & Measure & \\ds{} & DNN & Note \\\\', '\\midrule']
+            'Module removed & Metric & \\ds{} & DNN & Note \\\\', '\\midrule']
     for i, (title, rows) in enumerate(groups):
         if i:
             compact.append('\\addlinespace')
