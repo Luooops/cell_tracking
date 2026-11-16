@@ -143,11 +143,10 @@ def dnn():
         keys = (('ours', OURS), ('ta_ft_div', 'Trackastra ft')) + ((caliban,) if with_caliban else ())
         rows += [(name, division_summary(wells(k))) for k, name in keys]
     return table(rows, cols, '\\textbf{Divisions on seen and unseen cell types}. ' + OURS + ' and Trackastra ft are '
-                 'trained on the same data; all link without a division prior. $^\\S$Caliban: its released weights, '
-                 'trained on all DNN training videos (3T3, HEK293 and HeLa included) with the validation videos for '
-                 'early stopping, so of the 13 videos only test09--11 are new to it (\\cref{tab:dnn_full}); not run on '
-                 'HeLa. Best of each group bold on green, other FP on red. Prec., Rec.: division precision and '
-                 'recall; FP: false divisions. All variants: \\cref{tab:dnn_full,tab:hela}.',
+                 'trained on the same data, and all link without a division prior. $^\\S$Caliban: released weights '
+                 'trained on all DNN training videos, these cell types included, with the validation videos for early '
+                 'stopping (\\cref{tab:dnn_full}). Best of each group bold on green, other FP on red. Prec., Rec.: '
+                 'division precision and recall; FP: false divisions.',
                  'tab:dnn', colsep=3, per_group=True,
                  worse={'fp': lambda x: x > 0})       # the best (green) takes precedence, so the others go red
 
@@ -350,8 +349,8 @@ def main():
                        'wells; ED, EA, EC: false, missed and wrong-type edges, summed over wells; Div.: false '
                        'divisions. ' + OURS + ' needs no division prior. $^\\ddagger$Trackastra '
                        '\\texttt{greedy\\_nodiv}; the classical tracker never divides. '
-                       'ft: fine-tuned (Caliban on the split of Trackastra ft); zs: zero-shot (Caliban: its released '
-                       'weights, trained on DNN); CellTrack-GNN: mean of two training seeds; binary: ' + OURS +
+                       'ft: fine-tuned (Caliban on the split of Trackastra ft); zs: zero-shot (Caliban: released '
+                       'weights trained on DNN); CellTrack-GNN: mean of two training seeds; binary: ' + OURS +
                        ' with a binary edge classifier (\\cref{tab:modules}).', 'tab:test', colsep=3,
                        ablation={OURS + ', binary'}, top=SCORES_ERRORS, worse=FALSE_DIV))
     keys = [('ours', OURS), (None, NO_PRIOR), ('ta_ft_div', 'Trackastra fine-tuned'),
