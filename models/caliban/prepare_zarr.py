@@ -15,9 +15,13 @@ movie's declared resolution), so the features are the ones convert_trk_to_zarr w
   * detections without identity (labels >= 50000) stay in the masks, so they are cells of the graph, but their
     lineage record has no frames, so torch-tracking's targets never grade them (loader.get_temporal_adjacency pads
     every entry of a cell absent from the lineage frames). This is how ProGCT treats them; fine-tuned Trackastra had
-    to drop them instead. Each keeps its own label slot, as in torch-tracking's own data; the pairwise tensors grow
-    with the square of the slots (a scripta movie has up to ~880 in the train split and ~1,200 in val), so batch 8
-    needs a large GPU.
+    to drop them instead. They are one-frame detections, so they share label slots across frames (pack_unknown).
+    torch-tracking trains on one slot per label of the whole movie and scores every slot pair of every frame pair
+    (decoder: batch x 7 frame pairs x N x N), so its memory grows with the square of the labels of a movie, not with
+    the cells of a frame. DynamicNuclearNet movies have ~100-260 labels; a scripta well has up to 833 in the train
+    split (1,208 in val), and batch 8 then exceeds a 94 GB H100 (the decoder asks for a further 37 GB at ~54 GB in
+    use). Sharing brings the train split to 518 slots and changes no graded target, so the training code and all its
+    settings stay torch-tracking's own.
 Lineage by the project's convention (utils/lineage.py): same label or a single child = the same cell (single
 children are merged into their parent's label; gaps stay one track, and targets are only built between consecutive
 frames, so a gap is simply not graded); exactly two children = a division at the parent's last frame; three or more
@@ -90,9 +94,26 @@ def merge_continuations(y, table):
                                         many_children=len(many))
 
 
+def pack_unknown(y):
+    """Detections without identity (labels >= UNKNOWN, one frame each) share label slots across frames: in every frame
+    they take UNKNOWN, UNKNOWN + 1, ... in their original order. Their slots are never graded (no lineage frames), so
+    sharing changes no training target. -> (y, number of unknown detections)."""
+    n = 0
+    for t in range(y.shape[0]):
+        frame = y[t]
+        unknown = np.unique(frame[frame >= UNKNOWN])
+        for k, label in enumerate(unknown):
+            frame[frame == label] = -(k + 1)                      # temporary, avoids clashing with original labels
+        frame[frame < 0] = UNKNOWN - 1 - frame[frame < 0]        # -(k+1) -> UNKNOWN + k
+        n += unknown.size
+    return y, n
+
+
 def raw_lineage(y, table):
     """torch-tracking lineage record for every label in y (before its sequential relabelling)."""
     y, divisions, ungraded_known, counts = merge_continuations(y, table)
+    y, unknown_detections = pack_unknown(y)
+    counts = dict(counts, unknown_detections=int(unknown_detections))
     labels = [int(l) for l in np.unique(y) if l]
     present = set(labels)
     lineage = {}
@@ -183,8 +204,8 @@ def main(argv=None):
                  + [dict(root=args.dnn_root, name=v, mpp=args.dnn_mpp) for v in TRAIN_DNN],
         'val': [dict(root=args.scripta_root, name=w, mpp=args.scripta_mpp) for w in VAL_SCRIPTA],
     }
-    n_cells = {}                    # slots per movie of a split: its most labels after merging (as convert_trk_to_zarr,
-                                    # which sets max_cells per converted split)
+    n_cells = {}                    # slots per movie of a split: its most labels after merging and packing (as
+                                    # convert_trk_to_zarr, which sets max_cells per converted split)
     for split, movies in splits.items():
         for m in movies:
             frames = sequence(m['root'], m['name'])
@@ -192,6 +213,7 @@ def main(argv=None):
             y = np.stack([tifffile.imread(p) for _, _, p in frames]).astype(np.int32)
             y, _, _, _ = merge_continuations(y, read_table(Path(m['root']) / f"{m['name']}_GT" / 'TRA' /
                                                            'man_track.txt'))
+            y, _ = pack_unknown(y)
             n_cells[split] = max(n_cells.get(split, 0), int((np.unique(y) > 0).sum()))
     print(f'label slots per movie: {n_cells}', flush=True)
     args.output_root.mkdir(parents=True)
