@@ -31,6 +31,8 @@ METHODS = {
     'ctgnn0': ('CellTrack-GNN s0', '#9C7FCB'),
     'ctgnn1': ('CellTrack-GNN s1', '#C5B3E6'),
     'classical': ('Classical', '#A6A6A6'),
+    'caliban_ft': ('Caliban ft', '#2E8B57'),            # fine-tuned on the split of Trackastra ft
+    'caliban_zs': ('Caliban zs', '#8FD1A8'),            # released weights (trained on DNN)
     't1': ('ProGCT, HeLa only', '#7FA7D9'),
     'raw': ('ProGCT, RAW264.7 only', '#1F4E8C'),
     'ours_nodiv': ('ProGCT, no div.', '#3B6FB6'),

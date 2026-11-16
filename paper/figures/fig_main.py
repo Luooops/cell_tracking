@@ -11,9 +11,11 @@ import data
 import style
 
 PAIRED = ['ours', 'ta_ft_div', 'ta_zs_div', 'ta_ft', 'ta_zs']
-TEST = ['ours', 'binary', 'ta_ft_div', 'ta_zs_div', 'ta_ft', 'ta_zs', 'ctgnn', 'classical']   # ctgnn: both seeds
+TEST = ['ours', 'binary', 'ta_ft_div', 'ta_zs_div', 'ta_ft', 'ta_zs', 'caliban_ft', 'caliban_zs', 'ctgnn',
+        'classical']   # ctgnn: both seeds
 SHORT = {'ours': 'ProGCT', 'binary': 'ProGCT, binary', 'ta_ft_div': 'TA ft', 'ta_zs_div': 'TA zs', 'ta_ft': 'TA ft‡',
-         'ta_zs': 'TA zs‡', 'ctgnn': 'CellTrack-GNN', 'classical': 'Classical‡'}
+         'ta_zs': 'TA zs‡', 'caliban_ft': 'Caliban ft', 'caliban_zs': 'Caliban zs', 'ctgnn': 'CellTrack-GNN',
+         'classical': 'Classical‡'}
 HIGHLIGHT = '#E3ECF8'                     # band behind ProGCT (user: show that ours is best)
 
 
@@ -113,7 +115,8 @@ def test_wells():
         style.panel(ax, letter, x=-0.3)
     axes[0].set_title('3 test wells', loc='left', fontsize=6.5)
     lines = ['Test wells r16c02, r01c20, r07c07, every method; black bar = mean, diamonds = wells. TA = Trackastra; '
-             '‡ given the prior that no cell divides (the classical tracker never divides); CellTrack-GNN: per-well mean of its two '
+             '‡ given the prior that no cell divides (the classical tracker never divides); Caliban ft: fine-tuned on the split of '
+             'Trackastra ft; Caliban zs: its released weights (trained on DNN); CellTrack-GNN: per-well mean of its two '
              'training seeds. ProGCT highlighted (band, bold label, blue mean bar).']
     for metric, means in tests.items():
         lines.append(f'  {metric}: ' + ', '.join(f'{SHORT[k]} {v:.4f}' for k, v in means.items()))

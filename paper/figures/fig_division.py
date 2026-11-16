@@ -26,9 +26,10 @@ ROWS = [('dnn', MOTHER_DAUGHTER, 'DNN, parent$\\rightarrow$child'),
         ('scripta_raw', SAME_CELL, f'{style.DS}, same cell,\nmodel trained on RAW264.7 only'),
         ('hela', MOTHER_DAUGHTER, 'HeLa, parent$\\rightarrow$child'),
         ('hela', SAME_CELL, 'HeLa, same cell')]
-COUNTED = ['ours', 'raw', 'binary', 'ta_ft_div', 'ta_zs_div', 'ctgnn0', 'ctgnn1']
+COUNTED = ['ours', 'raw', 'binary', 'ta_ft_div', 'ta_zs_div', 'caliban_ft', 'caliban_zs', 'ctgnn0', 'ctgnn1']
 SHORT = {'ours': 'ProGCT', 'raw': 'ProGCT, RAW264.7 only', 'binary': 'ProGCT, binary',
-         'ta_ft_div': 'Trackastra ft', 'ta_zs_div': 'Trackastra zs', 'ctgnn0': 'CellTrack-GNN s0',
+         'ta_ft_div': 'Trackastra ft', 'ta_zs_div': 'Trackastra zs', 'caliban_ft': 'Caliban ft',
+         'caliban_zs': 'Caliban zs', 'ctgnn0': 'CellTrack-GNN s0',
          'ctgnn1': 'CellTrack-GNN s1'}
 THRESHOLD = 0.5                    # the division threshold of the tracker (track.DIV_THRESH)
 ACCENT = '#C8553D'

@@ -209,6 +209,33 @@ def key_numbers(stats):
               population, 'per_link/division_edges.csv')
     for q, v in compute().items():
         k.add('compute', q, v, 'final models, server (NVIDIA GH200)', 'stage7_raw/final/checkpoints, stage7_raw/logs')
+    cal = 'stage10_caliban/ctc (models/caliban, evaluate_ctc)'
+    for key in ('ours', 'caliban_ft', 'caliban_zs'):
+        t = s(key, test)
+        k.add('caliban', f'test wells LNK / CT / ED / EA / false divisions, {key}',
+              f'{t.LNK.mean():.4f} / {t.CT.mean():.3f} / {int(t.AOGM_ED.sum())} / {int(t.AOGM_EA.sum())} / '
+              f'{data.test_divisions(key)["divisions"]}', '3 scripta test wells', cal if key != 'ours' else ctc)
+    for name, videos in (('13 videos', None), ('test09-11', ['test09', 'test10', 'test11'])):
+        for key in ('ours', 'caliban_zs'):
+            t = d(key, videos)
+            k.add('caliban', f'DNN LNK / CT / BC(0) / ED / EA / false divisions, {key}',
+                  f'{t.LNK.mean():.4f} / {t.CT.mean():.3f} / {t["BC(0)"].mean():.3f} / {int(t.AOGM_ED.sum())} / '
+                  f'{int(t.AOGM_EA.sum())} / {int(t["fp_div(0)"].sum())}', f'DNN {name}', cal if key != 'ours' else ctc)
+    import re
+    import torch
+    run = data.CALIBAN / 'finetune_final'
+    best = next(run.glob('**/runs/*/best_model.pt'))
+    state = torch.load(best, map_location='cpu')['model_state_dict']
+    log = (run / 'caliban_final.log').read_text(encoding='utf-8', errors='replace')
+    k.add('caliban', 'parameters (fine-tuned model)', sum(v.numel() for n, v in state.items() if v.is_floating_point()
+                                                          and 'running' not in n), 'Caliban ft', str(best))
+    k.add('caliban', 'fine-tuning hours, 50 epochs, batch 8, one NVIDIA H100 NVL (94 GB)',
+          re.search(r'Training completed in ([\d.]+) hours', log).group(1), 'Caliban ft', 'caliban_final.log')
+    gaps = data.dnn_gap_counts()
+    for key, c in gaps.items():
+        k.add('caliban', f'DNN links by gap g1 / g2 / g3+: GT, missed, false, {key}',
+              ', '.join('/'.join(str(c[f'{kind}_{b}']) for b in ('g1', 'g2', 'g3+')) for kind in ('gt', 'missed', 'false')),
+              'DNN 13 videos', 'instance_tracks.csv + man_track.txt (data.dnn_gap_counts)')
     return pd.DataFrame(k.rows)
 
 

@@ -25,6 +25,15 @@ sys.path.insert(0, str(ROOT))
 from utils.lineage import CONTINUATION, UNKNOWN_OFFSET, read_lineage  # noqa: E402
 
 FINAL = ROOT / 'development' / 'final_results_v2'
+# Caliban baseline (models/caliban, 2026-11-16), outside final_results_v2: tracks in stage10_caliban/{scripta,dnn}/,
+# CTC evaluations (models/gnn_tracking/evaluate_ctc.py, same GT and py-ctcmetrics) in stage10_caliban/ctc/<run>/.
+#   caliban_zs  the released torch-tracking weights (2026-11-09), trained on all DNN training videos (5 cell types,
+#               HeLa included) with val14-26 for early stopping: scripta test wells (zero-shot) and DNN (15 videos;
+#               only test07-11 unseen by it)
+#   caliban_ft  fine-tuned from them on the split of fine-tuned Trackastra (final unit), scripta test wells only
+CALIBAN = ROOT / 'development' / 'stage10_caliban'
+CALIBAN_RUNS = [('caliban_zs', 'scripta', 'scripta_caliban_zs'), ('caliban_ft', 'scripta', 'scripta_caliban_ft'),
+                ('caliban_zs', 'dnn', 'dnn_caliban')]
 DATA = ROOT / 'data'
 SCRIPTA = DATA / 'scripta_data_refine2'
 DNN = DATA / 'DynamicNuclearNet'
@@ -50,6 +59,9 @@ TRACKS = {
     'dnn': {'ours': 'dnn/progct/division', 'binary': 'dnn/progct_binary/division', 'raw': 'dnn/progct_raw_only/division',
             'ta_ft_div': 'dnn/trackastra_ft/greedy', 'ta_zs_div': 'dnn/trackastra_zs/greedy',
             'ta_zs_ctc': 'dnn/trackastra_zs_ctc/greedy'},
+    'caliban': {('scripta', 'caliban_zs'): CALIBAN / 'scripta' / 'caliban_zs',
+                ('scripta', 'caliban_ft'): CALIBAN / 'scripta' / 'caliban_ft',
+                ('dnn', 'caliban_zs'): CALIBAN / 'dnn' / 'caliban'},
     'hela': {'ours': 'hela/progct/division', 'binary': 'hela/progct_binary/division', 'ta_ft_div': 'hela/trackastra_ft/greedy',
              'ta_zs_div': 'hela/trackastra_zs/greedy', 'ta_zs_ctc': 'hela/trackastra_zs_ctc/greedy'},
 }
@@ -62,6 +74,13 @@ def ctc_table():
     global _ctc
     if _ctc is None:
         _ctc = pd.read_csv(FINAL / 'ctc_per_well.csv', dtype={'well': str})
+        extra = []
+        for key, dataset, run in CALIBAN_RUNS:
+            rows = pd.read_csv(CALIBAN / 'ctc' / run / 'per_well.csv', dtype={'well': str})
+            extra.append(rows.assign(method=key, dataset=dataset, split='test', folder=f'stage10_caliban/ctc/{run}'))
+        _ctc = pd.concat([_ctc] + extra, ignore_index=True)
+        if _ctc.duplicated(['method', 'dataset', 'well']).any():
+            raise ValueError('a method has two rows for one well')
         _ctc['div_recall'] = _ctc['tp_div(0)'] / (_ctc['tp_div(0)'] + _ctc['fn_div(0)'])
     return _ctc
 
@@ -123,7 +142,8 @@ def answers(name):
 
 
 def track_folder(key, well, dataset='scripta'):
-    folder = FINAL / TRACKS[dataset][key] / well
+    caliban = TRACKS['caliban'].get((dataset, key))
+    folder = (caliban if caliban is not None else FINAL / TRACKS[dataset][key]) / well
     if not (folder / 'instance_tracks.csv').is_file():
         raise FileNotFoundError(f'{key}: no {dataset} output for {well}')
     return folder
@@ -185,14 +205,33 @@ def predicted_links(tracks):
     return links
 
 
-def gt_links(well, observations):
+def gt_links(well, observations, root=SCRIPTA):
     """{(src, dst): g} of the ground-truth continuation links between observed detections."""
-    lineage = read_lineage(SCRIPTA / f'{well}_GT' / 'TRA' / 'man_track.txt', observations)
+    lineage = read_lineage(root / f'{well}_GT' / 'TRA' / 'man_track.txt', observations)
     return {(l.src, l.dst): l.g for l in lineage.links if l.kind == CONTINUATION}
 
 
 def gap_bin(g):
     return 'g1' if g == 1 else ('g2' if g == 2 else 'g3+')
+
+
+def dnn_gap_counts(keys=('ours', 'caliban_zs'), videos=None):
+    """Summed over the DNN videos (default: the 13 compared): GT continuation links and the missed and false links of
+    each method by frame gap (g1, g2, g3+), counted as in gap_counts. -> {key: Counter}."""
+    out = {}
+    for video in DNN_VIDEOS if videos is None else videos:
+        tracks = {k: pd.read_csv(track_folder(k, video, 'dnn') / 'instance_tracks.csv') for k in keys}
+        ref = tracks[keys[0]]
+        gt = gt_links(video, list(zip(ref.frame_index.astype(int), ref.instance_id.astype(int))), DNN)
+        for key, df in tracks.items():
+            pred, c = predicted_links(df), out.setdefault(key, Counter())
+            for link, g in gt.items():
+                c[f'gt_{gap_bin(g)}'] += 1
+                c[f'missed_{gap_bin(g)}'] += link not in pred
+            for s, d in pred:
+                if (s, d) not in gt:
+                    c[f'false_{gap_bin(d[0] - s[0])}'] += 1
+    return out
 
 
 def gap_counts(refresh=False):

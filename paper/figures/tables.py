@@ -16,7 +16,8 @@ NO_PRIOR = 'Baselines without a division prior'
 PRIOR = 'Baselines given the prior that no cell divides$^\\ddagger$'
 # (key, name) rows and (None, group title) rows; ctgnn: mean of its two training seeds
 TEST = [('ours', OURS),
-        (None, NO_PRIOR), ('ta_ft_div', 'Trackastra ft'), ('ta_zs_div', 'Trackastra zs'), ('ctgnn', 'CellTrack-GNN'),
+        (None, NO_PRIOR), ('ta_ft_div', 'Trackastra ft'), ('ta_zs_div', 'Trackastra zs'), ('caliban_ft', 'Caliban ft'),
+        ('caliban_zs', 'Caliban zs'), ('ctgnn', 'CellTrack-GNN'),
         (None, PRIOR), ('ta_ft', 'Trackastra ft$^\\ddagger$'), ('ta_zs', 'Trackastra zs$^\\ddagger$'),
         ('classical', 'Classical$^\\ddagger$'),
         (None, ABLATION), ('binary', OURS + ', binary')]
@@ -129,35 +130,54 @@ def dnn():
     """Main paper: divisions on new videos of the training cell line (the 13 RAW264.7 DNN videos) and on cell types
     no model was trained on (DNN test07-08, 3T3/HEK293; Fluo-N2DL-HeLa). ProGCT against Trackastra fine-tuned on the
     same training data; the best value within each group."""
-    sets = [('RAW264.7, new videos of the training cell line (13 videos)', lambda k: data.dnn_wells(k)),
-            ('3T3 and HEK293, unseen cell types (DNN, 2 videos)', lambda k: data.dnn_wells(k, data.DNN_OTHER_LINE)),
-            ('HeLa, unseen cell type (Fluo-N2DL-HeLa, 2 videos)', data.hela_wells)]
+    # Caliban (released weights, trained on DNN) on the DNN groups only: its training data include HeLa
+    caliban = ('caliban_zs', 'Caliban$^\\S$')
+    sets = [('RAW264.7, new videos of the training cell line (13 videos)', lambda k: data.dnn_wells(k), True),
+            ('3T3 and HEK293, unseen cell types (DNN, 2 videos)', lambda k: data.dnn_wells(k, data.DNN_OTHER_LINE), True),
+            ('HeLa, unseen cell type (Fluo-N2DL-HeLa, 2 videos)', data.hela_wells, False)]
     cols = [('LNK', 'LNK', None, max, 3), ('CT', 'CT', None, max, 3), ('BC', 'BC', None, max, 3),
             ('prec', 'Prec.', None, max, 3), ('rec', 'Rec.', None, max, 3), ('fp', 'FP', None, min, 0)]
     rows = []
-    for title, wells in sets:
+    for title, wells, with_caliban in sets:
         rows.append((None, title))
-        rows += [(name, division_summary(wells(k))) for k, name in (('ours', OURS), ('ta_ft_div', 'Trackastra ft'))]
-    return table(rows, cols, '\\textbf{Divisions on seen and unseen cell types}, both methods trained on the same '
-                 'data without a division prior. Best of each group bold on green, larger FP on red. Prec., Rec.: '
-                 'division precision and recall; FP: false divisions. All variants: \\cref{tab:dnn_full,tab:hela}.',
+        keys = (('ours', OURS), ('ta_ft_div', 'Trackastra ft')) + ((caliban,) if with_caliban else ())
+        rows += [(name, division_summary(wells(k))) for k, name in keys]
+    return table(rows, cols, '\\textbf{Divisions on seen and unseen cell types}. ' + OURS + ' and Trackastra ft are '
+                 'trained on the same data; all link without a division prior. $^\\S$Caliban: its released weights, '
+                 'trained on all DNN training videos (3T3, HEK293 and HeLa included) with the validation videos for '
+                 'early stopping, so of the 13 videos only test09--11 are new to it (\\cref{tab:dnn_full}); not run on '
+                 'HeLa. Best of each group bold on green, other FP on red. Prec., Rec.: division precision and '
+                 'recall; FP: false divisions. All variants: \\cref{tab:dnn_full,tab:hela}.',
                  'tab:dnn', colsep=3, per_group=True,
                  worse={'fp': lambda x: x > 0})       # the best (green) takes precedence, so the others go red
 
 
 def dnn_full():
-    keys = [('ours', OURS), ('ta_ft_div', 'Trackastra ft'), ('ta_zs_div', 'Trackastra zs'), ('ta_zs_ctc', 'Trackastra ctc'),
-            (None, ABLATION), ('binary', OURS + ', binary'), ('raw', OURS + ', RAW only')]
-    # the 13 RAW264.7 videos only; test07-08 (3T3/HEK293, a cell type absent from training) are in tab:dnn
+    # the 13 RAW264.7 videos; test07-08 (3T3/HEK293, a cell type absent from our training data) are in tab:dnn.
+    # The last group repeats test09-11, official DNN test videos and new to Caliban too (it stopped early on val)
+    main = [('ours', OURS), ('ta_ft_div', 'Trackastra ft'), ('ta_zs_div', 'Trackastra zs'),
+            ('ta_zs_ctc', 'Trackastra ctc'), ('caliban_zs', 'Caliban$^\\S$')]
+    keys = ([(None, 'val17--26 and test09--11 (13 videos)')] + main
+            + [(None, ABLATION), ('binary', OURS + ', binary'), ('raw', OURS + ', RAW only'),
+               (None, 'test09--11 only, official test videos (3 videos)')] + main)
     cols = [('LNK', 'LNK', None, max, 4), ('BC', 'BC', None, max, 3), ('rec', 'Rec.', None, max, 3),
             ('fp', 'FP', None, min, 0), ('ED', 'ED', None, min, 0), ('EA', 'EA', None, min, 0)]
-    rows = [(None, name) if key is None else (name, dnn_summary(key, data.DNN_VIDEOS)) for key, name in keys]
-    return table(rows, cols, '\\textbf{All variants on the 13 DynamicNuclearNet (DNN) RAW264.7 videos} val17--26 '
-                 'and test09--11, which no model in the table was trained on; all link without a division prior. '
-                 + BEST_NOTE + ' (ablations excluded). ' + OURS + ', RAW only is trained on the RAW264.7 videos alone; '
-                 'Trackastra zs (\\texttt{general\\_2d}) and ctc are the released models, and \\texttt{general\\_2d} '
-                 'may include the validation videos. Rec.: division recall; FP: false divisions; ED, EA: false and '
-                 'missed edges.', 'tab:dnn_full', colsep=3, ablation={OURS + ', binary', OURS + ', RAW only'})
+    rows, videos = [], data.DNN_VIDEOS
+    for key, name in keys:
+        if key is None:
+            videos = data.DNN_VIDEOS if name.startswith('val') or name == ABLATION else ['test09', 'test10', 'test11']
+            rows.append((None, name))
+        else:
+            rows.append((name, dnn_summary(key, videos)))
+    return table(rows, cols, '\\textbf{All variants on the DynamicNuclearNet (DNN) RAW264.7 videos}; all link without '
+                 'a division prior. ' + BEST_NOTE + ' within each group (ablations excluded). None of ' + OURS +
+                 ', its variants and fine-tuned Trackastra was trained on these videos. ' + OURS + ', RAW only is '
+                 'trained on the RAW264.7 videos alone; Trackastra zs (\\texttt{general\\_2d}) and ctc are the released '
+                 'models, and \\texttt{general\\_2d} may include the validation videos. $^\\S$Caliban: its released '
+                 'weights, trained on the DNN training videos with the validation videos (val17--26 among them) for '
+                 'early stopping, so of these videos only test09--11 are new to it. Rec.: division recall; FP: '
+                 'false divisions; ED, EA: false and missed edges.', 'tab:dnn_full', colsep=3, per_group=True,
+                 ablation={OURS + ', binary', OURS + ', RAW only'})
 
 
 TAUS = [('tau0.2', 0.2), ('tau0.3', 0.3), (None, 0.4), ('tau0.5', 0.5), ('tau0.6', 0.6)]   # None: the main runs
@@ -330,7 +350,8 @@ def main():
                        'wells; ED, EA, EC: false, missed and wrong-type edges, summed over wells; Div.: false '
                        'divisions. ' + OURS + ' needs no division prior. $^\\ddagger$Trackastra '
                        '\\texttt{greedy\\_nodiv}; the classical tracker never divides. '
-                       'ft: fine-tuned; zs: zero-shot; CellTrack-GNN: mean of two training seeds; binary: ' + OURS +
+                       'ft: fine-tuned (Caliban on the split of Trackastra ft); zs: zero-shot (Caliban: its released '
+                       'weights, trained on DNN); CellTrack-GNN: mean of two training seeds; binary: ' + OURS +
                        ' with a binary edge classifier (\\cref{tab:modules}).', 'tab:test', colsep=3,
                        ablation={OURS + ', binary'}, top=SCORES_ERRORS, worse=FALSE_DIV))
     keys = [('ours', OURS), (None, NO_PRIOR), ('ta_ft_div', 'Trackastra fine-tuned'),
