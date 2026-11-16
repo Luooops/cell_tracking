@@ -23,7 +23,7 @@ METHODS = {
     # whether the data has any: the setting of our model); no div. = greedy_nodiv (told that scripta has none)
     'ta_ft_div': ('Trackastra ft', '#C2452D'),
     'ta_zs_div': ('Trackastra zs', '#EE9A86'),
-    'ta_ft': ('Trackastra ft‡', '#E07B39'),            # ‡ = divisions forbidden (greedy_nodiv), as in the paper
+    'ta_ft': ('Trackastra ft‡', '#E07B39'),            # ‡ = given the prior that no cell divides (greedy_nodiv), as in the paper
     'ta_zs': ('Trackastra zs‡', '#F2B880'),
     'ta_ft_dt3': ('Trackastra ft‡, $\\Delta t$=3', '#B5541E'),   # the Delta t = 3 runs also use greedy_nodiv
     'ta_zs_dt3': ('Trackastra zs‡, $\\Delta t$=3', '#D9965A'),

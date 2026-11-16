@@ -1,6 +1,6 @@
 """Regenerate every paper figure and table (inputs: development/final_results, data/).
     python paper/figures/make_all.py [--refresh] [--out DIR]
---refresh recomputes the cached per-gap link counts; --out is where the figures and tables.tex go (default
+--refresh recomputes the cached per-gap link counts; --out is where the figures and the table files go (default
 paper/figures/out). The LaTeX sources live in their own repository, D:\\Papers\\GNNCellTracking-Paper, which reads
 them from figures/out: --out D:/Papers/GNNCellTracking-Paper/figures/out."""
 import argparse

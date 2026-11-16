@@ -272,11 +272,13 @@ def skewed_slab(part, image01, x, y, w, h, sh, depth, z):
     im.set_transform(tr_)
     gid(im, part)
     c = '#3A424B'
-    poly(part, [(x, y + h), (x + w, y + h), (x + w, y + h + depth), (x, y + h + depth)], shade(c, -0.1),
-         ec=shade(c, -0.4), lw=0.35, z=z)
-    poly(part, [(x + w, y + h), (x + sh + w, y), (x + sh + w, y + depth), (x + w, y + h + depth)], shade(c, -0.25),
-         ec=shade(c, -0.4), lw=0.35, z=z)
-    poly(part, [(x + sh, y), (x + sh + w, y), (x + w, y + h), (x, y + h)], 'none', ec='#C9D1D8', lw=0.4, z=z + 0.2)
+    if depth > 0:                                           # depth 0, sh 0: a flat image with a frame
+        poly(part, [(x, y + h), (x + w, y + h), (x + w, y + h + depth), (x, y + h + depth)], shade(c, -0.1),
+             ec=shade(c, -0.4), lw=0.35, z=z)
+        poly(part, [(x + w, y + h), (x + sh + w, y), (x + sh + w, y + depth), (x + w, y + h + depth)],
+             shade(c, -0.25), ec=shade(c, -0.4), lw=0.35, z=z)
+    poly(part, [(x + sh, y), (x + sh + w, y), (x + w, y + h), (x, y + h)], 'none',
+         ec='#C9D1D8' if depth > 0 else '#7A8794', lw=0.4, z=z + 0.2)
     return lambda u, v: (x + sh + w * u - sh * v, y + h * v)
 
 
@@ -336,7 +338,8 @@ for k, (dy, lab) in enumerate(((5.4, 'frame t'), (16.2, 'frame t+g'))):
     y0_, x0_ = int(SY - WIN / 2), int(SX - WIN * 0.9)
     crop = ims_ex[k][y0_:y0_ + WIN, x0_:x0_ + int(WIN * 1.8)]
     m = s_mask(EXW, t)[y0_:y0_ + WIN, x0_:x0_ + int(WIN * 1.8)]
-    to = skewed_slab('input', norm(crop, LV), x + 1.2, y + dy, 11.6, 5.6, 3.0, 0.9, z=2 + 2 * k)
+    to = skewed_slab('input', norm(crop, LV), x + (w - 11.5) / 2, y + dy, 11.5, 6.4, 0.0, 0.0, z=2 + 2 * k)
+    # flat, unsheared (reviewer: the slabs read as slices of a stack); 11.5 x 6.4 keeps the crop's 1.8 : 1
     for lab_ in np.unique(m):
         if lab_ == 0:
             continue

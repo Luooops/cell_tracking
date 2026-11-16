@@ -1,7 +1,7 @@
 """Main comparison on scripta.
 fig1_main_comparison (paper, one column): a, b  LNK and CT on all 15 videos, paired: ours vs Trackastra ft and zs,
       each with divisions allowed (greedy, the setting of ours: not told whether there are divisions) and with
-      divisions forbidden (greedy_nodiv, marked ‡) (dev wells out-of-fold, test wells final).
+      given the prior that no cell divides (greedy_nodiv, marked ‡) (dev wells out-of-fold, test wells final).
 figS4_test_wells (supplement, one column): LNK and CT on the 3 test wells for every method (mean and the wells),
       the points behind the paper's test-well table."""
 import matplotlib.pyplot as plt
@@ -96,8 +96,8 @@ def paired():
         for k, s in tests_.items():
             lines.append(f'    ours vs {style.label(k)}: ours higher in {s["a_higher"]}/{s["n"]} videos, '
                          f'lower in {s["b_higher"]}, p = {data.fmt_p(s["p"])}')
-    lines.append('TA = Trackastra; unmarked: divisions allowed (greedy), as for ours; ‡ divisions forbidden '
-                 '(Trackastra greedy_nodiv).')
+    lines.append('TA = Trackastra; unmarked: without a division prior (greedy); ‡ given the prior that no cell divides '
+                 '(Trackastra greedy_nodiv). ProGCT needs no division prior.')
     style.save(fig, 'fig1_main_comparison', '\n'.join(lines))
 
 
@@ -113,7 +113,7 @@ def test_wells():
         style.panel(ax, letter, x=-0.3)
     axes[0].set_title('3 test wells', loc='left', fontsize=6.5)
     lines = ['Test wells r16c02, r01c20, r07c07, every method; black bar = mean, diamonds = wells. TA = Trackastra; '
-             '‡ divisions forbidden (the classical tracker never divides); CellTrack-GNN: per-well mean of its two '
+             '‡ given the prior that no cell divides (the classical tracker never divides); CellTrack-GNN: per-well mean of its two '
              'training seeds. ProGCT highlighted (band, bold label, blue mean bar).']
     for metric, means in tests.items():
         lines.append(f'  {metric}: ' + ', '.join(f'{SHORT[k]} {v:.4f}' for k, v in means.items()))

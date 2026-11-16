@@ -149,6 +149,19 @@ def key_numbers(stats):
           'DNN 13 videos', ctc)
     k.add('ablation', 'LNK Trackastra ft told (comparison for the cross-frame share of the lead)',
           s('ta_ft', dev).LNK.mean(), '12 dev wells', ctc)
+    for ds, videos, scope in (('scripta', every, '15 wells (dev OOF + test)'), ('dnn', data.DNN_VIDEOS, 'DNN 13 videos')):
+        r = greedy_vs_exact(ds, videos)
+        k.add('solver', 'adjacent same-cell links (exact) / differing links greedy vs exact (only exact + only greedy) '
+              '/ frame pairs with a difference', f"{r['links']} / {r['only_exact'] + r['only_greedy']} "
+              f"({r['only_exact']} + {r['only_greedy']}) / {r['pairs_differing']} of {r['pairs']}", scope,
+              'final_results_v2 edges.npz, round 1 re-decoded greedily (export_results.greedy_vs_exact)')
+        for name, (n, only_ens, only_var) in single_member_vs_ensemble(ds, videos).items():
+            k.add('ensemble', f'adjacent same-cell links (ensemble) / only ensemble / only {name}',
+                  f'{n} / {only_ens} / {only_var}', scope,
+                  'final_results_v2 edges.npz, round 1 re-decoded per member (export_results.single_member_vs_ensemble)')
+    k.add('ensemble', 'false + missed edges (ED + EA), ours / Trackastra ft told',
+          f"{s('ours', every).AOGM_ED.sum() + s('ours', every).AOGM_EA.sum():.0f} / "
+          f"{s('ta_ft', every).AOGM_ED.sum() + s('ta_ft', every).AOGM_EA.sum():.0f}", '15 wells (dev OOF + test)', ctc)
     for key, tau in (('tau0.2', 0.2), ('tau0.3', 0.3), ('ours_nodiv', 0.4), ('tau0.5', 0.5), ('tau0.6', 0.6)):
         x = s(key, dev)
         k.add('threshold', f'tau {tau}: LNK / CT / ED / EA', f"{x.LNK.mean():.4f} / {x.CT.mean():.3f} / "
@@ -194,7 +207,106 @@ def key_numbers(stats):
         p = edges.p_div[(edges.population == population) & (edges.relation == relation)].to_numpy()
         k.add('divisions', f'round-1 edges with d >= 0.5, {population}, {relation}', f'{int((p >= 0.5).sum())} of {len(p)}',
               population, 'per_link/division_edges.csv')
+    for q, v in compute().items():
+        k.add('compute', q, v, 'final models, server (NVIDIA GH200)', 'stage7_raw/final/checkpoints, stage7_raw/logs')
     return pd.DataFrame(k.rows)
+
+
+def compute():
+    """Model size from the final checkpoints and wall-clock times from the server logs (the GPU model is not in the
+    logs: NVIDIA GH200, per the user). Training: every member of the cross-validation and the final models (40
+    epochs); the runs that shared a GPU with others took about twice as long. Tracking: the retracks with all 3 x 3
+    views of the 20 evaluation videos (3 scripta test wells, 15 DNN, 2 HeLa), both tracking modes, data from the
+    cache (thresholds 0.2-0.6 differ only in the decision)."""
+    import re
+    import torch
+    stage7 = DEV / 'stage7_raw'
+    count = lambda f: sum(v.numel() for v in torch.load(f, map_location='cpu', weights_only=False)['state_dict'].values()
+                          if v.dtype.is_floating_point)
+    params = [count(f) for f in sorted((stage7 / 'final' / 'checkpoints').glob('final_seed*.pt'))]
+    seconds = lambda f: float(re.findall(r'complete after ([\d.]+) s', f.read_text(encoding='utf-8'))[-1])
+    logs = stage7 / 'logs' / 'gnn_bayesian'
+    train = sorted(seconds(f) / 60 for f in [*logs.glob('cv_lr5e-4_cv_folds012_train_*.log'),
+                                             *logs.glob('final_final_train_finals*.log')])
+    fast = [m for m in train if m < 90]
+    track = [seconds(f) for f in sorted(logs.glob('final_final_retrack_none_tta_t0.*.log'))]
+    return {'parameters per member / ensemble': f'{params[0]} / {sum(params)}',
+            'training minutes per member (alone on a GPU) / members / all members': f'{min(fast):.0f}-{max(fast):.0f} / '
+            f'{len(fast)} / {len(train)} (shared: {min(m for m in train if m >= 90):.0f}-{max(train):.0f} min)',
+            'tracking seconds, 20 videos, 3 x 3 views, both modes': f'{min(track):.0f}-{max(track):.0f}'}
+
+
+def greedy_vs_exact(dataset, videos, tau=0.4):
+    """Does ProGCT's gain over Trackastra (greedy) come from its exact assignment? Its recorded round-1 adjacent
+    candidates (g = 1, in the solver) of every frame pair are re-decoded greedily: highest p first, a link if p > tau
+    and both detections are still free; the detections of a division the exact solver made stay taken. -> the
+    same-cell links of the exact solver (sources with one chosen edge), the links only one decoding makes, and the
+    frame pairs with any difference. Divisions and the gap-closing round are not re-decoded."""
+    links = only_exact = only_greedy = pairs = differing = 0
+    for video in videos:
+        z = np.load(data.track_folder('ours', video, dataset) / 'edges.npz')
+        m = (z['round'] == 1) & (z['g'] == 1) & z['in_solver']
+        frame, src, dst, p, chosen = (z[c][m] for c in ('src_frame', 'src_label', 'dst_label', 'p', 'chosen'))
+        for t in np.unique(frame):
+            k = frame == t
+            s, d, q, c = src[k], dst[k], p[k], chosen[k]
+            n_chosen = pd.Series(s[c]).value_counts()
+            dividing = set(n_chosen.index[n_chosen > 1])
+            exact = {(a, b) for a, b in zip(s[c], d[c]) if a not in dividing}
+            used_s, used_d = set(dividing), {b for a, b in zip(s[c], d[c]) if a in dividing}
+            greedy = set()
+            for i in np.argsort(-q, kind='stable'):
+                if q[i] <= tau:
+                    break
+                if s[i] not in used_s and d[i] not in used_d:
+                    greedy.add((s[i], d[i]))
+                    used_s.add(s[i])
+                    used_d.add(d[i])
+            links += len(exact)
+            only_exact += len(exact - greedy)
+            only_greedy += len(greedy - exact)
+            pairs += 1
+            differing += exact != greedy
+    return dict(links=links, only_exact=only_exact, only_greedy=only_greedy, pairs=pairs, pairs_differing=differing)
+
+
+def single_member_vs_ensemble(dataset, videos, tau=0.4):
+    """Does the ensemble (3 members x 3 views) make ProGCT's links, or only its confidence? The recorded round-1
+    adjacent candidates (g = 1, in the solver) of every frame pair are re-decoded by the same assignment (solver.assign,
+    threshold tau) with the probability of one member alone in the reference view (the recorded SAME logits, columns
+    member-major within the first view), and with the 3 members without views; divisions the ensemble made stay
+    taken. -> {variant: (ensemble same-cell links, links only the ensemble makes, links only the variant makes)}; the
+    9 outputs together reproduce the recorded links (a check). The gap-closing round is not re-run."""
+    sys.path.insert(0, str(data.ROOT))
+    from models.gnn_bayesian.solver import assign
+    sig = lambda x: 1 / (1 + np.exp(-x))
+    variants = {'all 9 outputs (check)': lambda L: sig(L).mean(1), '3 members, no views': lambda L: sig(L[:, :3]).mean(1),
+                **{f'member {m}, no views': (lambda L, m=m: sig(L[:, m])) for m in range(3)}}
+    out = {name: [0, 0, 0] for name in variants}
+    for video in videos:
+        z = np.load(data.track_folder('ours', video, dataset) / 'edges.npz')
+        sel = (z['round'] == 1) & (z['g'] == 1) & z['in_solver']
+        frame, src, dst, chosen, logits = (z[c][sel] for c in ('src_frame', 'src_label', 'dst_label', 'chosen', 'logits'))
+        for t in np.unique(frame):
+            k = frame == t
+            s, d, c, L = src[k], dst[k], chosen[k], logits[k]
+            n_chosen = pd.Series(s[c]).value_counts()
+            dividing = set(n_chosen.index[n_chosen > 1])
+            children = {b for a, b in zip(s[c], d[c]) if a in dividing}
+            ensemble = {(a, b) for a, b in zip(s[c], d[c]) if a not in dividing}
+            keep = np.array([a not in dividing and b not in children for a, b in zip(s, d)])
+            if not keep.any():
+                continue
+            rows, ri = np.unique(s[keep], return_inverse=True)
+            cols, ci = np.unique(d[keep], return_inverse=True)
+            for name, prob in variants.items():
+                p = np.clip(prob(L[keep]), 1e-7, 1 - 1e-7)
+                made = {(rows[i], cols[j]) for i, j in assign(-np.log(p), ri, ci, len(rows), len(cols),
+                                                               [tau] * len(rows), tau)}
+                out[name][0] += len(ensemble)
+                out[name][1] += len(ensemble - made)
+                out[name][2] += len(made - ensemble)
+    return {name: tuple(v) for name, v in out.items()}
 
 
 def data_statistics():
