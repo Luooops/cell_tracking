@@ -326,7 +326,7 @@ def hela():
             rows.append((f'{name} & {seq}', {c: t.loc[seq, c] for c, *_ in hela_cols}))
     return table(rows, hela_cols, 'Fluo-N2DL-HeLa, per sequence (Seq.), a cell line none of the models was trained on '
                  '(except $^\\dagger$). ' + BEST_NOTE + ' (ablation excluded). ' + OURS + ' and Trackastra ft: trained on \\ds{} and the DNN RAW264.7 '
-                 'videos. Trackastra zs: \\texttt{general\\_2d}. All link with divisions allowed. BC and division '
+                 'videos. Trackastra zs: \\texttt{general\\_2d}. All link without a division prior. BC and division '
                  'recall at tolerance 0; FP: false divisions. $^\\dagger$The \\texttt{ctc} model, trained on all '
                  'CTC ground truth including these sequences.', 'tab:hela', lead=('Method', 'Seq.'), colsep=3,
                  ablation={f'{OURS}, binary & {seq}' for seq in ('01', '02')})
@@ -363,7 +363,7 @@ def main():
             for k, name in keys]
     worst = {m: max(data.paired(data.scripta_wells('ours', wells)[m], data.scripta_wells(k, wells)[m])['p']
                     for k, _ in keys if k not in (None, 'ours')) for m in ('LNK', 'CT')}
-    suppl = [parts[0], '', table(rows, cols15 + [DIV], 'All 15 \\ds{} wells: 12 development wells out-of-fold (3 folds) and the '
+    suppl = [parts[0], '', table(rows, cols15 + [DIV], 'All 15 \\ds{} wells: 12 development wells out of fold (3 folds) and the '
                        '3 test wells with the final models. ' + BEST_NOTE + ', ' + FALSE_DIV_NOTE + '. ED, EA: false and missed edges; Div.: '
                        'false divisions. ' + OURS + ' is higher than all four Trackastra variants in LNK and CT '
                        f'(Wilcoxon, largest $p = {tex_p(worst["LNK"])}$ / ${tex_p(worst["CT"])}$). ' + OURS + ' needs no division '

@@ -178,6 +178,9 @@ def key_numbers(stats):
         src = f'calibration/{key}/metrics.json'
         k.add('confidence', 'undecided edges (0.02 < p < 0.98): n / mean p / observed / ECE',
               f"{c['n']} / {c['mean_p']:.3f} / {c['frac_pos']:.3f} / {c['ece']:.3f}", name, src)
+        a = m['calibration']['round1_all']
+        k.add('confidence', 'all adjacent-frame candidate edges: n / ECE / Brier / NLL / share decided',
+              f"{a['n']} / {a['ece']:.4f} / {a['brier']:.4f} / {a['nll']:.4f} / {1 - c['n'] / a['n']:.3f}", name, src)
         k.add('confidence', 'false links found in the 5% most uncertain links made (MI)',
               cov['false_links']['mutual_info']['at_percent']['5'], name, src)
         k.add('confidence', 'missed candidates found in the 5% most uncertain candidates left out (MI)',
